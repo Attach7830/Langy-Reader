@@ -1,0 +1,14 @@
+services:
+  tunnel:
+    image: cloudflare/cloudflared:2026.10.7
+    command: tunnel --no-autoupdate run --token-file /run/secrets/cloudflare_tunnel_token
+    restart: unless-stopped
+    secrets: [cloudflare_tunnel_token]
+    depends_on:
+      reader:
+        condition: service_healthy
+    networks: [default]
+
+secrets:
+  cloudflare_tunnel_token:
+    file: ${CLOUDFLARE_TOKEN_FILE:-./.secrets/tunnel-token}
