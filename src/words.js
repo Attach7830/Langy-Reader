@@ -116,7 +116,9 @@ export function wordHelp({ preferences, request }) {
     }
     const options = { signal: listeners.signal };
     root.addEventListener('pointermove', inspect, options);
-    root.addEventListener('pointerleave', clear, options);
+    root.addEventListener('pointerleave', (event) => {
+      if (event.pointerType !== 'touch') clear();
+    }, options);
     root.addEventListener('pointerdown', (event) => { if (event.pointerType !== 'touch') clear(); }, options);
     root.addEventListener('pointerup', (event) => { if (event.pointerType === 'touch') inspect(event, true); }, options);
     return () => listeners.abort();
