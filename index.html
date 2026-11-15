@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en" data-theme="paper" data-background="grain" data-reading-width="balanced">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f5ef">
+  <title>Langy Reader</title>
+  <link rel="icon" href="data:,">
+</head>
+<body>
+  <header class="site-header" id="library-header">
+    <a class="brand" href="#library" aria-label="Langy Reader library">
+      <span class="brand-mark"><i data-lucide="book-open"></i></span>
+      <span>Langy Reader</span>
+    </a>
+    <div class="header-actions">
+      <button class="ai-status" id="ai-status" type="button" title="Check local AI"><span class="status-dot"></span><span>Checking AI</span></button>
+      <button class="button quiet" type="button" data-settings="reading" aria-label="Settings"><i data-lucide="settings-2"></i><span>Settings</span></button>
+    </div>
+  </header>
+
+  <main id="library-screen" class="library-layout">
+    <aside class="library-rail" aria-label="Library categories">
+      <nav class="library-nav">
+        <button class="rail-item" type="button" id="all-books"><i data-lucide="library-big"></i><span>All books</span><span class="count" id="all-count"></span></button>
+        <div class="rail-heading">
+          <span>Categories</span>
+          <button class="icon-button small" id="add-category" title="New category" aria-label="New category" type="button"><i data-lucide="plus"></i></button>
+        </div>
+        <div id="categories"></div>
+      </nav>
+    </aside>
+    <section class="library-main" aria-labelledby="library-title">
+      <div class="library-heading">
+        <div><h1 id="library-title">Your library</h1><p id="library-description"></p></div>
+        <button class="button primary" id="import-book" type="button"><i data-lucide="plus"></i><span>Import book</span></button>
+      </div>
+      <div id="demo-note" class="demo-note" hidden>
+        <i data-lucide="info"></i><span>Demo uploads are private to this browser and expire after 24 hours. Up to 4 books, 20 MiB each.</span>
+      </div>
+      <div class="library-toolbar">
+        <label class="search-field">
+          <i data-lucide="search"></i>
+          <input type="search" id="search" placeholder="Search title or author" aria-label="Search title or author" autocomplete="off">
+        </label>
+        <span class="muted" id="book-count"></span>
+      </div>
+      <div id="books" class="book-grid"></div>
+      <div id="empty-library" class="empty-state" hidden>
+        <i data-lucide="book-open"></i><h2 id="empty-title"></h2><p id="empty-detail"></p>
+      </div>
+      <p class="screen-error" id="library-error" role="alert" hidden></p>
+    </section>
+  </main>
+
+  <section id="reader-screen" class="reader-screen" aria-label="Book reader" hidden>
+    <header class="reader-top">
+      <div class="reader-heading">
+        <a class="button quiet back-button" href="#library" aria-label="Return to library"><i data-lucide="arrow-left"></i><span>Library</span></a>
+        <div class="reader-title">
+          <strong id="reading-title"></strong><span id="reading-subtitle"></span>
+        </div>
+      </div>
+      <div class="reader-actions">
+        <button class="icon-button" id="contents-button" type="button" title="Contents" aria-label="Contents"><i data-lucide="list"></i></button>
+        <button class="icon-button" type="button" data-settings="reading" title="Reading settings" aria-label="Reading settings"><span class="type-icon">Aa</span></button>
+        <button class="button quiet summary-toggle" id="summarize" type="button" aria-label="Page summary" aria-controls="summary-panel" aria-expanded="false"><i data-lucide="sparkles"></i><span>Summary</span></button>
+        <button class="icon-button" id="fullscreen" type="button" title="Full screen" aria-label="Full screen" aria-pressed="false"><i data-lucide="maximize"></i></button>
+      </div>
+    </header>
+    <div id="stage" class="reader-stage">
+      <div class="reading-main">
+        <div id="viewer" class="viewer" tabindex="0" aria-label="Current page"></div>
+        <div id="reader-message" class="reader-message" role="status" hidden></div>
+      </div>
+      <aside id="summary-panel" class="summary-panel" aria-labelledby="summary-title" hidden>
+        <div class="summary-heading">
+          <span class="panel-mark"><i data-lucide="sparkles"></i></span>
+          <button class="icon-button" id="close-summary" aria-label="Close summary" title="Close summary" type="button"><i data-lucide="x"></i></button>
+        </div>
+        <h2 id="summary-title">Page summary</h2>
+        <p class="muted" id="summary-location"></p>
+        <div id="summary-body" class="summary-body" dir="auto" aria-live="polite"></div>
+        <button class="button secondary" id="generate-summary" type="button"><i data-lucide="sparkles"></i><span>Summarize page</span></button>
+      </aside>
+    </div>
+    <footer class="reader-footer">
+      <div class="footer-start">
+        <button type="button" class="button quiet word-settings" data-settings="language"><i data-lucide="languages"></i><span id="word-mode-label"></span></button>
+        <div id="pdf-zoom" class="zoom-controls" hidden>
+          <button id="zoom-out" class="icon-button small" aria-label="Zoom out" type="button"><i data-lucide="minus"></i></button>
+          <button id="zoom-reset" class="button quiet" aria-label="Fit PDF to page" type="button">Fit</button>
+          <button id="zoom-in" class="icon-button small" aria-label="Zoom in" type="button"><i data-lucide="plus"></i></button>
+        </div>
+      </div>
+      <div class="page-nav">
+        <button class="icon-button page-arrow" id="previous" type="button" aria-label="Previous page"><i data-lucide="chevron-left"></i></button>
+        <span class="page-label" id="page-label" aria-live="polite"></span>
+        <button class="icon-button page-arrow" id="next" type="button" aria-label="Next page"><i data-lucide="chevron-right"></i></button>
+      </div>
+      <div class="footer-end"><span id="position-detail"></span><span class="progress-track" aria-hidden="true"><span id="progress-fill"></span></span></div>
+    </footer>
+  </section>
+
+  <dialog class="modal settings-modal" id="settings" aria-labelledby="settings-title">
+    <form id="settings-form">
+      <header class="modal-header"><h2 id="settings-title">Settings</h2><button class="icon-button" type="button" data-close aria-label="Close settings"><i data-lucide="x"></i></button></header>
+      <nav class="tabs" aria-label="Settings sections">
+        <button type="button" data-settings-tab="reading">Appearance</button>
+        <button type="button" data-settings-tab="language">Language help</button>
+        <button type="button" data-settings-tab="shortcuts">Hotkeys</button>
+        <button type="button" data-settings-tab="ai" hidden>AI connection</button>
+      </nav>
+      <section class="modal-body" data-settings-panel="reading">
+        <fieldset class="field theme-field"><legend>Theme</legend><div id="theme-options" class="theme-options"></div></fieldset>
+        <label class="field">Reader background
+          <select name="background">
+            <option value="grain">Paper texture</option><option value="plain">Plain</option>
+            <option value="linen">Linen</option><option value="grid">Graph paper</option>
+          </select>
+        </label>
+        <div class="settings-subhead">EPUB typography</div>
+        <div class="form-grid">
+          <label class="field">Font <select name="font" id="font-options"></select></label>
+          <label class="field">Page width
+            <select name="width"><option value="narrow">Narrow</option><option value="balanced">Balanced</option><option value="wide">Wide</option></select>
+          </label>
+          <label class="field">Font size <input name="size" type="number" min="13" max="40" step="1" required></label>
+          <label class="field">Line spacing <input name="line" type="number" min="1.2" max="2.4" step="0.05" required></label>
+        </div>
+        <label class="checkbox-row"><input name="pdfNight" type="checkbox"> Dim PDF pages in dark themes</label>
+      </section>
+      <section class="modal-body" data-settings-panel="language" hidden>
+        <label class="field">Word help on hover or tap <select name="mode" id="help-options"></select></label>
+        <div class="form-grid">
+          <label class="field">Translation language
+            <input name="translationLanguage" list="languages" maxlength="70" autocomplete="off" required>
+          </label>
+          <label class="field">Summary language
+            <input name="summaryLanguage" list="languages" maxlength="70" autocomplete="off" required>
+          </label>
+        </div>
+        <p class="field-note">Definitions and synonyms use the book’s language. Choose a language from the list or enter a language code.</p>
+      </section>
+      <section class="modal-body" data-settings-panel="shortcuts" hidden>
+        <div class="shortcut-list" id="shortcut-list"></div>
+        <p class="field-note">Select a hotkey, then press its replacement. Press Backspace to clear a hotkey.</p>
+        <button class="button quiet" id="reset-shortcuts" type="button"><i data-lucide="rotate-ccw"></i>Reset hotkeys</button>
+      </section>
+      <section class="modal-body" data-settings-panel="ai" hidden>
+        <label class="field">Provider
+          <select name="provider">
+            <option value="bundled">Bundled Ollama</option>
+            <option value="ollama">Existing Ollama server</option>
+            <option value="openai">OpenAI-compatible API</option>
+          </select>
+        </label>
+        <label class="field" id="ai-url-field" hidden>API base URL
+          <input name="baseUrl" type="url" autocomplete="off" placeholder="http://host.docker.internal:11434">
+        </label>
+        <label class="field">Model <input name="aiModel" maxlength="220" list="ai-models" autocomplete="off"></label>
+        <datalist id="ai-models"></datalist>
+        <label class="field" id="api-key-field" hidden>API key
+          <input name="apiKey" type="password" maxlength="4096" autocomplete="new-password" placeholder="Optional">
+        </label>
+        <label class="checkbox-row" id="clear-key-field" hidden><input name="clearKey" type="checkbox"> Remove saved API key</label>
+        <p class="field-note">Language help sends excerpts to the selected server. Connection settings apply to this reader instance.</p>
+        <button class="button secondary" id="load-models" type="button">Find available models</button>
+        <p class="field-note" id="model-result" aria-live="polite" hidden></p>
+      </section>
+      <p class="form-error" id="settings-error" role="alert" hidden></p>
+      <footer class="modal-footer"><button class="button quiet" type="button" data-close>Cancel</button><button class="button primary" type="submit">Save settings</button></footer>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="book-dialog" aria-labelledby="book-dialog-title">
+    <form id="book-form">
+      <header class="modal-header"><h2 id="book-dialog-title">Import book</h2><button class="icon-button" type="button" aria-label="Close book details" data-close><i data-lucide="x"></i></button></header>
+      <div class="modal-body">
+        <label class="file-field" id="file-field">
+          <i data-lucide="upload"></i><strong id="file-label">Choose an EPUB or PDF</strong>
+          <small id="file-limit"></small>
+          <input id="book-file" name="file" type="file" accept=".epub,.pdf,application/epub+zip,application/pdf">
+        </label>
+        <label class="field">Title <input name="title" maxlength="250" placeholder="From the book or filename"></label>
+        <label class="field">Author <input name="author" maxlength="200" placeholder="Optional"></label>
+        <div class="form-grid">
+          <label class="field">Book language <input name="language" list="languages" maxlength="70" placeholder="Automatic" autocomplete="off"></label>
+          <label class="field">Category <select name="categoryId" id="book-categories"></select></label>
+        </div>
+        <p class="field-note" id="book-language-note">EPUBs use their metadata when available. Otherwise the default is Spanish.</p>
+        <p class="form-error" id="book-error" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer"><button class="button danger" id="remove-book" type="button" hidden>Remove book</button><button class="button quiet" type="button" data-close>Cancel</button><button class="button primary" id="book-submit" type="submit">Import book</button></footer>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="category-dialog" aria-labelledby="category-dialog-title">
+    <form id="category-form">
+      <header class="modal-header"><h2 id="category-dialog-title">New category</h2><button class="icon-button" type="button" aria-label="Close category editor" data-close><i data-lucide="x"></i></button></header>
+      <div class="modal-body">
+        <label class="field">Name <input name="name" maxlength="70" required></label>
+        <p class="form-error" id="category-error" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer"><button class="button danger" id="remove-category" type="button" hidden>Remove category</button><button class="button quiet" type="button" data-close>Cancel</button><button class="button primary" type="submit">Save category</button></footer>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="contents-dialog" aria-labelledby="contents-title">
+    <header class="modal-header"><h2 id="contents-title">Contents</h2><button class="icon-button" type="button" aria-label="Close contents" data-close><i data-lucide="x"></i></button></header>
+    <div class="modal-body" id="contents-body"></div>
+  </dialog>
+
+  <div class="word-help" id="word-help" role="status" hidden>
+    <div class="word-mode" data-word-mode></div><strong data-word></strong><div class="word-answer" dir="auto" data-word-answer></div>
+  </div>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <datalist id="languages"></datalist>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

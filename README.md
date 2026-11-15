@@ -12,7 +12,7 @@ cd Langy-Reader
 docker compose up -d --build
 ```
 
-Open `http://YOUR_SERVER_IP:8088`. The first build downloads Qwen3 4B (about 2.5 GB of model weights) into the Ollama image. Subsequent starts use the baked-in model and can run offline. CPU inference works. As a starting point for the bundled model, allow about 8 GiB of available RAM and 12 GB of free disk space for the images and build cache.
+Open `http://YOUR_SERVER_IP:8088`. The first build downloads Qwen3 4B Instruct (about 2.5 GB of model weights) into the Ollama image. Subsequent starts use the baked-in model and can run offline. CPU inference works. As a starting point for the bundled model, allow about 8 GiB of available RAM and 12 GB of free disk space for the images and build cache.
 
 The default listener is available on your LAN. Set `READER_BIND=127.0.0.1` in a copy of `.env.example` named `.env` if you prefer a local reverse proxy. Configure `READER_USER` and `READER_PASSWORD` there to enable sign-in. Use HTTPS when forwarding password-protected traffic beyond the server.
 
@@ -39,7 +39,7 @@ Open **Settings → AI connection** on your personal instance. The setting appli
 
 | Provider | Example | Model selection |
 | --- | --- | --- |
-| Bundled Ollama | Installed by Compose | Qwen3 4B by default |
+| Bundled Ollama | Installed by Compose | Qwen3 4B Instruct by default |
 | Existing Ollama server | `http://host.docker.internal:11434` | Find available models or enter a tag |
 | OpenAI-compatible API | `http://host.docker.internal:8000/v1` | Find available models or enter a model ID |
 
