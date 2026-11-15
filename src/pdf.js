@@ -72,8 +72,10 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
     shell.style.height = `${viewport.height}px`;
     shell.style.setProperty('--total-scale-factor', viewport.scale * viewport.userUnit);
     shell.replaceChildren(canvas, layer);
-    if (resetScroll) host.scrollTo(0, 0);
-    text = '';
+    if (resetScroll) {
+      host.scrollTo(0, 0);
+      text = '';
+    }
 
     render = page.render({ canvas, viewport, transform: [ratio, 0, 0, ratio, 0, 0] });
     try {

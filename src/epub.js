@@ -199,15 +199,24 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       go: (target) => display(target),
       excerpt: () => rendition.getContents().map((contents) => visibleText(contents, host.getBoundingClientRect(), language)).filter(Boolean).join('\n'),
       async apply(next) {
-        const changed = ['size', 'font', 'line'].some((key) => next[key] !== preferences[key]);
+        const reflow = ['size', 'font', 'line'].some((key) => next[key] !== preferences[key]);
+        const recolor = next.theme !== preferences.theme;
         const target = rendition.currentLocation()?.start?.cfi || rendition.location?.start?.cfi;
         preferences = next;
-        for (const contents of rendition.getContents()) {
-          const rules = contents.document.getElementById('langy-reader-styles');
-          if (rules) rules.textContent = stylesheet(preferences, fixed);
+        if ((reflow || recolor) && !fixed) {
+          const css = stylesheet(preferences, fixed);
+          // epub.js may reuse a section's source document when rebuilding its frame.
+          const documents = [
+            ...book.spine.spineItems.map((section) => section.document),
+            ...rendition.getContents().map((contents) => contents.document),
+          ];
+          for (const doc of documents) {
+            const rules = doc?.getElementById('langy-reader-styles');
+            if (rules) rules.textContent = css;
+          }
         }
         resize();
-        if (changed && target && !fixed) {
+        if (reflow && target && !fixed) {
           rendition.clear();
           await display(target);
         }

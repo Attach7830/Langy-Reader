@@ -20,7 +20,7 @@ const progress = getProgress();
 const summaries = new Map();
 let settings = getSettings();
 let activeBook, renderer, loadController, activePosition, summaryController;
-let moving = false, fallbackFullscreen = false;
+let moving = false, summaryQueued = false, fallbackFullscreen = false;
 let zoom = 1;
 let statusCheck = 0;
 
@@ -146,7 +146,11 @@ function resetSummary() {
 }
 
 async function summarize() {
-  if (!renderer || moving || summaryController) return;
+  if (!renderer || summaryController) return;
+  if (moving) {
+    summaryQueued = true;
+    return;
+  }
   words.clear();
   showSummary(true);
   $('#summary-location').textContent = [activePosition?.label, languageName(settings.summaryLanguage)].filter(Boolean).join(' · ');
@@ -205,6 +209,7 @@ function closeReader() {
   activeBook = undefined;
   activePosition = undefined;
   moving = false;
+  summaryQueued = false;
   words.clear();
   showSummary(false);
   if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
@@ -295,7 +300,13 @@ async function move(direction, target) {
   } catch (error) {
     if (!signal.aborted) reportError(error);
   } finally {
-    if (!signal.aborted) moving = false;
+    if (!signal.aborted) {
+      moving = false;
+      if (summaryQueued) {
+        summaryQueued = false;
+        void summarize();
+      }
+    }
   }
 }
 
