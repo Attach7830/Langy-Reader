@@ -25,7 +25,7 @@ Books and categories live in a named volume. Browser settings and each book’s 
 | Right arrow or Space | Next page |
 | Left arrow | Previous page |
 | F | Full screen |
-| S | Generate a summary on the right |
+| S | Open or close the current page summary |
 
 Change any key in **Settings → Hotkeys**. Navigation and summary buttons also work on touchscreens.
 

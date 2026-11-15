@@ -24,7 +24,7 @@ export const shortcuts = {
   next: 'Next page',
   alternate: 'Next page (alternate)',
   fullscreen: 'Full screen',
-  summary: 'Summarize page',
+  summary: 'Toggle page summary',
 };
 
 export const defaults = {

@@ -126,7 +126,15 @@ function showSummary(visible) {
   summaryPanel.hidden = !visible;
   stage.classList.toggle('summary-open', visible);
   $('#summarize').setAttribute('aria-expanded', String(visible));
-  if (!visible) resetSummary();
+  if (!visible) {
+    summaryQueued = false;
+    resetSummary();
+  }
+}
+
+function closeSummary() {
+  showSummary(false);
+  viewer.focus({ preventScroll: true });
 }
 
 function summaryState(state, text) {
@@ -209,7 +217,6 @@ function closeReader() {
   activeBook = undefined;
   activePosition = undefined;
   moving = false;
-  summaryQueued = false;
   words.clear();
   showSummary(false);
   if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
@@ -373,7 +380,7 @@ function keydown(event) {
     || event.target?.closest?.('input, textarea, select, [contenteditable]')) return;
   if (event.key === 'Escape') {
     if (fallbackFullscreen) { fallbackFullscreen = false; syncFullscreen(); }
-    else if (!summaryPanel.hidden) showSummary(false);
+    else if (!summaryPanel.hidden) closeSummary();
     return;
   }
   const key = eventKey(event);
@@ -384,7 +391,10 @@ function keydown(event) {
   if (key === previous) void move(-1);
   else if (key === next || key === alternate) void move(1);
   else if (key === fullscreen) void toggleFullscreen();
-  else if (key === summary) void summarize();
+  else if (key === summary) {
+    if (summaryPanel.hidden) void summarize();
+    else closeSummary();
+  }
 }
 
 $('#previous').addEventListener('click', () => { viewer.focus({ preventScroll: true }); void move(-1); });
@@ -393,7 +403,7 @@ $('#contents-button').addEventListener('click', contents);
 $('#fullscreen').addEventListener('click', toggleFullscreen);
 $('#summarize').addEventListener('click', summarize);
 $('#generate-summary').addEventListener('click', summarize);
-$('#close-summary').addEventListener('click', () => { showSummary(false); viewer.focus({ preventScroll: true }); });
+$('#close-summary').addEventListener('click', closeSummary);
 $('#zoom-out').addEventListener('click', () => zoomPDF(zoom / 1.25));
 $('#zoom-in').addEventListener('click', () => zoomPDF(zoom * 1.25));
 $('#zoom-reset').addEventListener('click', () => zoomPDF(1));
