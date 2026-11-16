@@ -2,6 +2,8 @@
 
 Langy Reader is a self-hosted EPUB and PDF library for language learning. Organize books into categories, hover or tap for word help, and generate a summary of the page you are reading.
 
+See it in action at https://langy.srtw.win | Screenshots at https://imgur.com/a/wzt5KDB
+
 ## Run it on your server
 
 On a Docker host with Docker Compose installed:
