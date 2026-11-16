@@ -4,6 +4,7 @@ import '@fontsource/dm-sans/latin-700.css';
 import '@fontsource/instrument-serif/latin-400.css';
 import '@fontsource/spectral/latin-400.css';
 import './styles.css';
+import { readerDocks } from './reader-docks.js';
 import { $, $$, api, drawIcons, element, message } from './ui.js';
 import { libraryScreen } from './ui-library.js';
 import { settingsDialog } from './ui-settings.js';
@@ -13,6 +14,7 @@ import { eventKey, getProgress, getSettings, keyLabel, languageName, modes, save
 const viewer = $('#viewer');
 const stage = $('#stage');
 const readerScreen = $('#reader-screen');
+const setDockAutoHide = readerDocks(readerScreen);
 const summaryPanel = $('#summary-panel');
 const summaryBody = $('#summary-body');
 const summaryButton = $('#generate-summary');
@@ -58,6 +60,7 @@ function applySettings(updated, aiChanged) {
   saveSettings(settings);
   words.clear();
   applyAppearance();
+  syncFullscreen();
   if (aiChanged) {
     summaries.clear();
     words.reset();
@@ -195,6 +198,7 @@ function syncFullscreen() {
   $('#fullscreen').setAttribute('aria-pressed', String(fullscreen));
   $('#fullscreen').setAttribute('aria-label', fullscreen ? 'Exit full screen' : 'Full screen');
   $('#fullscreen').title = fullscreen ? 'Exit full screen' : 'Full screen';
+  setDockAutoHide(Boolean(activeBook && fullscreen && settings.autoHideDocks));
 }
 
 async function toggleFullscreen() {
