@@ -100,6 +100,8 @@
       </div>
       <div class="footer-end"><span id="position-detail"></span><span class="progress-track" aria-hidden="true"><span id="progress-fill"></span></span></div>
     </footer>
+    <div class="reader-dock-edge top-edge" aria-hidden="true"></div>
+    <div class="reader-dock-edge bottom-edge" aria-hidden="true"></div>
   </section>
 
   <dialog class="modal settings-modal" id="settings" aria-labelledby="settings-title">
@@ -119,6 +121,10 @@
             <option value="linen">Linen</option><option value="grid">Graph paper</option>
           </select>
         </label>
+        <div>
+          <label class="checkbox-row"><input name="autoHideDocks" type="checkbox" aria-describedby="auto-hide-docks-note"> Auto-hide docks in full screen</label>
+          <p class="field-note" id="auto-hide-docks-note">Move the pointer to or tap the top or bottom edge to show both docks.</p>
+        </div>
         <div class="settings-subhead">EPUB typography</div>
         <div class="form-grid">
           <label class="field">Font <select name="font" id="font-options"></select></label>

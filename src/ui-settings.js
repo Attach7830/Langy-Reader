@@ -100,6 +100,7 @@ export function settingsDialog({ preferences, apply }) {
     for (const key of ['mode', 'summaryLanguage', 'translationLanguage', 'theme', 'background', 'font', 'size', 'line', 'width']) {
       fields[key].value = current[key];
     }
+    fields.autoHideDocks.checked = current.autoHideDocks;
     fields.pdfNight.checked = current.pdfNight;
     shadowKeys = { ...current.keys };
     section(tab);
@@ -201,6 +202,7 @@ export function settingsDialog({ preferences, apply }) {
       mode: fields.mode.value, summaryLanguage, translationLanguage, theme: fields.theme.value,
       background: fields.background.value, font: fields.font.value, width: fields.width.value,
       size: fields.size.valueAsNumber, line: fields.line.valueAsNumber,
+      autoHideDocks: fields.autoHideDocks.checked,
       pdfNight: fields.pdfNight.checked, keys: { ...shadowKeys },
     };
     dialog.close();
