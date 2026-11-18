@@ -198,8 +198,12 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .empty-state svg { width: 32px; height: 32px; color: var(--brand); }
 .empty-state h2 { color: var(--ink); font-size: 35px; }
 
-.reader-screen { height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--surface); }
-.reader-top { height: 64px; padding-inline: 24px; }
+.reader-screen {
+  --top-dock-height: 64px;
+  --bottom-dock-height: 61px;
+  height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--surface);
+}
+.reader-top { height: var(--top-dock-height); padding-inline: 24px; }
 .reader-heading, .reader-title { min-width: 0; }
 .reader-title { display: grid; gap: 2px; border-left: 1px solid var(--border); padding-left: 15px; }
 .reader-title strong, .reader-title span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -270,7 +274,7 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 }
 .reader-footer {
   display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 10px;
-  min-height: 61px; padding: 7px 20px; background: var(--surface); border-top: 1px solid var(--border);
+  min-height: var(--bottom-dock-height); padding: 7px 20px; background: var(--surface); border-top: 1px solid var(--border);
 }
 .footer-start, .footer-end, .page-nav, .zoom-controls { display: flex; align-items: center; gap: 7px; }
 .footer-start { flex-wrap: wrap; }
@@ -284,7 +288,27 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .progress-track > span { display: block; width: 0; height: 100%; background: var(--brand); }
 .zoom-controls > .button { min-height: 32px; padding: 4px 6px; font-size: 12px; }
 :fullscreen { background: var(--surface); }
-.focus-mode .reader-top { height: 52px; }
+.focus-mode .reader-screen { --top-dock-height: 52px; }
+
+.reader-dock-edge { display: none; }
+.reader-screen.auto-hide-docks { position: relative; overflow: clip; }
+/* Let the stage span the docks' rows so showing the controls leaves pagination alone. */
+.auto-hide-docks .reader-top { grid-area: 1 / 1; }
+.auto-hide-docks .reader-stage { grid-area: 1 / 1 / -1 / 2; }
+.auto-hide-docks .reader-footer { grid-area: 3 / 1; }
+.auto-hide-docks :is(.reader-top, .reader-footer) {
+  z-index: 3; transition: transform .18s ease, opacity .18s ease;
+}
+.auto-hide-docks:not(.docks-hidden) .summary-panel { margin-block: var(--top-dock-height) var(--bottom-dock-height); }
+.auto-hide-docks:not(.docks-hidden) .reader-message { top: calc(20px + var(--top-dock-height)); }
+.auto-hide-docks.docks-hidden :is(.reader-top, .reader-footer) { opacity: 0; pointer-events: none; }
+.auto-hide-docks.docks-hidden .reader-top { transform: translateY(-100%); }
+.auto-hide-docks.docks-hidden .reader-footer { transform: translateY(100%); }
+.auto-hide-docks.docks-hidden .reader-dock-edge {
+  display: block; position: absolute; inset-inline: 0; z-index: 3; height: 24px; touch-action: manipulation;
+}
+.reader-dock-edge.top-edge { top: 0; }
+.reader-dock-edge.bottom-edge { bottom: 0; }
 
 .modal {
   width: min(520px, calc(100vw - 24px)); max-height: min(92dvh, 790px); margin: auto;
@@ -375,7 +399,8 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
   .book-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 133px), 1fr)); gap: 24px 14px; }
   .book-cover { max-height: 255px; }
   .cover-title { font-size: 31px; }
-  .reader-top { gap: 5px; height: 53px; padding-inline: 5px; }
+  .reader-screen { --top-dock-height: 53px; --bottom-dock-height: 53px; }
+  .reader-top { gap: 5px; padding-inline: 5px; }
   .reader-heading { gap: 0; }
   .reader-title { padding-left: 6px; }
   .reader-title strong { font-size: 12px; }
@@ -386,7 +411,7 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
   .reader-actions :is(.icon-button, .button) { min-width: 32px; min-height: 36px; padding: 6px; }
   .reader-actions svg { width: 16px; height: 16px; }
   .reading-main { padding: 7px; }
-  .reader-footer { min-height: 53px; gap: 4px; padding-inline: 4px; }
+  .reader-footer { gap: 4px; padding-inline: 4px; }
   .footer-start, .page-nav { gap: 4px; }
   .footer-end { font-size: 11px; }
   .word-settings { min-width: 30px; padding: 3px; }

@@ -31,6 +31,7 @@ export const defaults = {
   mode: 'translation', translationLanguage: 'en', summaryLanguage: 'en', theme: 'paper', background: 'grain',
   font: 'spectral', size: 20, line: 1.65, width: 'balanced', pdfNight: true,
   keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's' },
+  autoHideDocks: false,
 };
 
 function read(key, defaultValue) {
