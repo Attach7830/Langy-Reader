@@ -9,6 +9,8 @@ export function libraryScreen({ progress, onRemove }) {
   const bookForm = $('#book-form');
   const categoryDialog = $('#category-dialog');
   const categoryForm = $('#category-form');
+  const learningDialog = $('#learning-dialog');
+  let learningBook, learningTimer, libraryTimer;
   let snapshot = { categories: [], books: [], maxUpload: 120 * 1024 ** 2, demo: false };
   let category = 'all', editingBook, editingCategory, selectedFile;
   let bookPending = false, categoryPending = false;
@@ -66,6 +68,18 @@ export function libraryScreen({ progress, onRemove }) {
       info.append(track);
     }
     card.append(link);
+    const analysis = book.learning;
+    const detail = element('div', 'book-learning');
+    const count = analysis?.lemmaCount;
+    const vocabulary = count == null ? '' : `${count.toLocaleString()} ${analysis.method === 'word forms' ? 'word forms' : 'lemmas'}`;
+    const estimate = analysis?.reading?.band ? `Est. ${analysis.reading.band}` : '';
+    detail.append(element('span', 'book-meta', [vocabulary, estimate].filter(Boolean).join(' · ')));
+    const tools = element('button', 'button quiet small', 'Analysis & audio');
+    tools.type = 'button';
+    tools.setAttribute('aria-label', `Analysis and audio for ${book.title}`);
+    tools.addEventListener('click', () => void showLearning(book));
+    detail.append(tools);
+    card.append(detail);
     if (!snapshot.demo || book.id !== 'sample') card.append(editButton(`Edit ${book.title}`, () => showBook(book), 'book-edit'));
     return card;
   }
@@ -91,6 +105,7 @@ export function libraryScreen({ progress, onRemove }) {
     const filter = search.value.trim().toLocaleLowerCase();
     const visible = snapshot.books.filter((book) =>
       (category === 'all' || (book.categoryId ?? 'uncategorized') === category) &&
+      (!$('#reading-filter').value || book.learning?.reading?.band === $('#reading-filter').value) &&
       (!filter || `${book.title} ${book.author}`.toLocaleLowerCase().includes(filter)));
     $('#book-count').textContent = `${visible.length} ${visible.length === 1 ? 'book' : 'books'}`;
     books.replaceChildren(...visible.map(bookCard));
@@ -104,8 +119,110 @@ export function libraryScreen({ progress, onRemove }) {
     snapshot = await api('/api/library');
     message('#library-error');
     render();
+    clearTimeout(libraryTimer);
+    if (snapshot.books.some((book) => ['queued', 'running'].includes(book.learning?.state)
+      || ['queued', 'running'].includes(book.learning?.reading?.state))) {
+      libraryTimer = setTimeout(() => { if (!document.querySelector('dialog[open]')) void refresh(); }, 4500);
+    }
     return snapshot;
   }
+
+  async function learningStatus() {
+    if (!learningDialog.open || !learningBook) return;
+    clearTimeout(learningTimer);
+    const id = learningBook.id;
+    try {
+      const result = await api(`/api/books/${id}/learning`);
+      if (learningBook?.id !== id || !learningDialog.open) return;
+      const analysis = result.analysis;
+      $('#learning-stats').textContent = analysis.lemmaCount == null ? `Analysis ${analysis.state}…`
+        : `${analysis.lemmaCount.toLocaleString()} ${analysis.method === 'word forms' ? 'word forms' : 'unique lemmas'} · ${analysis.wordCount.toLocaleString()} words`;
+      $('#learning-estimate').textContent = analysis.reading?.band
+        ? `Estimated ACTFL reading demand · ${analysis.reading.band}`
+        : analysis.reading?.state === 'error' ? 'Reading estimate unavailable.'
+          : analysis.reading?.state === 'ready' ? 'Reading estimate unavailable for this text.' : 'Estimating reading demand…';
+      $('#learning-reason').textContent = analysis.reading?.text || '';
+      const evidence = analysis.reading?.evidence ?? [];
+      $('#learning-evidence').hidden = !evidence.length;
+      $('#learning-quotes').replaceChildren(
+        element('p', 'field-note', `${analysis.reading?.sampledPassages || 0} excerpts across ${analysis.reading?.sampledSections || 0} of ${analysis.reading?.totalSections || 0} sections.`),
+        ...evidence.map((quote) => element('blockquote', '', quote)),
+      );
+      $('#generate-book-audio').disabled = analysis.state !== 'ready' || !result.chapters.some((chapter) => chapter.narratable);
+      const audio = result.narration.audio;
+      const working = ['queued', 'assembling'].includes(audio.state);
+      $('#generate-book-audio').disabled ||= working;
+      $('#cancel-book-audio').hidden = !working;
+      $('#book-audio-status').textContent = audio.state === 'ready' ? 'Complete book recording ready. Chapter markers are included.'
+        : audio.state === 'queued' ? `Generating book audio · ${audio.complete} / ${audio.total} sections`
+          : audio.state === 'assembling' ? 'Finishing the complete book recording…'
+            : audio.state === 'cancelled' ? 'Generation cancelled. Completed work can be reused.' : '';
+      const download = $('#book-audio-download');
+      download.hidden = audio.state !== 'ready';
+      if (audio.state === 'ready') { download.href = audio.url; download.download = learningBook.title + '.mp3'; }
+      message('#learning-error', analysis.error || audio.error || analysis.reading?.error);
+      const rows = result.chapters.map((chapter) => {
+        const row = element('div', 'learning-chapter');
+        const metadata = element('div');
+        const availability = chapter.narratable ? '' : chapter.characters ? 'Above demo narration limit' : 'No selectable text';
+        const count = chapter.lemmaCount == null ? '' : `${availability ? ' · ' : ''}${chapter.lemmaCount} lemmas`;
+        metadata.append(element('strong', '', chapter.title), element('span', 'book-meta', availability + count));
+        row.append(metadata);
+        return row;
+      });
+      $('#learning-chapters').replaceChildren(...rows);
+      if (['queued', 'running'].includes(analysis.state) || ['queued', 'running'].includes(analysis.reading?.state)
+        || working) {
+        learningTimer = setTimeout(() => void learningStatus(), 2200);
+      }
+    } catch (error) { message('#learning-error', error.message); }
+  }
+
+  async function showLearning(book) {
+    learningBook = book;
+    $('#learning-title').textContent = book.title;
+    $('#learning-stats').textContent = 'Loading analysis…';
+    $('#learning-estimate').textContent = '';
+    $('#learning-reason').textContent = '';
+    $('#learning-chapters').replaceChildren();
+    $('#replace-book-audio').checked = false;
+    message('#learning-error');
+    learningDialog.showModal();
+    await learningStatus();
+  }
+
+  $('#analyze-book').addEventListener('click', async () => {
+    if (!learningBook) return;
+    try {
+      await api(`/api/books/${learningBook.id}/learning`, { method: 'POST', body: {} });
+      void learningStatus();
+    } catch (error) { message('#learning-error', error.message); }
+  });
+  $('#generate-book-audio').addEventListener('click', async (event) => {
+    if (!learningBook) return;
+    event.target.disabled = true;
+    try {
+      await api(`/api/books/${learningBook.id}/narration`, {
+        method: 'POST', body: { replace: $('#replace-book-audio').checked },
+      });
+      void learningStatus();
+    } catch (error) {
+      message('#learning-error', error.message);
+      event.target.disabled = false;
+    }
+  });
+  learningDialog.addEventListener('close', () => {
+    clearTimeout(learningTimer);
+    learningBook = undefined;
+    void refresh();
+  });
+  $('#cancel-book-audio').addEventListener('click', async () => {
+    if (!learningBook) return;
+    try {
+      await api(`/api/books/${learningBook.id}/narration`, { method: 'DELETE' });
+      void learningStatus();
+    } catch (error) { message('#learning-error', error.message); }
+  });
 
   function chooseCategory(id) {
     category = id;
@@ -165,6 +282,7 @@ export function libraryScreen({ progress, onRemove }) {
   $('#all-books').addEventListener('click', () => chooseCategory('all'));
   $('#import-book').addEventListener('click', () => showBook());
   search.addEventListener('input', render);
+  $('#reading-filter').addEventListener('change', render);
   $('#book-file').addEventListener('change', (event) => stageFile(event.target.files[0]));
   $('#file-field').addEventListener('dragover', (event) => {
     event.preventDefault();

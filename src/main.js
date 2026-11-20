@@ -4,27 +4,47 @@ import '@fontsource/dm-sans/latin-700.css';
 import '@fontsource/instrument-serif/latin-400.css';
 import '@fontsource/spectral/latin-400.css';
 import './styles.css';
+import { readerDocks } from './reader-docks.js';
 import { $, $$, api, drawIcons, element, message } from './ui.js';
 import { libraryScreen } from './ui-library.js';
 import { settingsDialog } from './ui-settings.js';
 import { wordHelp } from './words.js';
+import { earlierPageContext } from './reading-context.js';
+import { narration } from './narration.js';
 import { eventKey, getProgress, getSettings, keyLabel, languageName, modes, saveProgress, saveSettings, updateAppearance } from './settings.js';
 
 const viewer = $('#viewer');
 const stage = $('#stage');
 const readerScreen = $('#reader-screen');
+const setDockAutoHide = readerDocks(readerScreen);
 const summaryPanel = $('#summary-panel');
 const summaryBody = $('#summary-body');
 const summaryButton = $('#generate-summary');
+const summaryActions = $('#summary-actions');
+const summaryDetail = $('#summary-detail');
+const summaryDetailBody = $('#summary-detail-body');
 const progress = getProgress();
 const summaries = new Map();
 let settings = getSettings();
-let activeBook, renderer, loadController, activePosition, summaryController;
+let activeBook, renderer, loadController, activePosition, summaryController, activeSummary;
 let moving = false, summaryQueued = false, fallbackFullscreen = false;
 let zoom = 1;
 let statusCheck = 0;
 
-const words = wordHelp({ preferences: () => settings, request: api });
+const words = wordHelp({
+  preferences: () => settings, request: api,
+  lemmaAt: (node, offset) => audio.lemmaAt(node, offset),
+  seekWord: (node, offset) => audio.seekWord(node, offset),
+});
+const audio = narration({
+  preferences: () => settings, renderer: () => renderer, book: () => activeBook,
+  navigate: (target) => move(0, target),
+  changePreferences: (values) => {
+    settings = { ...settings, ...values };
+    saveSettings(settings);
+    audio.apply();
+  },
+});
 const library = libraryScreen({
   progress,
   onRemove(id) { delete progress[id]; saveProgress(progress); },
@@ -58,6 +78,8 @@ function applySettings(updated, aiChanged) {
   saveSettings(settings);
   words.clear();
   applyAppearance();
+  syncFullscreen();
+  audio.apply();
   if (aiChanged) {
     summaries.clear();
     words.reset();
@@ -85,10 +107,13 @@ async function checkAI() {
   }
 }
 
-function showReader(visible) {
-  readerScreen.hidden = !visible;
-  $('#library-screen').hidden = visible;
-  $('#library-header').hidden = visible;
+function showScreen(screen) {
+  readerScreen.hidden = screen !== 'reader';
+  $('#library-screen').hidden = screen !== 'library';
+  $('#about-screen').hidden = screen !== 'about';
+  $('#library-header').hidden = screen === 'reader';
+  if (screen === 'about') $('#about-link').setAttribute('aria-current', 'page');
+  else $('#about-link').removeAttribute('aria-current');
 }
 
 function readerMessage(text = '', problem = false) {
@@ -116,10 +141,12 @@ function positionChanged(position) {
   $('#previous').disabled = !position.previous;
   $('#next').disabled = !position.next;
   $('#progress-fill').style.width = `${Math.round((position.percent || 0) * 100)}%`;
-  if (changed) {
+  if (changed || position.reflowed) {
     words.clear();
     resetSummary();
+    if (!summaryPanel.hidden) void generateSummary();
   }
+  void audio.refresh({ seekToPage: changed && !position.reflowed });
 }
 
 function showSummary(visible) {
@@ -149,39 +176,125 @@ function summaryState(state, text) {
 function resetSummary() {
   summaryController?.abort();
   summaryController = undefined;
+  activeSummary = undefined;
+  summaryActions.hidden = true;
+  summaryActions.replaceChildren();
+  summaryDetail.hidden = true;
+  summaryDetailBody.textContent = '';
+  summaryPanel.scrollTop = 0;
   $('#summary-location').textContent = [activePosition?.label, languageName(settings.summaryLanguage)].filter(Boolean).join(' · ');
   summaryState('idle', 'Generate a summary of the current page.');
 }
 
-async function summarize() {
+function showSummaryResult(entry) {
+  if (entry === activeSummary) return;
+  activeSummary = entry;
+  summaryState('complete', entry.text);
+  const actions = [
+    { label: 'Go deeper', mode: 'deeper' },
+    ...entry.suggestions.map((label) => ({ label, mode: 'question' })),
+  ];
+  summaryActions.replaceChildren(...actions.map(({ label, mode }) => {
+    const button = element('button', mode === 'deeper' ? 'button secondary' : 'button quiet', label);
+    button.type = 'button';
+    button.dir = 'auto';
+    button.lang = mode === 'question' ? entry.body.language : 'en';
+    button.setAttribute('aria-controls', 'summary-detail');
+    button.setAttribute('aria-pressed', 'false');
+    button.addEventListener('click', () => void explainSummary(mode, label, button));
+    return button;
+  }));
+  summaryActions.hidden = false;
+}
+
+function detailState(state, text) {
+  summaryDetailBody.dataset.state = state;
+  summaryDetailBody.textContent = text;
+}
+
+async function explainSummary(mode, label, selected) {
+  const entry = activeSummary;
+  if (!entry || summaryController) return;
+  const question = mode === 'question' ? label : '';
+  const key = `${mode}:${question}`;
+  const buttons = $$('button', summaryActions);
+  for (const button of buttons) button.setAttribute('aria-pressed', String(button === selected));
+  const title = $('#summary-detail-title');
+  title.textContent = label;
+  title.lang = mode === 'question' ? entry.body.language : 'en';
+  summaryDetailBody.lang = entry.body.language;
+  summaryDetail.hidden = false;
+  if (entry.details.has(key)) {
+    detailState('complete', entry.details.get(key));
+    summaryDetail.scrollIntoView({ block: 'nearest' });
+    return;
+  }
+
+  const controller = new AbortController();
+  summaryController = controller;
+  for (const button of buttons) button.disabled = true;
+  detailState('loading', 'Generating an explanation…');
+  summaryDetail.scrollIntoView({ block: 'nearest' });
+  try {
+    const { text } = await api('/api/ai/summary', {
+      method: 'POST', signal: controller.signal,
+      body: { ...entry.body, mode, question, brief: entry.text },
+    });
+    if (summaryController !== controller) return;
+    entry.details.set(key, text);
+    detailState('complete', text);
+  } catch (error) {
+    if (summaryController === controller && error.name !== 'AbortError') detailState('error', error.message);
+  } finally {
+    if (summaryController === controller) {
+      summaryController = undefined;
+      for (const button of buttons) button.disabled = false;
+    }
+  }
+}
+
+function summarize() {
   if (!renderer || summaryController) return;
   if (moving) {
     summaryQueued = true;
     return;
   }
-  words.clear();
   showSummary(true);
+  void generateSummary();
+}
+
+async function generateSummary() {
+  if (!renderer || summaryPanel.hidden || summaryController) return;
+  words.clear();
   $('#summary-location').textContent = [activePosition?.label, languageName(settings.summaryLanguage)].filter(Boolean).join(' · ');
-  const page = renderer.excerpt().trim();
+  const page = renderer.summaryPage();
   if (!page) {
+    summaryState('loading', 'Preparing this page…');
+    return;
+  }
+  const text = page.text.trim();
+  if (!text) {
     summaryState('error', activeBook.format === 'pdf'
       ? 'This page has no selectable text. Scanned pages remain readable. They need a text layer for language help.'
       : 'This page has no text to summarize.');
     return;
   }
-  const key = JSON.stringify([activeBook.id, settings.summaryLanguage, page]);
-  if (summaries.has(key)) return summaryState('complete', summaries.get(key));
+  const { id, title, author, language } = activeBook;
+  const outputLanguage = settings.summaryLanguage;
+  const key = JSON.stringify([id, activePosition?.target, outputLanguage, title, author, text]);
+  if (summaries.has(key)) return showSummaryResult(summaries.get(key));
   const controller = new AbortController();
   summaryController = controller;
   summaryState('loading', 'Generating a summary…');
   try {
-    const { text } = await api('/api/ai/summary', {
-      method: 'POST', signal: controller.signal, body: { text: page, language: settings.summaryLanguage },
-    });
+    const earlier = await earlierPageContext(page.earlier, text, language, controller.signal);
+    const body = { text, language: outputLanguage, earlier, book: { title, author, publicationDate: page.publicationDate } };
+    const { text: answer, suggestions = [] } = await api('/api/ai/summary', { method: 'POST', signal: controller.signal, body });
     if (summaryController !== controller) return;
-    summaries.set(key, text);
+    const entry = { text: answer, suggestions, body, details: new Map() };
+    summaries.set(key, entry);
     if (summaries.size > 90) summaries.delete(summaries.keys().next().value);
-    summaryState('complete', text);
+    showSummaryResult(entry);
   } catch (error) {
     if (summaryController === controller && error.name !== 'AbortError') summaryState('error', error.message);
   } finally {
@@ -195,6 +308,7 @@ function syncFullscreen() {
   $('#fullscreen').setAttribute('aria-pressed', String(fullscreen));
   $('#fullscreen').setAttribute('aria-label', fullscreen ? 'Exit full screen' : 'Full screen');
   $('#fullscreen').title = fullscreen ? 'Exit full screen' : 'Full screen';
+  setDockAutoHide(Boolean(activeBook && fullscreen && settings.autoHideDocks));
 }
 
 async function toggleFullscreen() {
@@ -210,6 +324,7 @@ async function toggleFullscreen() {
 }
 
 function closeReader() {
+  audio.stop();
   loadController?.abort();
   loadController = undefined;
   renderer?.destroy();
@@ -232,13 +347,16 @@ async function openBook(book) {
   activeBook = book;
   loadController = new AbortController();
   const { signal } = loadController;
-  showReader(true);
+  showScreen('reader');
+  audio.apply();
   document.title = `${book.title} · Langy Reader`;
   $('#reading-title').textContent = book.title;
   $('#reading-subtitle').textContent = [book.format.toUpperCase(), languageName(book.language)].join(' · ');
   $('#pdf-zoom').hidden = book.format !== 'pdf';
-  $('#contents-button').setAttribute('aria-label', book.format === 'pdf' ? 'Go to page' : 'Contents');
-  $('#contents-button').title = book.format === 'pdf' ? 'Go to page' : 'Contents';
+  const contentsButton = $('#contents-button');
+  contentsButton.disabled = true;
+  contentsButton.title = book.format === 'pdf' ? 'Go to page' : 'Contents';
+  contentsButton.setAttribute('aria-label', contentsButton.title);
   $('#previous').disabled = true;
   $('#next').disabled = true;
   $('#page-label').textContent = '';
@@ -264,8 +382,15 @@ async function openBook(book) {
     });
     if (signal.aborted) return opened.destroy();
     renderer = opened;
+    if (book.format === 'pdf' && opened.contents.length) {
+      contentsButton.title = 'Contents';
+      contentsButton.setAttribute('aria-label', contentsButton.title);
+    }
     if (!$('#settings').open) await renderer.apply?.(settings);
     if (signal.aborted) return;
+    contentsButton.disabled = false;
+    audio.apply();
+    void audio.refresh();
     readerMessage();
     if (!document.querySelector('dialog[open]')) viewer.focus({ preventScroll: true });
   } catch (error) {
@@ -274,10 +399,17 @@ async function openBook(book) {
 }
 
 async function route() {
+  if (location.hash === '#about' && library.state.demo) {
+    if (activeBook) closeReader();
+    showScreen('about');
+    document.title = 'About · Langy Reader';
+    $('#about-title').focus({ preventScroll: true });
+    return;
+  }
   const match = /^#read\/([a-z0-9-]+)$/i.exec(location.hash);
   if (!match) {
     if (activeBook) closeReader();
-    showReader(false);
+    showScreen('library');
     document.title = 'Langy Reader';
     library.render();
     return;
@@ -286,15 +418,15 @@ async function route() {
   if (!book) {
     closeReader();
     history.replaceState(null, '', '#library');
-    showReader(false);
+    showScreen('library');
     return message('#library-error', 'This book could not be found. Demo uploads expire after 24 hours.');
   }
   if (activeBook?.id !== book.id) await openBook(book);
 }
 
 async function move(direction, target) {
-  if (!renderer || moving) return;
-  if (target == null && (direction > 0 ? !activePosition?.next : !activePosition?.previous)) return;
+  if (!renderer || moving) return false;
+  if (target == null && (direction > 0 ? !activePosition?.next : !activePosition?.previous)) return false;
   moving = true;
   words.clear();
   resetSummary();
@@ -304,6 +436,7 @@ async function move(direction, target) {
     else await renderer.go(target);
     await new Promise(requestAnimationFrame);
     if (!signal.aborted) readerMessage();
+    return !signal.aborted;
   } catch (error) {
     if (!signal.aborted) reportError(error);
   } finally {
@@ -311,7 +444,7 @@ async function move(direction, target) {
       moving = false;
       if (summaryQueued) {
         summaryQueued = false;
-        void summarize();
+        summarize();
       }
     }
   }
@@ -333,46 +466,90 @@ async function zoomPDF(factor) {
 function contents() {
   if (!renderer) return;
   const dialog = $('#contents-dialog');
+  if (dialog.open) return;
   const body = $('#contents-body');
   words.clear();
-  if (activeBook.format === 'pdf') {
-    $('#contents-title').textContent = 'Go to page';
+  const isPdf = activeBook.format === 'pdf';
+  const entries = renderer.contents;
+  $('#contents-title').textContent = isPdf && !entries.length ? 'Go to page' : 'Contents';
+  body.replaceChildren();
+  const current = renderer;
+
+  function jump(target) {
+    dialog.close();
+    viewer.focus({ preventScroll: true });
+    void move(0, target);
+  }
+
+  function tocList(items, name) {
+    const list = element('nav', 'toc-list');
+    list.setAttribute('aria-label', name);
+    for (const { label, target, depth, marker } of items) {
+      const item = target == null ? element('div', 'toc-group', label) : element('button', 'toc-item', label);
+      item.style.paddingInlineStart = `${10 + 14 * Math.min(depth, 5)}px`;
+      if (marker) item.append(element('span', 'toc-marker', 'Reading marker'));
+      if (target != null) {
+        item.type = 'button';
+        item.addEventListener('click', () => jump(target));
+      }
+      list.append(item);
+    }
+    return list;
+  }
+
+  let pageInput;
+  if (isPdf) {
     const form = element('form', 'pdf-jump');
     const field = element('label', 'field', `Page number (1–${renderer.pageCount})`);
-    const number = document.createElement('input');
-    number.type = 'number';
-    number.min = '1';
-    number.max = String(renderer.pageCount);
-    number.value = String(renderer.pageNumber);
-    number.required = true;
+    pageInput = document.createElement('input');
+    pageInput.type = 'number';
+    pageInput.min = '1';
+    pageInput.max = String(renderer.pageCount);
+    pageInput.value = String(renderer.pageNumber);
+    pageInput.required = true;
     const submit = element('button', 'button primary', 'Go');
-    field.append(number);
+    field.append(pageInput);
     form.append(field, submit);
     form.addEventListener('submit', (event) => {
       event.preventDefault();
-      dialog.close();
-      viewer.focus({ preventScroll: true });
-      void move(0, number.valueAsNumber);
+      jump(pageInput.valueAsNumber);
     });
-    body.replaceChildren(form);
-    dialog.showModal();
-    number.select();
-  } else {
-    $('#contents-title').textContent = 'Contents';
-    const items = renderer.contents.map(({ label, target, depth }) => {
-      const button = element('button', 'toc-item', label);
-      button.type = 'button';
-      button.style.paddingInlineStart = `${10 + 14 * depth}px`;
-      button.addEventListener('click', () => {
-        dialog.close();
-        viewer.focus({ preventScroll: true });
-        void move(0, target);
-      });
-      return button;
-    });
-    body.replaceChildren(...(items.length ? items : [element('p', 'muted', 'This book has no table of contents.')]));
-    dialog.showModal();
+    body.append(form);
   }
+  if (entries.length) body.append(tocList(entries, 'Book contents'));
+  if (current.readingOutline) {
+    const detail = element('details', 'toc-outline');
+    const output = element('div', 'toc-outline-body');
+    detail.append(element('summary', '', 'Reading outline'), output);
+    body.append(detail);
+    let started = false;
+    async function showOutline() {
+      if (!detail.open || started) return;
+      started = true;
+      const status = element('p', 'muted toc-note', 'Finding headings and breaks…');
+      status.setAttribute('role', 'status');
+      output.replaceChildren(status);
+      try {
+        const inferred = await current.readingOutline();
+        if (renderer !== current || !output.isConnected) return;
+        const description = inferred.some((item) => item.marker)
+          ? 'Jump by heading or opening words. Reading markers are approximate stops.'
+          : 'Jump by heading or opening words.';
+        const note = element('p', 'muted toc-note', description);
+        output.replaceChildren(...(inferred.length
+          ? [note, tocList(inferred, 'Reading outline')]
+          : [element('p', 'muted toc-note', 'No passages found.')]));
+      } catch {
+        if (renderer === current && output.isConnected) status.textContent = 'Could not read passages from this book.';
+      }
+    }
+    detail.addEventListener('toggle', showOutline);
+    detail.open = entries.filter((item) => item.target != null).length < 2;
+    if (detail.open) void showOutline();
+  }
+  if (!body.children.length) body.append(element('p', 'muted', 'This book has no table of contents.'));
+  dialog.showModal();
+  if (!entries.length) pageInput?.select();
 }
 
 function keydown(event) {
@@ -385,14 +562,15 @@ function keydown(event) {
   }
   const key = eventKey(event);
   if (!key || event.repeat || (key === 'Space' && event.target?.closest?.('button, a'))) return;
-  const { previous, next, alternate, fullscreen, summary } = settings.keys;
-  if (![previous, next, alternate, fullscreen, summary].includes(key)) return;
+  const { previous, next, alternate, fullscreen, summary, playback } = settings.keys;
+  if (![previous, next, alternate, fullscreen, summary, playback].includes(key)) return;
   event.preventDefault();
   if (key === previous) void move(-1);
   else if (key === next || key === alternate) void move(1);
   else if (key === fullscreen) void toggleFullscreen();
+  else if (key === playback) audio.toggle();
   else if (key === summary) {
-    if (summaryPanel.hidden) void summarize();
+    if (summaryPanel.hidden) summarize();
     else closeSummary();
   }
 }
@@ -401,6 +579,12 @@ $('#previous').addEventListener('click', () => { viewer.focus({ preventScroll: t
 $('#next').addEventListener('click', () => { viewer.focus({ preventScroll: true }); void move(1); });
 $('#contents-button').addEventListener('click', contents);
 $('#fullscreen').addEventListener('click', toggleFullscreen);
+$('#audio-toggle').addEventListener('click', () => {
+  settings = { ...settings, audioEnabled: !settings.audioEnabled };
+  saveSettings(settings);
+  audio.apply();
+  void audio.refresh();
+});
 $('#summarize').addEventListener('click', summarize);
 $('#generate-summary').addEventListener('click', summarize);
 $('#close-summary').addEventListener('click', closeSummary);
@@ -410,7 +594,7 @@ $('#zoom-reset').addEventListener('click', () => zoomPDF(1));
 $('#ai-status').addEventListener('click', checkAI);
 document.addEventListener('fullscreenchange', syncFullscreen);
 document.addEventListener('keydown', keydown);
-window.addEventListener('resize', () => { words.clear(); resetSummary(); });
+window.addEventListener('resize', words.clear);
 
 drawIcons();
 applyAppearance();
@@ -419,6 +603,7 @@ setInterval(checkAI, 30_000);
 try {
   const snapshot = await library.refresh();
   settingsUI.setDemo(snapshot.demo);
+  $('#about-link').hidden = !snapshot.demo;
   window.addEventListener('hashchange', route);
   await route();
 } catch (error) {

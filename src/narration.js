@@ -1,0 +1,326 @@
+import { $, api, element } from './ui.js';
+import { deviceMediaControls } from './audio-media-session.js';
+
+const timeLabel = (value) => {
+  const seconds = Math.max(0, Math.floor(value || 0));
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes >= 60 ? Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2, '0') : minutes}:${String(seconds % 60).padStart(2, '0')}`;
+};
+function atTime(items, time, field = 'start') {
+  let low = 0, high = items.length - 1, found = -1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    if (items[middle][field] <= time) { found = middle; low = middle + 1; }
+    else high = middle - 1;
+  }
+  return found;
+}
+export function narration({ preferences, renderer, book, navigate, changePreferences }) {
+  const player = $('#narration-player'), audio = $('#narration-audio');
+  const play = $('#narration-play'), generate = $('#narration-generate');
+  const status = $('#narration-status'), seek = $('#narration-seek');
+  const chapters = $('#narration-chapter'), markers = $('#narration-markers');
+  const rewind = $('#narration-rewind'), forward = $('#narration-forward');
+  const previousChapter = $('#narration-previous-chapter'), nextChapter = $('#narration-next-chapter');
+  const rate = $('#narration-rate'), podcastToggle = $('#podcast-toggle');
+  let recording, recordingBook, connection = false, previewAudio = false, unit, local, descriptor, timed = [], timingMap = new Map();
+  let lifecycle = 0, controller, poll, animation, bookRequest, following = false, followAgain = false, forceFollow = false;
+  let wantPlaying = false, enabled = false, initialSeek = true, highlighted, highlightedWindow;
+  const cache = new Map();
+  const ready = () => recording?.state === 'ready';
+  const segmentFor = (key) => recording?.segments?.find((part) => part.key === key);
+  const segmentAt = (time) => recording?.segments?.[Math.max(0, atTime(recording.segments, time))];
+  // Media clocks can round a chapter's exact start down by a fraction of a millisecond.
+  const chapterIndex = () => atTime(recording?.markers || [], audio.currentTime + .01, 'time');
+  const deviceControls = deviceMediaControls({
+    play: () => { if (enabled && ready()) { wantPlaying = true; void startPlayback(); } },
+    pause: pausePlayback,
+    seekbackward: () => skipBy(-10), seekforward: () => skipBy(10),
+    previoustrack: () => jumpChapter(-1), nexttrack: () => jumpChapter(1),
+    seekto: (details) => { if (Number.isFinite(details?.seekTime)) seekTo(details.seekTime); },
+  });
+
+  function clearHighlight() {
+    highlightedWindow?.CSS?.highlights?.delete('langy-narration');
+    highlighted = highlightedWindow = undefined;
+  }
+  function controls() {
+    const loaded = ready() && audio.getAttribute('src') === recording.url && Number.isFinite(audio.duration);
+    play.disabled = seek.disabled = chapters.disabled = !loaded;
+    play.textContent = audio.paused ? 'Play' : 'Pause';
+    play.setAttribute('aria-label', audio.paused ? 'Play narration' : 'Pause narration');
+    const time = audio.currentTime || 0;
+    seek.max = String(recording?.duration || 1);
+    seek.value = String(time);
+    $('#narration-time').textContent = `${timeLabel(time)} / ${timeLabel(recording?.duration)}`;
+    const index = chapterIndex();
+    rewind.disabled = !loaded || time <= 0;
+    forward.disabled = !loaded || time >= recording.duration;
+    previousChapter.disabled = !loaded || index <= 0;
+    nextChapter.disabled = !loaded || index >= recording.markers.length - 1;
+    if (index >= 0) chapters.value = String(index);
+    const title = index >= 0 ? recording.markers[index].title : segmentAt(time)?.title;
+    seek.setAttribute('aria-valuetext', `${timeLabel(time)} of ${timeLabel(recording?.duration)}${title ? ` · ${title}` : ''}`);
+    if (ready() && title) status.textContent = title;
+    $('#podcast-book-title').textContent = book()?.title || 'Book audio';
+    deviceControls.update({
+      active: enabled && loaded, title: book()?.title || 'Book audio', author: book()?.author, chapter: title,
+      duration: recording?.duration, position: time, rate: audio.playbackRate, paused: audio.paused,
+    });
+  }
+  function drawHighlight() {
+    const stamp = timed[atTime(timed, audio.currentTime)];
+    const word = stamp && audio.currentTime <= stamp.end ? timingMap.get(stamp.index) : null;
+    if (!enabled || !preferences().audioHighlight || !word) { clearHighlight(); return; }
+    if (word === highlighted) return;
+    clearHighlight();
+    const range = local?.rangeFor(word), win = local?.root.ownerDocument.defaultView;
+    if (range && win?.CSS?.highlights && win.Highlight) {
+      win.CSS.highlights.set('langy-narration', new win.Highlight(range));
+      highlighted = word; highlightedWindow = win;
+    }
+  }
+  function bindLocal(current, next) {
+    descriptor = current; unit = next; local = current.track();
+    local.annotate(next.tokens || []);
+    timingMap = local.match(next.audio.timings || []);
+    const segment = segmentFor(next.key);
+    timed = segment ? (next.audio.timings || []).flatMap((stamp, index) => stamp.start == null ? [] : [{
+      index, start: segment.start + stamp.start * segment.scale, end: segment.start + stamp.end * segment.scale,
+    }]) : [];
+    clearHighlight(); drawHighlight();
+  }
+  async function loadCurrent() {
+    const active = book(), current = renderer()?.audioUnit?.();
+    if (!active || !current) return;
+    const recordingId = ready() ? recording.id : undefined;
+    if (unit?.key === current.key && descriptor?.root === current.root && unit.recordingId === recordingId) return;
+    const epoch = lifecycle, key = `${current.key}:${recordingId || ''}`;
+    if (!cache.has(key)) {
+      const query = ready() ? `?recording=${encodeURIComponent(recording.id)}` : '';
+      cache.set(key, api(`/api/books/${active.id}/chapters/${encodeURIComponent(current.key)}${query}`, { signal: controller.signal })
+        .catch((error) => { cache.delete(key); throw error; }));
+      if (cache.size > 8) cache.delete(cache.keys().next().value);
+    }
+    const next = await cache.get(key);
+    if (epoch !== lifecycle || book()?.id !== active.id || (ready() ? recording.id : undefined) !== recordingId) return;
+    const latest = renderer()?.audioUnit?.();
+    if (latest?.key === current.key) bindLocal(latest, { ...next, recordingId });
+  }
+  function firstVisibleTime() {
+    for (const stamp of timed) {
+      const word = timingMap.get(stamp.index);
+      if (word && local.visible(word)) return stamp.start;
+    }
+    const segment = segmentFor(unit?.key);
+    if (segment) return segment.start;
+    const ordinal = Number(unit?.key?.split(':')[1]);
+    return recording?.segments?.find((part) => Number(part.key.split(':')[1]) > ordinal)?.start ?? recording?.duration ?? 0;
+  }
+  function syncInitialPosition() {
+    if (!initialSeek || !ready() || !descriptor?.root.isConnected || unit?.recordingId !== recording.id || !Number.isFinite(audio.duration)) return;
+    initialSeek = false;
+    audio.currentTime = firstVisibleTime();
+    controls();
+  }
+  // Page changes run serially; another scrub replaces the pending target.
+  async function follow(force = false) {
+    if (!enabled || !ready() || initialSeek) return;
+    followAgain = true; forceFollow ||= force;
+    if (following) return;
+    following = true;
+    const epoch = lifecycle;
+    try {
+      while (followAgain && epoch === lifecycle && enabled) {
+        followAgain = false;
+        const forced = forceFollow; forceFollow = false;
+        const segment = segmentAt(audio.currentTime);
+        if (!segment) break;
+        if (renderer()?.audioUnit?.()?.key !== segment.key) {
+          const moved = await navigate(renderer()?.audioTarget(segment.key));
+          if (moved === false) { setTimeout(() => { if (epoch === lifecycle) void follow(true); }, 50); break; }
+        }
+        if (epoch !== lifecycle) break;
+        await loadCurrent();
+        if (segmentAt(audio.currentTime)?.key !== segment.key) { followAgain = true; continue; }
+        if (unit?.key !== segment.key || !local) continue;
+        const stamp = timed[Math.max(0, atTime(timed, audio.currentTime))];
+        const word = stamp && timingMap.get(stamp.index), range = word && local.rangeFor(word);
+        if (range && (forced || !local.visible(word))) await renderer()?.revealWord(range);
+        if (epoch !== lifecycle) break;
+        drawHighlight();
+      }
+    } catch (error) { if (epoch === lifecycle && error.name !== 'AbortError') status.textContent = error.message; }
+    finally { if (epoch === lifecycle) following = false; }
+  }
+  async function startPlayback() {
+    try { await audio.play(); }
+    catch { wantPlaying = false; status.textContent = 'Press Play to start narration.'; }
+  }
+  function seekTo(time) {
+    if (!enabled || !ready() || !Number.isFinite(audio.duration)) return;
+    initialSeek = false;
+    audio.currentTime = Math.max(0, Math.min(recording.duration, time));
+    controls(); drawHighlight(); void follow(true);
+  }
+  function skipBy(seconds) { seekTo(audio.currentTime + seconds); }
+  function jumpChapter(direction) {
+    const entries = recording?.markers || [];
+    const index = Math.max(0, chapterIndex()) + direction;
+    if (index >= 0 && index < entries.length) seekTo(entries[index].time);
+  }
+  function pausePlayback() { wantPlaying = false; audio.pause(); }
+  function renderMarkers() {
+    const entries = recording?.markers || [];
+    chapters.replaceChildren(...entries.map((marker, index) => new Option(marker.title, String(index))));
+    markers.replaceChildren(...entries.map((marker) => {
+      const tick = element('button', 'narration-marker');
+      tick.type = 'button'; tick.tabIndex = -1;
+      tick.title = `${marker.title} · ${timeLabel(marker.time)}`;
+      tick.setAttribute('aria-label', tick.title);
+      tick.style.left = `${marker.time / recording.duration * 100}%`;
+      tick.addEventListener('click', () => seekTo(marker.time));
+      return tick;
+    }));
+    chapters.hidden = !entries.length;
+  }
+  async function updateRecording(result) {
+    const epoch = lifecycle;
+    const changed = recording?.id !== result.audio.id || recording?.state !== result.audio.state;
+    recording = result.audio; connection = result.connected; previewAudio = Boolean(result.previewAudio);
+    const isReady = ready();
+    if (!isReady) play.disabled = seek.disabled = true;
+    generate.hidden = !enabled || isReady || !['missing', 'error', 'cancelled'].includes(recording.state);
+    generate.disabled = !connection;
+    generate.title = previewAudio ? 'Connect Kokoro on a self-hosted installation to generate audio.' : '';
+    generate.textContent = recording.state === 'error' ? 'Retry book audio' : 'Generate book audio';
+    status.textContent = previewAudio && !isReady ? 'Audio and podcast preview · Narration is not connected in this demo.' : ({
+      missing: connection ? 'Generate the complete book to listen.' : 'Connect Kokoro in Settings → Narration.',
+      queued: `Generating book audio · ${recording.complete} / ${recording.total} sections`,
+      assembling: 'Finishing the complete book recording…', cancelled: 'Book audio generation cancelled.', error: recording.error,
+    })[recording.state] || '';
+    if (changed) { clearHighlight(); cache.clear(); renderMarkers(); }
+    await loadCurrent().catch((error) => { if (!previewAudio) throw error; });
+    if (epoch !== lifecycle || recording !== result.audio) return;
+    if (enabled && isReady && audio.getAttribute('src') !== recording.url) {
+      initialSeek = true;
+      audio.onloadedmetadata = () => {
+        if (epoch !== lifecycle) return;
+        syncInitialPosition(); controls();
+        if (wantPlaying) void startPlayback();
+      };
+      audio.src = recording.url;
+      audio.playbackRate = preferences().audioRate;
+    }
+    syncInitialPosition();
+    controls();
+  }
+  async function loadRecording() {
+    if (bookRequest) return bookRequest;
+    const active = book(), epoch = lifecycle;
+    if (!active) return;
+    bookRequest = (async () => {
+      clearTimeout(poll);
+      try {
+        const result = await api(`/api/books/${active.id}/narration`, { signal: controller.signal });
+        if (epoch !== lifecycle) return;
+        await updateRecording(result);
+        if (['queued', 'assembling'].includes(recording.state)) poll = setTimeout(() => { void loadRecording(); }, 1800);
+      } catch (error) {
+        if (epoch !== lifecycle) return;
+        status.textContent = error.message;
+        const analysis = await api(`/api/books/${active.id}/learning`, { signal: controller.signal }).catch(() => null);
+        if (epoch === lifecycle && ['queued', 'running'].includes(analysis?.analysis.state)) {
+          status.textContent = 'Analyzing this book…';
+          poll = setTimeout(() => { cache.clear(); void loadRecording(); }, 1800);
+        }
+      }
+    })().finally(() => { if (epoch === lifecycle) bookRequest = undefined; });
+    return bookRequest;
+  }
+  async function refresh({ seekToPage = false } = {}) {
+    if (!book()) return;
+    if (recordingBook !== book().id) {
+      recordingBook = book().id; controller = new AbortController(); await loadRecording();
+    }
+    try {
+      await loadCurrent();
+      syncInitialPosition();
+      if (seekToPage && !following && enabled && ready()) seekTo(firstVisibleTime());
+      else { drawHighlight(); void follow(); }
+    } catch (error) { if (!previewAudio && error.name !== 'AbortError') status.textContent = error.message; }
+  }
+  function stop() {
+    lifecycle++; controller?.abort(); clearTimeout(poll); cancelAnimationFrame(animation);
+    audio.onloadedmetadata = null; audio.pause(); audio.removeAttribute('src'); audio.load(); clearHighlight();
+    recording = unit = descriptor = local = recordingBook = bookRequest = undefined;
+    timed = []; timingMap.clear(); cache.clear();
+    following = followAgain = forceFollow = wantPlaying = false;
+    initialSeek = true;
+    previewAudio = false;
+    deviceControls.clear();
+    markers.replaceChildren(); chapters.replaceChildren(); play.disabled = seek.disabled = true; controls();
+  }
+  function apply() {
+    enabled = preferences().audioEnabled; player.hidden = !enabled;
+    $('#audio-toggle').setAttribute('aria-pressed', String(enabled));
+    audio.playbackRate = preferences().audioRate;
+    const podcast = Boolean(preferences().podcastMode);
+    player.classList.toggle('podcast-mode', podcast);
+    podcastToggle.setAttribute('aria-pressed', String(podcast));
+    podcastToggle.textContent = podcast ? 'Compact player' : 'Podcast mode';
+    $('#podcast-info').hidden = !podcast;
+    for (const control of player.querySelectorAll('[data-podcast-control]')) control.hidden = !podcast;
+    const value = String(preferences().audioRate);
+    if (![...rate.options].some((option) => option.value === value)) {
+      rate.querySelector('[data-custom-rate]')?.remove();
+      const custom = new Option(`${value}×`, value); custom.dataset.customRate = ''; rate.add(custom);
+    }
+    rate.value = value;
+    if (!enabled) { audio.pause(); wantPlaying = false; clearHighlight(); }
+    else if (recording) void updateRecording({ connected: connection, previewAudio, audio: recording }).catch((error) => { status.textContent = error.message; });
+    if (!preferences().audioHighlight) clearHighlight();
+  }
+  function toggle() {
+    if (!enabled || !ready()) return;
+    if (audio.paused) { wantPlaying = true; void startPlayback(); }
+    else pausePlayback();
+  }
+  play.addEventListener('click', toggle);
+  podcastToggle.addEventListener('click', () => changePreferences({ podcastMode: !preferences().podcastMode }));
+  rewind.addEventListener('click', () => skipBy(-10));
+  forward.addEventListener('click', () => skipBy(10));
+  previousChapter.addEventListener('click', () => jumpChapter(-1));
+  nextChapter.addEventListener('click', () => jumpChapter(1));
+  rate.addEventListener('change', () => {
+    const selected = Number(rate.value);
+    if (Number.isFinite(selected) && selected >= .5 && selected <= 2) changePreferences({ audioRate: selected });
+  });
+  generate.addEventListener('click', async () => {
+    if (!book()) return;
+    generate.disabled = true;
+    try { await api(`/api/books/${book().id}/narration`, { method: 'POST', body: {} }); await loadRecording(); }
+    catch (error) { status.textContent = error.message; generate.disabled = false; }
+  });
+  seek.addEventListener('input', () => seekTo(Number(seek.value)));
+  chapters.addEventListener('change', () => seekTo(recording?.markers[Number(chapters.value)]?.time || 0));
+  audio.addEventListener('seeking', () => { void follow(true); });
+  audio.addEventListener('timeupdate', () => { controls(); drawHighlight(); void follow(); });
+  function tick() { drawHighlight(); void follow(); if (!audio.paused) animation = requestAnimationFrame(tick); }
+  audio.addEventListener('play', () => { controls(); cancelAnimationFrame(animation); tick(); });
+  audio.addEventListener('pause', () => { controls(); cancelAnimationFrame(animation); });
+  audio.addEventListener('ratechange', controls);
+  audio.addEventListener('ended', () => { wantPlaying = false; controls(); clearHighlight(); });
+  audio.addEventListener('error', () => { if (audio.getAttribute('src')) status.textContent = 'This book recording could not be played. Try generating it again.'; });
+  return {
+    refresh, apply, stop, toggle,
+    lemmaAt(node, offset) { return unit?.method === 'word forms' ? null : local?.at(node, offset)?.token; },
+    seekWord(node, offset) {
+      if (!enabled || !ready()) return;
+      const word = local?.at(node, offset)?.word;
+      const index = [...timingMap].find(([, mapped]) => mapped === word)?.[0];
+      const stamp = timed.find((stamp) => stamp.index === index);
+      if (stamp) seekTo(stamp.start);
+    },
+  };
+}
