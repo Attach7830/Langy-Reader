@@ -1,6 +1,6 @@
 import {
   createIcons, ArrowLeft, BookOpen, ChevronLeft, ChevronRight, Coffee, Folder, Info, Languages,
-  LibraryBig, List, Maximize, Minus, Pencil, Plus, RotateCcw, Search, Settings2, Sparkles, Upload, X,
+  LibraryBig, List, Maximize, Minus, Pencil, Plus, RotateCcw, Search, Settings2, SkipBack, SkipForward, Sparkles, Upload, X, Headphones,
 } from 'lucide';
 
 export const $ = (selector, root = document) => root.querySelector(selector);
@@ -22,7 +22,7 @@ export function icon(name) {
 
 export function drawIcons() {
   createIcons({ icons: { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, Coffee, Folder, Info, Languages,
-    LibraryBig, List, Maximize, Minus, Pencil, Plus, RotateCcw, Search, Settings2, Sparkles, Upload, X } });
+    LibraryBig, List, Maximize, Minus, Pencil, Plus, RotateCcw, Search, Settings2, SkipBack, SkipForward, Sparkles, Upload, X, Headphones } });
 }
 
 export async function api(path, { body, method, signal } = {}) {

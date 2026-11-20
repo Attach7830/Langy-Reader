@@ -1,8 +1,10 @@
 node_modules/
 dist/
 data/
+/server/thesaurus-data/
 .env
 .env.*
 !.env.example
 !.env.demo.example
 .secrets/
+language/__pycache__/

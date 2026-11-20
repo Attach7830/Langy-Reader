@@ -3,19 +3,41 @@ import spectral from '@fontsource/spectral/files/spectral-latin-400-normal.woff2
 import spectralItalic from '@fontsource/spectral/files/spectral-latin-400-italic.woff2?url';
 import dmSans from '@fontsource/dm-sans/files/dm-sans-latin-400-normal.woff2?url';
 import { fonts, themes } from './settings.js';
+import { outlineDocument, spacingRules } from './epub-outline.js';
+import { trackText } from './text-tracking.js';
 
 const blocks = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, div, pre, td, dd, dt, figcaption';
+const excluded = 'script, style, template, [hidden], [aria-hidden="true"]';
+
+function normalizeReadingText(text) {
+  return text.split('\n').map((line) => line.replace(/\s+/gu, ' ').trim()).filter(Boolean).join('\n');
+}
+
+function sectionText(root) {
+  if (!root) return '';
+  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let text = '';
+  let previousBlock;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.parentElement?.closest(excluded)) continue;
+    const block = node.parentElement?.closest(blocks) || root;
+    if (text && block !== previousBlock && node.data.trim()) text += '\n';
+    text += node.data;
+    if (node.data.trim()) previousBlock = block;
+  }
+  return normalizeReadingText(text);
+}
 
 function visibleText(contents, viewport, language) {
   const doc = contents.document;
   const frame = doc.defaultView?.frameElement?.getBoundingClientRect();
   const body = contents.content;
-  if (!frame || !body) return '';
+  if (!frame || !body) return { text: '' };
   const left = Math.max(frame.left, viewport.left) - frame.left;
   const right = Math.min(frame.right, viewport.right) - frame.left;
   const top = Math.max(frame.top, viewport.top) - frame.top;
   const bottom = Math.min(frame.bottom, viewport.bottom) - frame.top;
-  if (left >= right || top >= bottom) return '';
+  if (left >= right || top >= bottom) return { text: '' };
 
   function isVisible(rect) {
     return rect.width > 0 && rect.height > 0
@@ -28,9 +50,10 @@ function visibleText(contents, viewport, language) {
   const walker = doc.createTreeWalker(body, NodeFilter.SHOW_TEXT);
   const range = doc.createRange();
   let result = '';
+  let start;
   let previousBlock;
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (!node.parentElement || node.parentElement.closest('script, style, [hidden], [aria-hidden="true"]')) continue;
+    if (!node.parentElement || node.parentElement.closest(excluded)) continue;
     const style = doc.defaultView.getComputedStyle(node.parentElement);
     if (style.visibility !== 'visible' || style.opacity === '0') continue;
     const block = node.parentElement.closest(blocks) || body;
@@ -42,6 +65,7 @@ function visibleText(contents, viewport, language) {
     const rects = Array.from(range.getClientRects());
     if (!rects.some(isVisible)) continue;
     let text = node.data;
+    let firstOffset;
     if (!rects.every(isVisible)) {
       const segments = segmenter?.segment(text) ?? Array.from(text.matchAll(/\s+|\S+/gu),
         (match) => ({ index: match.index, segment: match[0] }));
@@ -49,15 +73,19 @@ function visibleText(contents, viewport, language) {
       for (const { index, segment } of segments) {
         range.setStart(node, index);
         range.setEnd(node, index + segment.length);
-        if ([...range.getClientRects()].some(isVisible)) text += segment;
+        if ([...range.getClientRects()].some(isVisible)) {
+          if (segment.trim()) firstOffset ??= index;
+          text += segment;
+        }
       }
     }
     if (!text.trim()) continue;
+    start ??= { node, offset: firstOffset ?? 0 };
     if (block !== previousBlock && result) result += '\n';
     result += text;
     previousBlock = block;
   }
-  return result.split('\n').map((line) => line.replace(/\s+/gu, ' ').trim()).filter(Boolean).join('\n');
+  return { text: normalizeReadingText(result), body, start, index: contents.sectionIndex };
 }
 
 function unscript(doc) {
@@ -89,17 +117,93 @@ function stylesheet(settings, fixed) {
     body :is(main, article, section, div, p, span, li, blockquote) { background-color: transparent !important; }
     body :is(p, li, blockquote, dd, td) :is(span, a, strong, em) { font-family: inherit !important; font-size: inherit !important; }
     a { text-decoration-thickness: from-font; text-underline-offset: .15em; }
+    ::highlight(langy-narration) { background-color: #f6ca64; color: #262c24; }
     body p { overflow-wrap: break-word; }
     body p.sample-chapter { margin: 1em 0 .62em; font: 400 .75em/1.4 "DM Sans", sans-serif !important; text-transform: uppercase; letter-spacing: .14em; opacity: .72; }
     .sample-chapter + h1 { margin: 0 0 .7em; }
   `;
 }
 
-function normalizeToc(items, depth = 0) {
-  return items.flatMap((item) => [
-    { label: item.label.trim(), target: item.href, depth },
-    ...normalizeToc(item.subitems || [], depth + 1),
-  ]);
+function archiveURL(path, base = 'https://epub.invalid/') {
+  try {
+    const url = new URL(path, base);
+    return url.origin === 'https://epub.invalid' ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+function decoded(value) {
+  try { return decodeURIComponent(value); }
+  catch { return value; }
+}
+
+function epubContents(book) {
+  const spine = book.spine.spineItems;
+  const spinePaths = new Map(spine.map((section) => [
+    decoded(archiveURL(book.resolve(section.href, false))?.pathname || ''), section,
+  ]));
+  const navPath = book.packaging.navPath || book.packaging.ncxPath;
+  const navURL = archiveURL(navPath ? book.resolve(navPath, false) : '/');
+
+  function flatten(items, depth = 0) {
+    return items.flatMap((item) => {
+      const children = flatten(item.subitems ?? [], depth + 1);
+      const href = item.href && navURL ? archiveURL(item.href, navURL) : null;
+      const section = href && (spinePaths.get(decoded(href.pathname)) || book.spine.get(item.href));
+      const label = item.label?.replace(/\s+/gu, ' ').trim();
+      if (!section) return label && children.length ? [{ label, depth }, ...children] : children;
+      const target = { index: section.index, fragment: decoded(href.hash.slice(1)) };
+      return [{ label: label || `Section ${section.index + 1}`, depth, target }, ...children];
+    });
+  }
+
+  return flatten(book.navigation?.toc ?? []);
+}
+
+async function inferOutline(book, signal) {
+  const styles = new Map();
+  const entries = [];
+  for (const section of book.spine.spineItems) {
+    if (!section.linear) continue;
+    signal.throwIfAborted();
+    const start = { label: `Section ${section.index + 1}`, depth: 0, target: { index: section.index } };
+    try {
+      const doc = section.document || await book.load(section.url);
+      signal.throwIfAborted();
+      if (!section.document) unscript(doc);
+      const base = archiveURL(section.url);
+      const sheets = Array.from(doc.querySelectorAll('link[rel~="stylesheet"][href]'), (link) => {
+        const path = base && archiveURL(link.getAttribute('href'), base)?.pathname;
+        if (!path) return [];
+        if (!styles.has(path)) {
+          styles.set(path, Promise.resolve().then(() => book.archive.getText(path)).then(spacingRules).catch(() => []));
+        }
+        return styles.get(path);
+      });
+      const rules = (await Promise.all(sheets)).flat();
+      signal.throwIfAborted();
+      for (const node of doc.querySelectorAll('style:not(#langy-reader-styles)')) rules.push(...spacingRules(node.textContent));
+      const passages = outlineDocument(doc, rules);
+      const sectionEntries = passages.map(({ label, anchor, marker }) => {
+        let cfi;
+        if (anchor.nodeType === Node.TEXT_NODE) {
+          const range = doc.createRange();
+          range.setStart(anchor, 0);
+          range.collapse(true);
+          cfi = section.cfiFromRange(range);
+        } else {
+          cfi = section.cfiFromElement(anchor);
+        }
+        return { label, marker, depth: 0, target: { cfi } };
+      });
+      entries.push(...(sectionEntries.length ? sectionEntries : [start]));
+    } catch {
+      signal.throwIfAborted();
+      entries.push(start);
+    }
+  }
+  return entries;
 }
 
 export async function openEpub({ host, url, position, language, settings, hooks, signal }) {
@@ -108,7 +212,9 @@ export async function openEpub({ host, url, position, language, settings, hooks,
   const buffer = await response.arrayBuffer();
   signal.throwIfAborted();
   const book = ePub(undefined, { replacements: 'blobUrl' });
-  let rendition, observer, renderError;
+  const earlierSections = new Map();
+  let rendition, observer, renderError, outline;
+  let activeSection = 0, lastTarget;
   let preferences = settings;
   let disposed = false;
   const size = () => [host.clientWidth, host.clientHeight];
@@ -142,7 +248,9 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       rules.textContent = stylesheet(preferences, fixed);
       doc.querySelector('head')?.append(rules);
     });
-    const [width, height] = size();
+    let dimensions = size();
+    let reflowing = false;
+    const [width, height] = dimensions;
     rendition = book.renderTo(host, {
       width, height, flow: 'paginated', spread: 'none', manager: 'default',
       gap: width < 500 ? 32 : 100, allowScriptedContent: false, allowPopups: false,
@@ -164,14 +272,18 @@ export async function openEpub({ host, url, position, language, settings, hooks,
     });
     function report(location = rendition.location) {
       if (!location?.start || disposed) return;
+      const reflowed = reflowing;
+      reflowing = false;
       const { start } = location;
+      activeSection = Number(start.index);
+      lastTarget = start.cfi;
       const { page, total } = start.displayed;
       const count = book.spine.length;
       const percent = (start.index + page / total) / count;
       hooks.position({
         target: start.cfi, label: `Page ${page} of ${total}`,
         detail: `Section ${start.index + 1} of ${count}`,
-        percent: Math.min(1, percent), previous: !location.atStart, next: !location.atEnd,
+        percent: Math.min(1, percent), previous: !location.atStart, next: !location.atEnd, reflowed,
       });
     }
     rendition.on('relocated', report);
@@ -182,22 +294,87 @@ export async function openEpub({ host, url, position, language, settings, hooks,
     await new Promise(requestAnimationFrame);
     report(rendition.currentLocation());
 
-    let dimensions = size();
     function resize() {
       const next = size();
       if (disposed || !next[0] || !next[1] || next.every((value, i) => value === dimensions[i])) return;
       dimensions = next;
+      reflowing = true;
       rendition.resize(...next);
+      // The first layout can resize before epub.js has published its location.
+      if (!rendition.location?.start && lastTarget) void display(lastTarget).catch(hooks.error);
     }
     observer = new ResizeObserver(resize);
     observer.observe(host);
 
+    function summaryPage() {
+      // Wait for the new columns before collecting the visible text.
+      if (reflowing || size().some((value, i) => value !== dimensions[i])) return null;
+      const viewport = host.getBoundingClientRect();
+      const visible = rendition.getContents().map((contents) => visibleText(contents, viewport, language))
+        .filter(({ text }) => text);
+      if (!visible.length) return { text: '' };
+      const first = visible[0];
+      const range = first.body.ownerDocument.createRange();
+      range.selectNodeContents(first.body);
+      range.setEnd(first.start.node, first.start.offset);
+      const sameSectionPrefix = sectionText(range.cloneContents());
+
+      return {
+        text: visible.map(({ text }) => text).join('\n'),
+        publicationDate: book.packaging.metadata.pubdate,
+        async *earlier(contextSignal) {
+          for (const section of book.spine.spineItems) {
+            if (section.index >= first.index) break;
+            if (!section.linear) continue;
+            contextSignal.throwIfAborted();
+            if (!earlierSections.has(section.index)) {
+              const doc = section.document || await book.load(section.url);
+              contextSignal.throwIfAborted();
+              earlierSections.set(section.index, sectionText(doc.querySelector('body')));
+            }
+            yield earlierSections.get(section.index);
+          }
+          if (sameSectionPrefix) yield sameSectionPrefix;
+        },
+      };
+    }
+
     return {
       destroy,
-      get contents() { return normalizeToc(book.navigation?.toc ?? []); },
-      move: (direction) => direction > 0 ? rendition.next() : rendition.prev(),
-      go: (target) => display(target),
-      excerpt: () => rendition.getContents().map((contents) => visibleText(contents, host.getBoundingClientRect(), language)).filter(Boolean).join('\n'),
+      get contents() { return epubContents(book); },
+      audioUnit() {
+        if (reflowing) return null;
+        const index = activeSection;
+        const contents = rendition.getContents().find((content) => content.sectionIndex === index);
+        if (!contents?.content) return null;
+        return { key: `epub:${index}`, root: contents.content, track: () => trackText(contents.content, language) };
+      },
+      audioTarget(key) { return { index: Number(key.split(':')[1]) }; },
+      async revealWord(range) {
+        const contents = rendition.getContents().find((content) => content.document === range.startContainer.ownerDocument);
+        if (!contents) return;
+        await display(contents.cfiFromRange(range));
+        report(rendition.currentLocation());
+      },
+      readingOutline() { return outline ??= inferOutline(book, signal); },
+      move(direction) {
+        resize();
+        return direction > 0 ? rendition.next() : rendition.prev();
+      },
+      async go(target) {
+        let location = target.cfi ?? target.index;
+        if (target.fragment) {
+          const section = book.spine.get(target.index);
+          await section.load(book.load.bind(book));
+          signal.throwIfAborted();
+          const anchor = section.document.getElementById(target.fragment);
+          if (anchor) location = section.cfiFromElement(anchor);
+        }
+        resize();
+        await display(location);
+        report(rendition.currentLocation());
+      },
+      summaryPage,
       async apply(next) {
         const reflow = ['size', 'font', 'line'].some((key) => next[key] !== preferences[key]);
         const recolor = next.theme !== preferences.theme;
@@ -217,6 +394,7 @@ export async function openEpub({ host, url, position, language, settings, hooks,
         }
         resize();
         if (reflow && target && !fixed) {
+          reflowing = true;
           rendition.clear();
           await display(target);
         }

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f7f5ef">
   <title>Langy Reader</title>
-  <link rel="icon" href="data:,">
+  <link rel="icon" type="image/png" sizes="64x64" href="/src/assets/langy-icon.png?no-inline">
 </head>
 <body>
   <header class="site-header" id="library-header">
@@ -15,6 +15,7 @@
     </a>
     <div class="header-actions">
       <button class="ai-status" id="ai-status" type="button" title="Check local AI"><span class="status-dot"></span><span>Checking AI</span></button>
+      <a class="button quiet" id="about-link" href="#about" aria-label="About Langy Reader" title="About Langy Reader" hidden><i data-lucide="info"></i><span>About</span></a>
       <button class="button quiet" type="button" data-settings="reading" aria-label="Settings"><i data-lucide="settings-2"></i><span>Settings</span></button>
     </div>
   </header>
@@ -36,13 +37,22 @@
         <button class="button primary" id="import-book" type="button"><i data-lucide="plus"></i><span>Import book</span></button>
       </div>
       <div id="demo-note" class="demo-note" hidden>
-        <i data-lucide="info"></i><span>Demo uploads are private to this browser and expire after 24 hours. Up to 4 books, 20 MiB each.</span>
+        <i data-lucide="info"></i>
+        <div>
+          <strong>Demo use only</strong>
+          <p>Translations and summaries can take longer on the shared demo server. For faster responses, <a href="https://github.com/Attach7830/Langy-Reader#run-it-on-your-server">self-host Langy Reader</a> and connect your own AI server in Settings → AI connection.</p>
+          <p>Demo uploads are private to this browser and expire after 24 hours. Up to 4 books, 20 MiB each.</p>
+        </div>
       </div>
       <div class="library-toolbar">
         <label class="search-field">
           <i data-lucide="search"></i>
           <input type="search" id="search" placeholder="Search title or author" aria-label="Search title or author" autocomplete="off">
         </label>
+        <select id="reading-filter" aria-label="Estimated reading demand">
+          <option value="">All reading ranges</option><option>Novice</option><option>Intermediate</option>
+          <option>Advanced</option><option>Superior</option><option>Distinguished</option>
+        </select>
         <span class="muted" id="book-count"></span>
       </div>
       <div id="books" class="book-grid"></div>
@@ -50,6 +60,22 @@
         <i data-lucide="book-open"></i><h2 id="empty-title"></h2><p id="empty-detail"></p>
       </div>
       <p class="screen-error" id="library-error" role="alert" hidden></p>
+    </section>
+  </main>
+
+  <main id="about-screen" class="about-page" aria-labelledby="about-title" hidden>
+    <a class="button quiet about-back" href="#library"><i data-lucide="arrow-left"></i>Library</a>
+    <h1 id="about-title" tabindex="-1">About Langy Reader</h1>
+    <p>Langy Reader helps language learners read EPUBs and PDFs. Hover over a word or tap it for a translation, definition, or synonyms. Press <kbd>S</kbd> for a brief page summary. Select <strong>Go deeper</strong> or a suggested question for more context.</p>
+    <section>
+      <h2>Using the demo</h2>
+      <p>Try the sample book or upload up to four books at 20 MiB each. Your uploads are private to this browser session and expire after 24 hours. Translations and summaries can take longer on the shared AI server.</p>
+      <p>Use the headphones button to preview narration and podcast controls. Kokoro is optional: connect it in your self-hosted installation to generate and download whole-book audio.</p>
+    </section>
+    <section>
+      <h2>Run your own copy</h2>
+      <p>Self-host Langy Reader with Docker Compose. For faster translations and summaries, connect your AI server in <strong>Settings → AI connection</strong>.</p>
+      <a class="button secondary" href="https://github.com/Attach7830/Langy-Reader#run-it-on-your-server">Self-hosting instructions</a>
     </section>
   </main>
 
@@ -65,6 +91,7 @@
         <button class="icon-button" id="contents-button" type="button" title="Contents" aria-label="Contents"><i data-lucide="list"></i></button>
         <button class="icon-button" type="button" data-settings="reading" title="Reading settings" aria-label="Reading settings"><span class="type-icon">Aa</span></button>
         <button class="button quiet summary-toggle" id="summarize" type="button" aria-label="Page summary" aria-controls="summary-panel" aria-expanded="false"><i data-lucide="sparkles"></i><span>Summary</span></button>
+        <button class="icon-button" id="audio-toggle" type="button" title="Narration" aria-label="Narration" aria-pressed="false"><i data-lucide="headphones"></i></button>
         <button class="icon-button" id="fullscreen" type="button" title="Full screen" aria-label="Full screen" aria-pressed="false"><i data-lucide="maximize"></i></button>
       </div>
     </header>
@@ -82,9 +109,42 @@
         <p class="muted" id="summary-location"></p>
         <div id="summary-body" class="summary-body" dir="auto" aria-live="polite"></div>
         <button class="button secondary" id="generate-summary" type="button"><i data-lucide="sparkles"></i><span>Summarize page</span></button>
+        <div id="summary-actions" class="summary-actions" role="group" aria-label="Summary follow-ups" hidden></div>
+        <section id="summary-detail" class="summary-detail" aria-labelledby="summary-detail-title" hidden>
+          <h3 id="summary-detail-title" dir="auto"></h3>
+          <div id="summary-detail-body" dir="auto" aria-live="polite"></div>
+        </section>
       </aside>
     </div>
     <footer class="reader-footer">
+      <div class="narration-player" id="narration-player" role="region" aria-label="Book audio player" hidden>
+        <audio id="narration-audio" preload="metadata"></audio>
+        <div class="podcast-info" id="podcast-info" hidden>
+          <span class="podcast-eyebrow">Now listening</span><strong id="podcast-book-title"></strong>
+        </div>
+        <button class="button quiet small" id="podcast-toggle" type="button" aria-label="Podcast mode" aria-pressed="false">Podcast mode</button>
+        <div class="narration-transport" role="group" aria-label="Playback controls">
+          <button class="icon-button" id="narration-previous-chapter" type="button" aria-label="Previous audio chapter" title="Previous chapter" data-podcast-control disabled hidden><i data-lucide="skip-back"></i></button>
+          <button class="button secondary podcast-skip" id="narration-rewind" type="button" aria-label="Rewind 10 seconds" title="Rewind 10 seconds" data-podcast-control disabled hidden>−10 s</button>
+          <button class="button secondary" id="narration-play" type="button" aria-label="Play narration" disabled>Play</button>
+          <button class="button secondary podcast-skip" id="narration-forward" type="button" aria-label="Fast-forward 10 seconds" title="Fast-forward 10 seconds" data-podcast-control disabled hidden>+10 s</button>
+          <button class="icon-button" id="narration-next-chapter" type="button" aria-label="Next audio chapter" title="Next chapter" data-podcast-control disabled hidden><i data-lucide="skip-forward"></i></button>
+        </div>
+        <div class="narration-timeline">
+          <input id="narration-seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="Book audio position" disabled>
+          <div id="narration-markers" class="narration-markers"></div>
+        </div>
+        <span id="narration-time">0:00 / 0:00</span>
+        <label class="podcast-speed" data-podcast-control hidden>Speed
+          <select id="narration-rate" aria-label="Podcast playback speed">
+            <option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option>
+            <option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option><option value="2">2×</option>
+          </select>
+        </label>
+        <select id="narration-chapter" aria-label="Audio chapter" hidden></select>
+        <span id="narration-status" role="status">Preparing narration…</span>
+        <button class="button quiet" id="narration-generate" type="button" hidden>Generate book audio</button>
+      </div>
       <div class="footer-start">
         <button type="button" class="button quiet word-settings" data-settings="language"><i data-lucide="languages"></i><span id="word-mode-label"></span></button>
         <div id="pdf-zoom" class="zoom-controls" hidden>
@@ -100,6 +160,8 @@
       </div>
       <div class="footer-end"><span id="position-detail"></span><span class="progress-track" aria-hidden="true"><span id="progress-fill"></span></span></div>
     </footer>
+    <div class="reader-dock-edge top-edge" aria-hidden="true"></div>
+    <div class="reader-dock-edge bottom-edge" aria-hidden="true"></div>
   </section>
 
   <dialog class="modal settings-modal" id="settings" aria-labelledby="settings-title">
@@ -109,6 +171,7 @@
         <button type="button" data-settings-tab="reading">Appearance</button>
         <button type="button" data-settings-tab="language">Language help</button>
         <button type="button" data-settings-tab="shortcuts">Hotkeys</button>
+        <button type="button" data-settings-tab="narration">Narration</button>
         <button type="button" data-settings-tab="ai" hidden>AI connection</button>
       </nav>
       <section class="modal-body" data-settings-panel="reading">
@@ -119,6 +182,10 @@
             <option value="linen">Linen</option><option value="grid">Graph paper</option>
           </select>
         </label>
+        <div>
+          <label class="checkbox-row"><input name="autoHideDocks" type="checkbox" aria-describedby="auto-hide-docks-note"> Auto-hide docks in full screen</label>
+          <p class="field-note" id="auto-hide-docks-note">Move the pointer to or tap the top or bottom edge to show both docks.</p>
+        </div>
         <div class="settings-subhead">EPUB typography</div>
         <div class="form-grid">
           <label class="field">Font <select name="font" id="font-options"></select></label>
@@ -132,6 +199,7 @@
       </section>
       <section class="modal-body" data-settings-panel="language" hidden>
         <label class="field">Word help on hover or tap <select name="mode" id="help-options"></select></label>
+        <label class="checkbox-row"><input name="synonymContextHelp" type="checkbox"> Explain missing synonym entries with AI</label>
         <div class="form-grid">
           <label class="field">Translation language
             <input name="translationLanguage" list="languages" maxlength="70" autocomplete="off" required>
@@ -140,7 +208,8 @@
             <input name="summaryLanguage" list="languages" maxlength="70" autocomplete="off" required>
           </label>
         </div>
-        <p class="field-note">Definitions and synonyms use the book’s language. Choose a language from the list or enter a language code.</p>
+        <p class="field-note">Definitions and synonyms use the book’s language. The optional AI explanation uses the surrounding passage when the dictionaries have no entry.</p>
+        <p class="field-note">Dictionary data from <a href="https://es.wiktionary.org/" target="_blank" rel="noopener noreferrer">Wiktionary contributors</a> under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a>.</p>
       </section>
       <section class="modal-body" data-settings-panel="shortcuts" hidden>
         <div class="shortcut-list" id="shortcut-list"></div>
@@ -167,6 +236,28 @@
         <p class="field-note">Language help sends excerpts to the selected server. Connection settings apply to this reader instance.</p>
         <button class="button secondary" id="load-models" type="button">Find available models</button>
         <p class="field-note" id="model-result" aria-live="polite" hidden></p>
+      </section>
+      <section class="modal-body" data-settings-panel="narration" hidden>
+        <label class="checkbox-row"><input name="audioEnabled" type="checkbox"> Show narration player</label>
+        <label class="checkbox-row"><input name="podcastMode" type="checkbox"> Use podcast mode</label>
+        <label class="checkbox-row"><input name="audioHighlight" type="checkbox"> Highlight spoken words</label>
+        <label class="field">Playback speed <input name="audioRate" type="number" min="0.5" max="2" step="0.05" value="1"></label>
+        <p class="field-note">Pages always follow narration and scrubbing, including when word highlighting is off. Click a synchronized word or a chapter marker to seek while keeping the current play or pause state.</p>
+        <p class="field-note" id="kokoro-managed" hidden>The demo owner manages the narration connection.</p>
+        <div id="kokoro-settings" class="settings-fields" hidden>
+          <h3>Kokoro connection</h3>
+          <label class="field">API base URL <input name="kokoro_baseUrl" type="url" placeholder="http://host.docker.internal:8880/v1"></label>
+          <div class="form-grid">
+            <label class="field">Voice <input name="kokoro_voice" list="narration-voices" maxlength="120"></label>
+            <label class="field">Model <input name="kokoro_model" maxlength="120"></label>
+            <label class="field">Generation speed <input name="kokoro_speed" type="number" min="0.5" max="2" step="0.1"></label>
+          </div>
+          <datalist id="narration-voices"></datalist>
+          <label class="field">API key <input name="kokoro_apiKey" type="password" autocomplete="new-password" maxlength="4096"></label>
+          <label class="checkbox-row"><input name="kokoro_clearKey" type="checkbox"> Remove saved key</label>
+          <button class="button secondary" id="kokoro-voices" type="button">Save and find voices</button>
+        </div>
+        <p id="kokoro-result" class="field-note" role="status" hidden></p>
       </section>
       <p class="form-error" id="settings-error" role="alert" hidden></p>
       <footer class="modal-footer"><button class="button quiet" type="button" data-close>Cancel</button><button class="button primary" type="submit">Save settings</button></footer>
@@ -195,6 +286,26 @@
     </form>
   </dialog>
 
+  <dialog class="modal" id="learning-dialog" aria-labelledby="learning-title">
+    <header class="modal-header"><h2 id="learning-title">Book analysis</h2><button class="icon-button" type="button" data-close aria-label="Close book analysis"><i data-lucide="x"></i></button></header>
+    <div class="modal-body">
+      <p id="learning-stats"></p>
+      <p id="learning-estimate"></p>
+      <p class="field-note">Estimated reading demand uses sampled passages and broad ACTFL reading descriptors. This estimate describes the text and is provisional.</p>
+      <p id="learning-reason"></p>
+      <details id="learning-evidence" hidden><summary>Evidence from sampled text</summary><div id="learning-quotes"></div></details>
+      <div class="button-row">
+        <button class="button secondary" id="analyze-book" type="button">Analyze again</button>
+        <button class="button secondary" id="generate-book-audio" type="button">Generate book audio</button>
+        <button class="button quiet" id="cancel-book-audio" type="button" hidden>Cancel queued audio</button>
+      </div>
+      <label class="checkbox-row"><input type="checkbox" id="replace-book-audio"> Replace existing recordings</label>
+      <p id="book-audio-status" class="field-note" role="status"></p>
+      <a id="book-audio-download" class="button secondary" hidden>Download complete book MP3</a>
+      <div id="learning-chapters"></div>
+      <p id="learning-error" class="form-error" role="alert" hidden></p>
+    </div>
+  </dialog>
   <dialog class="modal" id="category-dialog" aria-labelledby="category-dialog-title">
     <form id="category-form">
       <header class="modal-header"><h2 id="category-dialog-title">New category</h2><button class="icon-button" type="button" aria-label="Close category editor" data-close><i data-lucide="x"></i></button></header>
@@ -212,7 +323,7 @@
   </dialog>
 
   <div class="word-help" id="word-help" role="status" hidden>
-    <div class="word-mode" data-word-mode></div><strong data-word></strong><div class="word-answer" dir="auto" data-word-answer></div>
+    <div class="word-mode" data-word-mode></div><strong data-word></strong><div class="word-mode" data-word-lemma hidden></div><div class="word-answer" dir="auto" data-word-answer></div>
   </div>
   <div id="toast" class="toast" role="status" hidden></div>
   <datalist id="languages"></datalist>

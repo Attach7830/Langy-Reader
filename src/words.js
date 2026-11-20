@@ -1,4 +1,5 @@
 import { modes, languageName } from './settings.js';
+import { element } from './ui.js';
 
 function caretAt(doc, x, y) {
   if (doc.caretPositionFromPoint) {
@@ -39,11 +40,12 @@ function wordAt(root, event, segmenter) {
   return null;
 }
 
-export function wordHelp({ preferences, request }) {
+export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord = () => {} }) {
   const bubble = document.querySelector('#word-help');
   const hint = bubble.querySelector('[data-word-mode]');
   const heading = bubble.querySelector('[data-word]');
   const answer = bubble.querySelector('[data-word-answer]');
+  const lemmaLabel = bubble.querySelector('[data-word-lemma]');
   const cache = new Map();
   let active, controller, timer;
 
@@ -66,29 +68,77 @@ export function wordHelp({ preferences, request }) {
 
   async function show(item, mode, language, getContext) {
     if (active !== item) return;
-    const { translationLanguage } = preferences();
-    const context = getContext(item);
+    const { translationLanguage, synonymContextHelp } = preferences();
+    const dictionary = mode === 'synonyms';
+    const useContextHelp = dictionary && synonymContextHelp === true;
+    const context = dictionary && !useContextHelp ? '' : getContext(item);
     const target = mode === 'translation' ? translationLanguage : language;
     const key = JSON.stringify([mode, language, target, item.word, context]);
-    answer.lang = target;
-    hint.textContent = mode === 'translation' ? `${languageName(target)} translation` : modes[mode];
+    const label = mode === 'translation' ? `${languageName(target)} translation` : modes[mode];
+    const detected = lemmaAt(item.node, item.index);
+    lemmaLabel.textContent = detected?.lemma ? `Lemma · ${detected.lemma}` : '';
+    lemmaLabel.hidden = !detected?.lemma;
+    function display(result) {
+      answer.lang = result.language ?? target;
+      answer.textContent = result.text;
+      const title = result.status === 'context' ? 'AI context explanation'
+        : result.senses?.every((sense) => sense.readingNote) ? 'Reading note'
+        : result.status === 'meaning' ? 'Dictionary meaning' : label;
+      hint.textContent = result.lemma ? `${title} · ${result.lemma}` : title;
+      if (result.senses?.length) {
+        answer.replaceChildren(...result.senses.map(({ label: meaning, labelLanguage, terms, source, lemma }) => {
+          const sense = element('div', 'word-sense');
+          if (source) {
+            const headword = lemma && lemma !== result.lemma && lemma !== item.word.toLocaleLowerCase(language);
+            sense.append(element('div', 'word-sense-source', headword ? `${lemma} · ${source}` : source));
+          }
+          if (meaning) {
+            const caption = element('div', terms.length ? 'word-sense-label' : 'word-gloss', meaning);
+            caption.lang = labelLanguage || 'en';
+            caption.dir = 'auto';
+            sense.append(caption);
+          }
+          if (terms.length) {
+            const choices = element('div', '', terms.join(', '));
+            choices.dir = 'auto';
+            sense.append(choices);
+          }
+          return sense;
+        }));
+      }
+    }
     heading.textContent = item.word;
-    answer.textContent = cache.get(key) || 'Looking up word…';
+    display(cache.get(key) || { text: 'Looking up word…', language: 'en' });
     bubble.hidden = false;
     place(item.rect);
     if (cache.has(key)) return;
 
-    controller = new AbortController();
+    const lookup = new AbortController();
+    controller = lookup;
+    const askWord = (task, passage) => request('/api/ai/word', {
+      method: 'POST', signal: lookup.signal,
+      body: { mode: task, language, translationLanguage, word: item.word, context: passage, lemma: detected?.lemma },
+    });
+    let checkingContext = false;
     try {
-      const { text } = await request('/api/ai/word', {
-        method: 'POST', signal: controller.signal,
-        body: { mode, language, translationLanguage, word: item.word, context },
-      });
-      cache.set(key, text);
+      let result = await askWord(mode, dictionary ? '' : context);
+      if (active !== item) return;
+      if (useContextHelp && result.status === 'missing' && context.trim()) {
+        checkingContext = true;
+        display({ text: 'Reading the surrounding text…', language: 'en', status: 'context' });
+        place(item.rect);
+        result = { ...await askWord('context', context), status: 'context' };
+      }
+      cache.set(key, result);
       if (cache.size > 220) cache.delete(cache.keys().next().value);
-      if (active === item) answer.textContent = text;
+      if (active === item) display(result);
     } catch (error) {
-      if (active === item && error.name !== 'AbortError') answer.textContent = error.message;
+      if (active === item && error.name !== 'AbortError') {
+        display({
+          text: checkingContext ? 'No dictionary entry. AI explanation unavailable.' : error.message,
+          language: 'en',
+        });
+      }
     }
     if (active === item) place(item.rect);
   }
@@ -121,6 +171,10 @@ export function wordHelp({ preferences, request }) {
     }, options);
     root.addEventListener('pointerdown', (event) => { if (event.pointerType !== 'touch') clear(); }, options);
     root.addEventListener('pointerup', (event) => { if (event.pointerType === 'touch') inspect(event, true); }, options);
+    root.addEventListener('click', (event) => {
+      const item = wordAt(root, event, segmenter);
+      if (item) seekWord(item.node, item.index);
+    }, options);
     return () => listeners.abort();
   }
 

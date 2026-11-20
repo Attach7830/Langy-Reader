@@ -1,7 +1,7 @@
 export const modes = {
   translation: 'English translation',
   definition: 'Definition',
-  synonyms: 'Synonyms',
+  synonyms: 'Dictionary synonyms',
   off: 'Off',
 };
 
@@ -25,12 +25,15 @@ export const shortcuts = {
   alternate: 'Next page (alternate)',
   fullscreen: 'Full screen',
   summary: 'Toggle page summary',
+  playback: 'Play or pause narration',
 };
 
 export const defaults = {
-  mode: 'translation', translationLanguage: 'en', summaryLanguage: 'en', theme: 'paper', background: 'grain',
+  mode: 'translation', synonymContextHelp: false, translationLanguage: 'en', summaryLanguage: 'en', theme: 'paper', background: 'grain',
   font: 'spectral', size: 20, line: 1.65, width: 'balanced', pdfNight: true,
-  keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's' },
+  audioEnabled: false, podcastMode: false, audioHighlight: true, audioRate: 1,
+  keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's', playback: 'p' },
+  autoHideDocks: false,
 };
 
 function read(key, defaultValue) {

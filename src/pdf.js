@@ -1,5 +1,6 @@
 import { getDocument, GlobalWorkerOptions, TextLayer, PasswordResponses } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { trackText } from './text-tracking.js';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const baseUrl = new URL('/pdf-assets/', location.href);
@@ -13,6 +14,15 @@ function pageText(content) {
     text += item.str + (item.hasEOL ? '\n' : '');
   }
   return text.trim();
+}
+
+function pdfContents(items, depth = 0) {
+  return (items ?? []).flatMap((item) => {
+    const children = pdfContents(item.items, depth + 1);
+    const label = item.title?.trim();
+    if (!label || (item.dest == null && !children.length)) return children;
+    return [{ label, depth, target: item.dest }, ...children];
+  });
 }
 
 export async function openPdf({ host, url, position, language, hooks, signal }) {
@@ -32,6 +42,7 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
   let zoom = 1;
   let pageNumber = 1;
   let closed = false;
+  const excerpts = new Map();
   const shell = document.createElement('div');
   shell.className = 'pdf-sheet';
   host.replaceChildren(shell);
@@ -82,6 +93,7 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
       const [content] = await Promise.all([page.getTextContent(), render.promise]);
       if (id !== serial) return;
       text = pageText(content);
+      excerpts.set(number, text);
       active = new TextLayer({ textContentSource: content, container: layer, viewport });
       await active.render();
       if (id !== serial) return;
@@ -102,7 +114,8 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
     pdf = await loading.promise;
     signal.throwIfAborted();
     const initial = Number.isInteger(position) ? Math.min(pdf.numPages, Math.max(position, 1)) : 1;
-    await draw(initial);
+    const [outline] = await Promise.all([pdf.getOutline().catch(() => null), draw(initial)]);
+    const contents = pdfContents(outline);
     let dimensions = [host.clientWidth, host.clientHeight];
     observer = new ResizeObserver(() => {
       const next = [host.clientWidth, host.clientHeight];
@@ -113,11 +126,44 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
     observer.observe(host);
     return {
       destroy,
+      contents,
+      audioUnit() {
+        const root = shell.querySelector('.textLayer');
+        return root?.childElementCount ? { key: `pdf:${pageNumber}`, root, track: () => trackText(root, language, true) } : null;
+      },
+      audioTarget(key) { return Number(key.split(':')[1]); },
+      revealWord(range) {
+        range.startContainer.parentElement?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      },
       get pageCount() { return pdf.numPages; },
       get pageNumber() { return pageNumber; },
       move: (direction) => draw(pageNumber + direction),
-      go: (target) => draw(target),
-      excerpt: () => text,
+      async go(target) {
+        if (Number.isInteger(target)) return draw(target);
+        const destination = typeof target === 'string' ? await pdf.getDestination(target) : target;
+        const pageRef = destination?.[0];
+        if (pageRef == null) throw new Error('This bookmark has no page destination.');
+        const index = Number.isInteger(pageRef) ? pageRef : await pdf.getPageIndex(pageRef);
+        return draw(index + 1);
+      },
+      summaryPage() {
+        const number = pageNumber;
+        return {
+          text,
+          async *earlier(contextSignal) {
+            for (let previous = 1; previous < number; previous++) {
+              contextSignal.throwIfAborted();
+              if (!excerpts.has(previous)) {
+                const page = await pdf.getPage(previous);
+                const content = await page.getTextContent();
+                contextSignal.throwIfAborted();
+                excerpts.set(previous, pageText(content));
+              }
+              yield excerpts.get(previous);
+            }
+          },
+        };
+      },
       async setZoom(factor) {
         zoom = factor;
         await draw(pageNumber);

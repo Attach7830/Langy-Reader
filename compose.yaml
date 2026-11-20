@@ -11,7 +11,12 @@ services:
       READER_USER: ${READER_USER:-reader}
       READER_PASSWORD: ${READER_PASSWORD:-}
       READER_DEMO: ${READER_DEMO:-0}
+      READER_DEMO_AUDIO_PREVIEW: ${READER_DEMO_AUDIO_PREVIEW:-1}
       OLLAMA_URL: http://ollama:11434
+      READER_LANGUAGE_URL: http://language:8000
+      READER_KOKORO_URL: ${READER_KOKORO_URL:-}
+      READER_KOKORO_VOICE: ${READER_KOKORO_VOICE:-ef_dora}
+      READER_KOKORO_API_KEY: ${READER_KOKORO_API_KEY:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -19,6 +24,8 @@ services:
     volumes:
       - library:/data
     depends_on:
+      language:
+        condition: service_started
       ollama:
         condition: service_started
     networks: [default, inference]
@@ -28,6 +35,17 @@ services:
       timeout: 4s
       retries: 3
       start_period: 10s
+
+  language:
+    build: ./language
+    init: true
+    restart: unless-stopped
+    networks: [inference]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
 
   ollama:
     build:

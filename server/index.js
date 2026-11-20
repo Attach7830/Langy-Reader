@@ -5,6 +5,8 @@ import express from 'express';
 import multer from 'multer';
 import { maxUpload, openLibrary, RequestError } from './books.js';
 import { openAISettings } from './ai.js';
+import { openThesaurus } from './thesaurus.js';
+import { openLearning } from './learning.js';
 import { demoUploadLimit, demoBookLimit, demoStorageLimit, limitJobs, visitorMiddleware } from './demo.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -13,6 +15,8 @@ const dir = resolve(process.env.READER_DATA || join(root, 'data'));
 const limits = demo ? { upload: demoUploadLimit, books: demoBookLimit, storage: demoStorageLimit } : null;
 const library = await openLibrary(dir, limits);
 const ai = await openAISettings(dir, demo);
+const lookupSynonyms = openThesaurus();
+const learning = await openLearning(dir, library, demo, ai);
 const uploadLimit = limits?.upload ?? maxUpload;
 const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 4, fieldSize: 1024 } });
 const demoUploads = demo ? [limitJobs({ perMinute: 32, perVisitor: 8 })] : [];
@@ -62,14 +66,24 @@ if (demo) {
   app.use(['/api/library', '/api/categories', '/api/books'], identifyVisitor);
   app.post(['/api/ai/word', '/api/ai/summary'], identifyVisitor);
   await library.pruneDemoBooks();
-  setInterval(() => library.pruneDemoBooks().catch(console.error), 15 * 60_000).unref();
+  await learning.prune();
+  setInterval(() => library.pruneDemoBooks().then(() => learning.prune()).catch(console.error), 15 * 60_000).unref();
 } else {
   app.get('/api/settings/ai', (_, res) => res.json(ai.settings()));
   app.put('/api/settings/ai', async (req, res) => res.json(await ai.save(req.body ?? {})));
   app.post('/api/settings/ai/models', async (req, res) => res.json({ models: await ai.models(req.body ?? {}) }));
+  app.put('/api/settings/learning', (req, res) => res.json(learning.save(req.body ?? {})));
+  app.post('/api/settings/learning/voices', async (req, res) => res.json(await learning.voices()));
 }
 
-app.get('/api/library', (req, res) => res.json(library.snapshot(req.visitor)));
+app.get('/api/settings/learning', (req, res) => res.json(learning.settings()));
+app.get('/api/library', (req, res) => {
+  const snapshot = library.snapshot(req.visitor);
+  res.json({
+    ...snapshot,
+    books: snapshot.books.map((book) => ({ ...book, learning: learning.info(library.getBook(book.id, req.visitor)) })),
+  });
+});
 app.post('/api/categories', (req, res) => res.status(201).json(library.saveCategory(randomUUID(), req.body ?? {}, true, req.visitor)));
 app.patch('/api/categories/:id', (req, res) => res.json(library.saveCategory(req.params.id, req.body ?? {}, false, req.visitor)));
 app.delete('/api/categories/:id', (req, res) => {
@@ -83,12 +97,42 @@ app.post('/api/books', ...demoUploads, (req, _res, next) => {
   }
   next();
 }, upload.single('file'), async (req, res) => {
-  res.status(201).json(await library.importBook(randomUUID(), req.file, req.body ?? {}, req.visitor));
+  const imported = await library.importBook(randomUUID(), req.file, req.body ?? {}, req.visitor);
+  learning.ensure(library.getBook(imported.id, req.visitor));
+  res.status(201).json(imported);
 });
 app.patch('/api/books/:id', (req, res) => res.json(library.editBook(req.params.id, req.body ?? {}, req.visitor)));
 app.delete('/api/books/:id', async (req, res) => {
   await library.removeBook(req.params.id, req.visitor);
+  await learning.remove(req.params.id);
   res.sendStatus(204);
+});
+app.get('/api/books/:id/learning', (req, res) => {
+  const book = library.getBook(req.params.id, req.visitor);
+  res.json(learning.chapters(book));
+});
+app.post('/api/books/:id/learning', (req, res) => {
+  const book = library.getBook(req.params.id, req.visitor);
+  learning.ensure(book, true);
+  res.status(202).json(learning.info(book));
+});
+app.get('/api/books/:id/chapters/:key', (req, res) => {
+  res.json(learning.unit(library.getBook(req.params.id, req.visitor), req.params.key,
+    typeof req.query.recording === 'string' ? req.query.recording : undefined));
+});
+app.get('/api/books/:id/narration', (req, res) => {
+  res.json(learning.narration(library.getBook(req.params.id, req.visitor)));
+});
+app.post('/api/books/:id/narration', ...(demo ? [limitJobs({ perMinute: 12, perVisitor: 4 })] : []), (req, res) => {
+  const book = library.getBook(req.params.id, req.visitor);
+  const body = req.body ?? {};
+  res.status(202).json({ audio: learning.queueBook(book, body.replace === true) });
+});
+app.get('/api/books/:id/audio/:audio', (req, res) => {
+  res.type('audio/mpeg').sendFile(learning.audioFile(library.getBook(req.params.id, req.visitor), req.params.audio), { dotfiles: 'allow' });
+});
+app.delete('/api/books/:id/narration', (req, res) => {
+  res.json({ cancelled: learning.cancel(library.getBook(req.params.id, req.visitor)) });
 });
 app.get('/api/books/:id/file', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);
@@ -101,12 +145,16 @@ app.get('/api/books/:id/cover', (req, res) => {
 });
 
 app.get('/api/ai/status', async (_, res) => res.json(await ai.status()));
+app.post('/api/ai/word', (req, res, next) => {
+  if (req.body?.mode !== 'synonyms') return next();
+  res.json(lookupSynonyms(req.body));
+});
 for (const [path, generate] of [['word', ai.word], ['summary', ai.summary]]) {
   app.post(`/api/ai/${path}`, ...demoGenerations, async (req, res) => {
     const controller = new AbortController();
     res.on('close', () => controller.abort());
-    const text = await generate(req.body ?? {}, controller.signal);
-    if (!controller.signal.aborted) res.json({ text });
+    const answer = await generate(req.body ?? {}, controller.signal);
+    if (!controller.signal.aborted) res.json(typeof answer === 'string' ? { text: answer } : answer);
   });
 }
 
