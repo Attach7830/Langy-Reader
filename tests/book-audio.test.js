@@ -84,7 +84,8 @@ test('complete narration keeps sample timing, chapters, cache, cancellation, and
     db.prepare("UPDATE audio SET timings='[]' WHERE id='part-1'").run();
     const unsynchronized = service.queue(book, true);
     const failedJob = service.next();
-    await assert.rejects(service.assemble(failedJob), /No words could be synchronized/u);
+    await assert.rejects(service.assemble(failedJob), /No usable synchronization in “Chapter 2”/u);
+    assert.equal(db.prepare("SELECT state FROM audio WHERE id='part-1'").get().state, 'error');
     service.fail(failedJob, 'Synchronization failed');
     assert.equal(service.status(book).audio.state, 'error');
     assert.equal(service.audioFile(book, unsynchronized.id), null);

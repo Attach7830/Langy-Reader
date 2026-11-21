@@ -153,7 +153,9 @@ export function libraryScreen({ progress, onRemove }) {
       const working = ['queued', 'assembling'].includes(audio.state);
       $('#generate-book-audio').disabled ||= working;
       $('#cancel-book-audio').hidden = !working;
-      $('#book-audio-status').textContent = audio.state === 'ready' ? 'Complete book recording ready. Chapter markers are included.'
+      $('#book-audio-status').textContent = audio.state === 'ready' ? audio.approximateSections
+        ? `Complete book recording ready. Page timing is approximate in ${audio.approximateSections} sections; estimated words are not highlighted.`
+        : 'Complete book recording ready. Chapter markers are included.'
         : audio.state === 'queued' ? `Generating book audio · ${audio.complete} / ${audio.total} sections`
           : audio.state === 'assembling' ? 'Finishing the complete book recording…'
             : audio.state === 'cancelled' ? 'Generation cancelled. Completed work can be reused.' : '';
