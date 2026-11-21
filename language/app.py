@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 app = FastAPI()
 lock = threading.RLock()
 MODELS = {"es": "es_core_news_sm", "en": "en_core_web_sm"}
-WORD = re.compile(r"[^\W_]+", re.UNICODE)
+WORD = re.compile(r"[^\W_]+(?:['’][^\W_]+)*", re.UNICODE)
 
 
 class Analysis(BaseModel):
@@ -94,7 +94,46 @@ def recognizer():
 def normalized(text):
     # Stress accents vary in recognition. Preserve ñ as its own letter.
     decomposed = unicodedata.normalize("NFD", text.casefold())
-    return unicodedata.normalize("NFC", "".join(char for char in decomposed if not unicodedata.combining(char) or char == "\u0303"))
+    clean = unicodedata.normalize("NFC", "".join(char for char in decomposed if not unicodedata.combining(char) or char == "\u0303"))
+    return "".join(WORD.findall(clean)).replace("'", "").replace("’", "")
+
+
+def match_timings(words, heard):
+    source = [normalized(word) for word in words]
+    detected = [word[0] for word in heard]
+    times = [None] * len(source)
+    previous = 0
+    for match in difflib.SequenceMatcher(None, source, detected, autojunk=False).get_matching_blocks():
+        for step in range(match.size):
+            _, start, end, confidence = heard[match.b + step]
+            if not math.isfinite(start) or not math.isfinite(end):
+                continue
+            start = max(previous, float(start))
+            if end - start < 0.005:
+                continue
+            times[match.a + step] = {"start": round(start, 3), "end": round(float(end), 3),
+                                     "review": bool(confidence < 0.48)}
+            previous = end
+    return times
+
+
+def recognized_words(model, samples, language, words, retry=False):
+    segments, _ = model.transcribe(
+        samples, language=language, word_timestamps=True, beam_size=5 if retry else 3,
+        condition_on_previous_text=False, temperature=0.0,
+        initial_prompt=None if retry else " ".join(words[:40]),
+        # Whisper can classify short headings as silence. Retry only the failed chunk.
+        no_speech_threshold=None if retry else 0.6,
+    )
+    heard = []
+    for segment in segments:
+        for word in segment.words or []:
+            pieces = WORD.findall(word.word)
+            for index, piece in enumerate(pieces):
+                width = (word.end - word.start) / max(1, len(pieces))
+                heard.append((normalized(piece), word.start + width * index,
+                              word.start + width * (index + 1), word.probability))
+    return heard
 
 
 @app.post("/align")
@@ -112,34 +151,14 @@ def align(body: Alignment):
                 "-i", temporary.name, "-ar", "16000", "-ac", "1", "-f", "f32le", "pipe:1",
             ], capture_output=True, check=True, timeout=90).stdout
             with lock:
-                segments, _ = recognizer().transcribe(
-                    np.frombuffer(decoded, dtype="<f4"), language=body.language.split("-")[0], word_timestamps=True,
-                    beam_size=3, condition_on_previous_text=False,
-                    initial_prompt=" ".join(body.words[:40]),
-                )
-                heard = []
-                for segment in segments:
-                    for word in segment.words or []:
-                        pieces = WORD.findall(word.word)
-                        for index, piece in enumerate(pieces):
-                            width = (word.end - word.start) / max(1, len(pieces))
-                            heard.append((normalized(piece), word.start + width * index,
-                                          word.start + width * (index + 1), word.probability))
+                model = recognizer()
+                samples = np.frombuffer(decoded, dtype="<f4")
+                language = body.language.replace("_", "-").split("-")[0].lower()
+                times = match_timings(body.words, recognized_words(model, samples, language, body.words))
+                if body.words and not any(times):
+                    times = match_timings(body.words, recognized_words(model, samples, language, body.words, retry=True))
         except (ValueError, RuntimeError) as error:
             raise HTTPException(422, "The alignment model could not process this recording.") from error
-    source = [normalized(word) for word in body.words]
-    detected = [word[0] for word in heard]
-    times = [None] * len(source)
-    previous = 0
-    for match in difflib.SequenceMatcher(None, source, detected, autojunk=False).get_matching_blocks():
-        for step in range(match.size):
-            _, start, end, confidence = heard[match.b + step]
-            start = max(previous, float(start))
-            if not math.isfinite(end) or end - start < 0.005:
-                continue
-            times[match.a + step] = {"start": round(start, 3), "end": round(float(end), 3),
-                                     "review": bool(confidence < 0.48)}
-            previous = end
     return {"timings": times}
 
 

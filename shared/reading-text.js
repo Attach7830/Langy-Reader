@@ -29,7 +29,7 @@ export function readingText(root) {
 
 export function textWords(text, language = 'en') {
   const segmenter = new Intl.Segmenter(language, { granularity: 'word' });
-  return Array.from(segmenter.segment(text)).filter((part) => part.isWordLike && /\p{L}/u.test(part.segment))
+  return Array.from(segmenter.segment(text)).filter((part) => part.isWordLike && /[\p{L}\p{N}]/u.test(part.segment))
     .map(({ segment, index }) => ({ word: segment, from: index, to: index + segment.length }));
 }
 

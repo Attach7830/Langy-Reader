@@ -8,6 +8,7 @@ import { textWords } from '../shared/reading-text.js';
 import { RequestError } from './books.js';
 import { extractBook, textChunks, readingSamples } from './book-text.js';
 import { bookNarration } from './book-audio.js';
+import { hasUsableTimings, synchronizeChunk } from './audio-timing.js';
 
 const run = promisify(execFile);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
@@ -200,8 +201,8 @@ export async function openLearning(dir, library, demo, ai) {
     return {
       analysis: info(book),
       narration: completeAudio.status(book),
-      chapters: db.prepare('SELECT key, title, lemmas, length(trim(text)) AS characters FROM chapters WHERE book=? ORDER BY ordinal').all(book.id)
-        .map(({ lemmas, ...row }) => ({ ...row, narratable: row.characters > 0 && (!demo || row.characters <= 20000),
+      chapters: db.prepare('SELECT key, title, lemmas, length(trim(text)) AS characters,has_spoken_text(text) AS spoken FROM chapters WHERE book=? ORDER BY ordinal').all(book.id)
+        .map(({ lemmas, spoken, ...row }) => ({ ...row, narratable: Boolean(spoken) && (!demo || row.characters <= 20000),
           lemmaCount: JSON.parse(lemmas || '[]').length, audio: publicAudio(audioRow(book, row.key)) })),
     };
   }
@@ -209,14 +210,14 @@ export async function openLearning(dir, library, demo, ai) {
   function queue(book, key, replace = false, start = true) {
     if (!config.baseUrl) throw new RequestError(422, 'Connect a Kokoro server in Settings → Narration.');
     const row = chapter(book, key);
-    if (!row.text) throw new RequestError(422, 'This section has no selectable text for narration.');
+    if (!/[\p{L}\p{N}]/u.test(row.text)) throw new RequestError(422, 'This section has no selectable text for narration.');
     if (demo && row.text.length > 20000) throw new RequestError(422, 'Demo narration supports sections of up to 20,000 characters.');
     const options = { voice: config.voice, model: config.model, speed: config.speed, baseUrl: config.baseUrl };
     const candidates = db.prepare('SELECT * FROM audio WHERE book=? AND chapter=? AND digest=? AND options=? ORDER BY created DESC,rowid DESC')
       .all(book.id, key, row.digest, JSON.stringify(options));
     const running = candidates.find((candidate) => ['queued', 'generating', 'aligning'].includes(candidate.state));
     if (running) return publicAudio(running);
-    const cached = candidates.find((candidate) => candidate.state === 'ready');
+    const cached = candidates.find((candidate) => candidate.state === 'ready' && hasUsableTimings(candidate.timings, candidate.duration));
     if (!replace && cached) return publicAudio(cached);
     db.prepare('INSERT INTO audio(id, book, chapter, digest, options, state, created) VALUES(?,?,?,?,?,?,?)')
       .run(randomUUID(), book.id, key, row.digest, JSON.stringify(options), 'queued', Date.now());
@@ -288,6 +289,8 @@ export async function openLearning(dir, library, demo, ai) {
     try {
       for (const [index, chunk] of textChunks(row.text, 1800).entries()) {
         if (!db.prepare('SELECT id FROM audio WHERE id=?').get(job.id)) return;
+        const chunkWords = words.map((word, tokenIndex) => ({ ...word, tokenIndex })).filter((word) => word.from >= chunk.from && word.from < chunk.to);
+        if (!chunkWords.length) continue;
         db.prepare("UPDATE audio SET state='generating' WHERE id=?").run(job.id);
         const response = await kokoro('/audio/speech', {
           model: captured.model, voice: captured.voice, speed: captured.speed, input: chunk.text,
@@ -303,14 +306,14 @@ export async function openLearning(dir, library, demo, ai) {
         const duration = Number(stdout.trim());
         if (!Number.isFinite(duration) || duration <= 0) throw new Error('Kokoro returned invalid audio.');
         db.prepare("UPDATE audio SET state='aligning' WHERE id=?").run(job.id);
-        const chunkWords = words.map((word, tokenIndex) => ({ ...word, tokenIndex })).filter((word) => word.from >= chunk.from && word.from < chunk.to);
         const aligned = await languageCall('/align', {
           audio: (await readFile(wav)).toString('base64'), words: chunkWords.map((word) => word.word),
           language,
         });
-        for (const [position, stamp] of aligned.timings.entries()) {
-          if (!stamp || !chunkWords[position] || stamp.start < 0 || stamp.end > duration + .2 || stamp.end <= stamp.start) continue;
-          Object.assign(timings[chunkWords[position].tokenIndex], { start: stamp.start + offset, end: stamp.end + offset, review: stamp.review });
+        for (const stamp of synchronizeChunk(chunkWords, aligned.timings, duration)) {
+          if (stamp.start == null) continue;
+          Object.assign(timings[stamp.tokenIndex], { start: stamp.start + offset, end: stamp.end + offset,
+            review: stamp.review, ...(stamp.estimated ? { estimated: true } : {}) });
         }
         files.push(wav);
         offset += duration;

@@ -61,7 +61,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     if (index >= 0) chapters.value = String(index);
     const title = index >= 0 ? recording.markers[index].title : segmentAt(time)?.title;
     seek.setAttribute('aria-valuetext', `${timeLabel(time)} of ${timeLabel(recording?.duration)}${title ? ` · ${title}` : ''}`);
-    if (ready() && title) status.textContent = title;
+    if (ready() && title) status.textContent = title + (recording.approximateSections ? ' · Some page timing is approximate.' : '');
     $('#podcast-book-title').textContent = book()?.title || 'Book audio';
     deviceControls.update({
       active: enabled && loaded, title: book()?.title || 'Book audio', author: book()?.author, chapter: title,
@@ -70,7 +70,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   }
   function drawHighlight() {
     const stamp = timed[atTime(timed, audio.currentTime)];
-    const word = stamp && audio.currentTime <= stamp.end ? timingMap.get(stamp.index) : null;
+    const word = stamp && !stamp.estimated && audio.currentTime <= stamp.end ? timingMap.get(stamp.index) : null;
     if (!enabled || !preferences().audioHighlight || !word) { clearHighlight(); return; }
     if (word === highlighted) return;
     clearHighlight();
@@ -86,7 +86,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     timingMap = local.match(next.audio.timings || []);
     const segment = segmentFor(next.key);
     timed = segment ? (next.audio.timings || []).flatMap((stamp, index) => stamp.start == null ? [] : [{
-      index, start: segment.start + stamp.start * segment.scale, end: segment.start + stamp.end * segment.scale,
+      index, start: segment.start + stamp.start * segment.scale, end: segment.start + stamp.end * segment.scale, estimated: stamp.estimated,
     }]) : [];
     clearHighlight(); drawHighlight();
   }

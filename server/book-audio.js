@@ -6,6 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { RequestError } from './books.js';
+import { hasUsableTimings } from './audio-timing.js';
 
 const run = promisify(execFile);
 const pending = new Set(['queued', 'generating', 'aligning']);
@@ -14,6 +15,7 @@ const digest = (rows) => createHash('sha256').update(JSON.stringify(rows.map(({ 
 const escapeMetadata = (text) => String(text).replace(/[\r\n]/gu, ' ').replace(/[\\=;#]/gu, '\\$&');
 
 export function bookNarration({ db, folder, library, demo, previewAudio = false, configuration, queuePart, wake }) {
+  db.function('has_spoken_text', { deterministic: true }, (text) => Number(/[\p{L}\p{N}]/u.test(text)));
   db.exec(`CREATE TABLE IF NOT EXISTS book_audio (
     id TEXT PRIMARY KEY, book TEXT NOT NULL REFERENCES analyses(book) ON DELETE CASCADE,
     digest TEXT NOT NULL, options TEXT NOT NULL, state TEXT NOT NULL, parts TEXT NOT NULL,
@@ -22,18 +24,19 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
   CREATE INDEX IF NOT EXISTS book_audio_book ON book_audio(book, created);
   UPDATE book_audio SET state='queued' WHERE state='assembling';`);
 
-  const sections = (book) => db.prepare('SELECT key,title,digest,markers,length(trim(text)) AS characters FROM chapters WHERE book=? ORDER BY ordinal').all(book.id);
+  const sections = (book) => db.prepare('SELECT key,title,digest,markers,length(trim(text)) AS characters,has_spoken_text(text) AS narratable FROM chapters WHERE book=? ORDER BY ordinal').all(book.id);
   const newest = (book) => db.prepare('SELECT * FROM book_audio WHERE book=? ORDER BY created DESC,rowid DESC LIMIT 1').get(book.id);
 
   function publicRecording(row) {
     if (!row) return { state: 'missing' };
     const parts = JSON.parse(row.parts);
     const complete = parts.filter(({ id }) => db.prepare("SELECT id FROM audio WHERE id=? AND state='ready'").get(id)).length;
+    const segments = row.state === 'ready' ? JSON.parse(row.segments) : [];
     return {
       id: row.id, state: row.state, error: row.error, complete, total: parts.length, duration: row.duration,
       ...(row.state === 'ready' ? {
         url: `/api/books/${row.book}/audio/${row.id}`,
-        segments: JSON.parse(row.segments), markers: JSON.parse(row.markers),
+        segments, markers: JSON.parse(row.markers), approximateSections: segments.filter((part) => part.approximate).length,
       } : {}),
     };
   }
@@ -49,7 +52,7 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
     const analysis = db.prepare('SELECT state FROM analyses WHERE book=?').get(book.id);
     if (analysis?.state !== 'ready') throw new RequestError(409, 'Wait for the book analysis to finish, then generate audio.');
     const all = sections(book);
-    const readable = all.filter(({ characters }) => characters > 0);
+    const readable = all.filter(({ narratable }) => narratable);
     if (!readable.length) throw new RequestError(422, 'This book has no selectable text for narration.');
     if (demo && readable.some(({ characters }) => characters > 20000)) {
       throw new RequestError(422, 'Demo narration supports sections of up to 20,000 characters.');
@@ -118,9 +121,15 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
         const end = samples / 24000;
         const scale = (end - start) / part.duration;
         const section = all.find(({ key }) => key === part.chapter);
-        segments.push({ key: part.chapter, title: section.title, start, end, scale, audioId: part.id, textHash: part.digest });
-        const timed = JSON.parse(part.timings).filter((word) => word.start != null);
-        if (!timed.length) throw new RequestError(502, 'No words could be synchronized in a section. Check its language and retry book audio.');
+        if (!hasUsableTimings(part.timings, part.duration)) {
+          const error = `No usable synchronization in “${section.title}”. Retry book audio to rebuild this section.`;
+          db.prepare("UPDATE audio SET state='error',error=? WHERE id=?").run(error, part.id);
+          throw new RequestError(502, error);
+        }
+        const timings = JSON.parse(part.timings);
+        segments.push({ key: part.chapter, title: section.title, start, end, scale, audioId: part.id,
+          textHash: part.digest, approximate: timings.some((word) => word.estimated) });
+        const timed = timings.filter((word) => word.start != null);
         for (const marker of JSON.parse(section.markers || '[]')) {
           const word = timed.find((word) => word.from >= marker.from);
           const time = marker.from === 0 ? start : start + (word?.start ?? 0) * scale;
