@@ -26,17 +26,18 @@ The stack also includes a local `language` service for lemma analysis and audio 
 
 | Key | Action |
 | --- | --- |
-| Right arrow or Space | Next page |
+| Right arrow | Next page |
+| Space | Play or pause when narration is enabled; next page when narration is off (default) |
 | Left arrow | Previous page |
 | F | Full screen |
 | S | Open or close the current page summary |
 | P | Play or pause narration |
 
-Change any key in **Settings → Hotkeys**. Navigation and summary buttons also work on touchscreens.
+Change assigned keys in **Settings → Hotkeys**. Space always controls playback while narration is enabled; when narration is off, its assigned action applies. Navigation and summary buttons also work on touchscreens.
 
 Open **Contents** to jump to a chapter or a PDF bookmark. **Reading outline** in EPUBs builds a navigable list from headings, section breaks, and the opening words of passages. It opens automatically for books with fewer than two linked entries. Long stretches of uninterrupted text get approximate reading markers. The outline is built locally from the uploaded EPUB. PDFs also support a direct page-number jump.
 
-**Appearance** controls EPUB font, size, line spacing and page width. Choose Paper, Sepia, Dark or Dusk and a reader background. PDFs retain their page layout and have fit and zoom controls. Scanned PDFs display normally and need selectable text for summaries and word help.
+**Appearance** controls EPUB font, size, line spacing and page width. Choose Paper, Sepia, Dark, Dusk or the near-black Midnight theme and a reader background. PDFs retain their page layout and have fit and zoom controls. Scanned PDFs display normally and need selectable text for summaries and word help.
 
 **Language help** controls what happens when you hover or tap. Choose a translation, target-language definition, synonyms, or Off. Translation and summary languages default to English and accept language names or [BCP 47 codes](https://www.w3.org/International/articles/language-tags/), including Spanish. Definitions and synonyms use the language set on the book. EPUB metadata supplies a language when available. AI output quality varies with the language and model.
 

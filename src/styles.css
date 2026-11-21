@@ -12,6 +12,7 @@
   --brand-ink: #fffefa;
   --brand-soft: #e2ebdf;
   --reader-bg: #ebe9e0;
+  --paper-glow: #fff4;
   --danger: #9d3931;
   --shadow: 0 14px 42px #2d2e2414, 0 1px 4px #2d2e241a;
   --focus: #517f63;
@@ -38,6 +39,13 @@
   --muted: #bfc1d1; --border: #414961; --well: #34394e; --reader-bg: #181b2a;
   --brand: #c0caff; --brand-ink: #222846; --brand-soft: #41476a; --focus: #c0caff;
   --danger: #ffa69d; --shadow: 0 14px 42px #0c0e1b8c, 0 1px 4px #0c0e1bb3;
+}
+:root[data-theme="midnight"] {
+  color-scheme: dark;
+  --ground: #000; --surface: #08090b; --raised: #101216; --ink: #dedfe2; --paper-ink: #dedfe2;
+  --muted: #a0a7b0; --border: #272c34; --well: #161a20; --reader-bg: #000; --paper-glow: #ffffff04;
+  --brand: #a8c5b5; --brand-ink: #0b1710; --brand-soft: #1b2a23; --focus: #adcdbb;
+  --danger: #ffa69d; --shadow: 0 14px 42px #000b, 0 1px 4px #000c;
 }
 :root[data-reading-width="narrow"] { --page-width: 620px; }
 :root[data-reading-width="wide"] { --page-width: 980px; }
@@ -226,7 +234,7 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 }
 .reader-stage.summary-open { grid-template-columns: minmax(0, 1fr) var(--panel); }
 :root[data-background="grain"] .reader-stage {
-  background-image: radial-gradient(ellipse at center top, #fff4, transparent 72%),
+  background-image: radial-gradient(ellipse at center top, var(--paper-glow), transparent 72%),
     repeating-linear-gradient(115deg, transparent 0 3px, #756a500b 3px 4px, transparent 4px 8px);
 }
 :root[data-background="linen"] .reader-stage {
@@ -254,6 +262,8 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .pdf-sheet { position: relative; margin: 0 auto; background: #fff; box-shadow: var(--shadow); }
 .pdf-sheet canvas { display: block; width: 100%; height: 100%; }
 :root:is([data-theme="dark"], [data-theme="dusk"])[data-pdf-night="true"] .pdf-sheet canvas { filter: invert(.91) hue-rotate(180deg); }
+:root[data-theme="midnight"][data-pdf-night="true"] .pdf-sheet { background: #050505; }
+:root[data-theme="midnight"][data-pdf-night="true"] .pdf-sheet canvas { filter: invert(.98) hue-rotate(180deg); }
 .textLayer {
   position: absolute; inset: 0; overflow: clip; line-height: 1; letter-spacing: normal; word-spacing: normal;
   text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0; z-index: 0;
@@ -343,7 +353,7 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 .tabs button[aria-current="true"] { color: var(--ink); background: var(--brand-soft); }
 .theme-field { min-inline-size: 0; border: 0; padding: 0; margin: 0; }
 .theme-field legend { margin-bottom: 7px; padding: 0; }
-.theme-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.theme-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: 7px; }
 .theme-option { display: grid; gap: 6px; text-align: center; cursor: pointer; }
 .theme-option input { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; }
 .theme-option .theme-swatch {
