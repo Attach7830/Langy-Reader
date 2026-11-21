@@ -15,6 +15,7 @@ export function settingsDialog({ preferences, apply }) {
     input.type = 'radio';
     input.name = 'theme';
     input.value = value;
+    input.setAttribute('aria-label', theme.name);
     const swatch = element('span', 'theme-swatch', 'Aa');
     swatch.style.setProperty('--swatch-bg', theme.background);
     swatch.style.setProperty('--swatch-ink', theme.ink);

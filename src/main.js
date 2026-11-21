@@ -561,7 +561,13 @@ function keydown(event) {
     return;
   }
   const key = eventKey(event);
-  if (!key || event.repeat || (key === 'Space' && event.target?.closest?.('button, a'))) return;
+  if (!key || (key === 'Space' && event.target?.closest?.('button, a'))) return;
+  if (key === 'Space' && settings.audioEnabled) {
+    event.preventDefault();
+    if (!event.repeat) audio.toggle();
+    return;
+  }
+  if (event.repeat) return;
   const { previous, next, alternate, fullscreen, summary, playback } = settings.keys;
   if (![previous, next, alternate, fullscreen, summary, playback].includes(key)) return;
   event.preventDefault();
@@ -584,6 +590,7 @@ $('#audio-toggle').addEventListener('click', () => {
   saveSettings(settings);
   audio.apply();
   void audio.refresh();
+  viewer.focus({ preventScroll: true });
 });
 $('#summarize').addEventListener('click', summarize);
 $('#generate-summary').addEventListener('click', summarize);

@@ -105,7 +105,7 @@ function stylesheet(settings, fixed) {
     ${face('Spectral', spectral, 'normal')}
     ${face('Spectral', spectralItalic, 'italic')}
     ${face('DM Sans', dmSans, 'normal')}
-    html { background: transparent !important; color-scheme: ${['dark', 'dusk'].includes(settings.theme) ? 'dark' : 'light'}; }
+    html { background: transparent !important; color-scheme: ${['dark', 'dusk', 'midnight'].includes(settings.theme) ? 'dark' : 'light'}; }
     body { color: ${ink} !important; background: transparent !important; }
     body, body :is(p, li, blockquote, div, dd, td) {
       font-family: ${fonts[settings.font].stack} !important;

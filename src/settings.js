@@ -10,6 +10,7 @@ export const themes = {
   sepia: { name: 'Sepia', ink: '#3c2f22', background: '#f7ead1' },
   dark: { name: 'Dark', ink: '#eee9dd', background: '#262a28' },
   dusk: { name: 'Dusk', ink: '#e7e8f4', background: '#24283b' },
+  midnight: { name: 'Midnight', ink: '#dedfe2', background: '#08090b' },
 };
 
 export const fonts = {
