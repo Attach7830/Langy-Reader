@@ -32,7 +32,8 @@ export const shortcuts = {
 export const defaults = {
   mode: 'translation', synonymContextHelp: false, translationLanguage: 'en', summaryLanguage: 'en', theme: 'paper', background: 'grain',
   font: 'spectral', size: 20, line: 1.65, width: 'balanced', pdfNight: true,
-  audioEnabled: false, podcastMode: false, audioHighlight: true, audioRate: 1,
+  audioEnabled: false, audioToolbarHidden: false, podcastMode: false, audioHighlight: true, audioRate: 1,
+  audioRecordings: {},
   keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's', playback: 'p' },
   autoHideDocks: false,
 };

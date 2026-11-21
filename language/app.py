@@ -31,6 +31,11 @@ class Alignment(BaseModel):
     language: str = Field(max_length=35)
 
 
+class RecordingMatch(BaseModel):
+    words: list[str] = Field(max_length=500000)
+    heard: list[dict] = Field(max_length=500000)
+
+
 @functools.lru_cache(maxsize=12)
 def pipeline(language):
     import spacy
@@ -117,13 +122,14 @@ def match_timings(words, heard):
     return times
 
 
-def recognized_words(model, samples, language, words, retry=False):
+def recognized_words(model, samples, language, words, retry=False, vad=False):
     segments, _ = model.transcribe(
         samples, language=language, word_timestamps=True, beam_size=5 if retry else 3,
         condition_on_previous_text=False, temperature=0.0,
         initial_prompt=None if retry else " ".join(words[:40]),
         # Whisper can classify short headings as silence. Retry only the failed chunk.
         no_speech_threshold=None if retry else 0.6,
+        vad_filter=vad,
     )
     heard = []
     for segment in segments:
@@ -136,10 +142,9 @@ def recognized_words(model, samples, language, words, retry=False):
     return heard
 
 
-@app.post("/align")
-def align(body: Alignment):
+def decode_recording(encoded):
     try:
-        audio = base64.b64decode(body.audio, validate=True)
+        audio = base64.b64decode(encoded, validate=True)
     except ValueError:
         raise HTTPException(422, "Invalid audio data.") from None
     with tempfile.NamedTemporaryFile(suffix=".wav") as temporary:
@@ -150,16 +155,42 @@ def align(body: Alignment):
                 "ffmpeg", "-nostdin", "-v", "error", "-protocol_whitelist", "file,pipe",
                 "-i", temporary.name, "-ar", "16000", "-ac", "1", "-f", "f32le", "pipe:1",
             ], capture_output=True, check=True, timeout=90).stdout
-            with lock:
-                model = recognizer()
-                samples = np.frombuffer(decoded, dtype="<f4")
-                language = body.language.replace("_", "-").split("-")[0].lower()
-                times = match_timings(body.words, recognized_words(model, samples, language, body.words))
-                if body.words and not any(times):
-                    times = match_timings(body.words, recognized_words(model, samples, language, body.words, retry=True))
-        except (ValueError, RuntimeError) as error:
+            return np.frombuffer(decoded, dtype="<f4")
+        except (ValueError, RuntimeError, subprocess.SubprocessError, OSError) as error:
             raise HTTPException(422, "The alignment model could not process this recording.") from error
+
+
+@app.post("/align")
+def align(body: Alignment):
+    samples = decode_recording(body.audio)
+    with lock:
+        model = recognizer()
+        language = body.language.replace("_", "-").split("-")[0].lower()
+        times = match_timings(body.words, recognized_words(model, samples, language, body.words))
+        if body.words and not any(times):
+            times = match_timings(body.words, recognized_words(model, samples, language, body.words, retry=True))
     return {"timings": times}
+
+
+@app.post("/transcribe")
+def transcribe_recording(body: Alignment):
+    samples = decode_recording(body.audio)
+    with lock:
+        language = body.language.replace("_", "-").split("-")[0].lower()
+        heard = recognized_words(recognizer(), samples, language, [], vad=True)
+    return {"heard": [{"word": word, "start": float(start), "end": float(end)}
+                       for word, start, end, _ in heard]}
+
+
+@app.post("/match-recording")
+def match_recording(body: RecordingMatch):
+    from book_alignment import align_recording
+    if sum(len(word) for word in body.words) > 3000000:
+        raise HTTPException(422, "This book is too large for recording alignment.")
+    try:
+        return align_recording(body.words, body.heard)
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(422, "The recording transcript could not be matched.") from None
 
 
 @app.post("/pdf")

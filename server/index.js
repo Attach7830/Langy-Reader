@@ -7,6 +7,8 @@ import { maxUpload, openLibrary, RequestError } from './books.js';
 import { openAISettings } from './ai.js';
 import { openThesaurus } from './thesaurus.js';
 import { openLearning } from './learning.js';
+import { openArchive } from './annas-archive.js';
+import { maxAudioUpload } from './uploaded-audio.js';
 import { demoUploadLimit, demoBookLimit, demoStorageLimit, limitJobs, visitorMiddleware } from './demo.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -17,8 +19,10 @@ const library = await openLibrary(dir, limits);
 const ai = await openAISettings(dir, demo);
 const lookupSynonyms = openThesaurus();
 const learning = await openLearning(dir, library, demo, ai);
+const archive = await openArchive(dir, { library, demo, onImport: (book) => learning.ensure(library.getBook(book.id)) });
 const uploadLimit = limits?.upload ?? maxUpload;
 const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 4, fieldSize: 1024 } });
+const audioUpload = multer({ dest: library.uploads, limits: { fileSize: maxAudioUpload, files: 1, fields: 1, fieldSize: 1024 } });
 const demoUploads = demo ? [limitJobs({ perMinute: 32, perVisitor: 8 })] : [];
 const demoGenerations = demo ? [limitJobs({ perMinute: 45, perVisitor: 16 })] : [];
 const app = express();
@@ -74,13 +78,18 @@ if (demo) {
   app.post('/api/settings/ai/models', async (req, res) => res.json({ models: await ai.models(req.body ?? {}) }));
   app.put('/api/settings/learning', (req, res) => res.json(learning.save(req.body ?? {})));
   app.post('/api/settings/learning/voices', async (req, res) => res.json(await learning.voices()));
+  app.put('/api/settings/archive', async (req, res) => res.json(await archive.save(req.body ?? {})));
+  app.post('/api/imports/anna', (req, res) => res.status(202).json(archive.queue(req.body ?? {})));
+  app.get('/api/imports/anna/:id', (req, res) => res.json(archive.job(req.params.id)));
 }
 
 app.get('/api/settings/learning', (req, res) => res.json(learning.settings()));
+app.get('/api/settings/archive', (_, res) => res.json(archive.settings()));
 app.get('/api/library', (req, res) => {
   const snapshot = library.snapshot(req.visitor);
   res.json({
     ...snapshot,
+    archive: { available: !demo, hasKey: archive.settings().hasKey, job: demo ? null : archive.latest() },
     books: snapshot.books.map((book) => ({ ...book, learning: learning.info(library.getBook(book.id, req.visitor)) })),
   });
 });
@@ -121,8 +130,33 @@ app.get('/api/books/:id/chapters/:key', (req, res) => {
     typeof req.query.recording === 'string' ? req.query.recording : undefined));
 });
 app.get('/api/books/:id/narration', (req, res) => {
-  res.json(learning.narration(library.getBook(req.params.id, req.visitor)));
+  res.json(learning.narration(library.getBook(req.params.id, req.visitor), typeof req.query.recording === 'string' ? req.query.recording : undefined));
 });
+app.get('/api/books/:id/recordings', (req, res) => {
+  const book = library.getBook(req.params.id, req.visitor);
+  res.json({ available: !demo, maxUpload: maxAudioUpload, recordings: demo ? [] : learning.recordings.list(book) });
+});
+if (!demo) {
+  app.post('/api/books/:id/recordings', (req, _res, next) => {
+    library.getBook(req.params.id);
+    req.audioUpload = true;
+    if (Number(req.get('Content-Length')) > maxAudioUpload + 16384) return next(new RequestError(413, 'Audio files must be 1 GiB or smaller.'));
+    next();
+  }, audioUpload.single('file'), async (req, res) => {
+    res.status(201).json(await learning.recordings.accept(library.getBook(req.params.id), req.file, req.body ?? {}));
+  });
+  app.post('/api/books/:id/recordings/:recording/sync', (req, res) => {
+    res.status(202).json(learning.recordings.queue(library.getBook(req.params.id), req.params.recording));
+  });
+  app.delete('/api/books/:id/recordings/:recording', async (req, res) => {
+    await learning.recordings.remove(library.getBook(req.params.id), req.params.recording);
+    res.sendStatus(204);
+  });
+  app.get('/api/books/:id/recordings/:recording/file', (req, res) => {
+    const file = learning.recordings.original(library.getBook(req.params.id), req.params.recording);
+    res.type(file.mime).download(file.path, file.name, { dotfiles: 'allow' });
+  });
+}
 app.post('/api/books/:id/narration', ...(demo ? [limitJobs({ perMinute: 12, perVisitor: 4 })] : []), (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);
   const body = req.body ?? {};
@@ -169,6 +203,9 @@ app.use((err, _req, res, next) => {
   if (res.headersSent) return next(err);
   if (res.destroyed) return;
   if (err instanceof multer.MulterError) {
+    if (_req.audioUpload) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
+      error: err.code === 'LIMIT_FILE_SIZE' ? 'Audio files must be 1 GiB or smaller.' : 'Upload one audiobook at a time.',
+    });
     return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
       error: err.code === 'LIMIT_FILE_SIZE' ? `Books must be ${uploadLimit / 1024 / 1024} MiB or smaller.` : 'Upload one EPUB or PDF at a time.',
     });

@@ -56,6 +56,7 @@
         <span class="muted" id="book-count"></span>
       </div>
       <div id="books" class="book-grid"></div>
+      <p class="field-note" id="archive-import-status" role="status" hidden></p>
       <div id="empty-library" class="empty-state" hidden>
         <i data-lucide="book-open"></i><h2 id="empty-title"></h2><p id="empty-detail"></p>
       </div>
@@ -118,6 +119,7 @@
     </div>
     <footer class="reader-footer">
       <div class="narration-player" id="narration-player" role="region" aria-label="Book audio player" hidden>
+        <label class="recording-choice" id="recording-choice" hidden>Recording <select id="narration-recording" aria-label="Book recording"></select></label>
         <audio id="narration-audio" preload="metadata"></audio>
         <div class="podcast-info" id="podcast-info" hidden>
           <span class="podcast-eyebrow">Now listening</span><strong id="podcast-book-title"></strong>
@@ -172,6 +174,7 @@
         <button type="button" data-settings-tab="language">Language help</button>
         <button type="button" data-settings-tab="shortcuts">Hotkeys</button>
         <button type="button" data-settings-tab="narration">Narration</button>
+        <button type="button" data-settings-tab="sources">Book sources</button>
         <button type="button" data-settings-tab="ai" hidden>AI connection</button>
       </nav>
       <section class="modal-body" data-settings-panel="reading">
@@ -239,7 +242,9 @@
         <p class="field-note" id="model-result" aria-live="polite" hidden></p>
       </section>
       <section class="modal-body" data-settings-panel="narration" hidden>
-        <label class="checkbox-row"><input name="audioEnabled" type="checkbox"> Show narration player</label>
+        <label class="checkbox-row"><input name="audioEnabled" type="checkbox"> Enable narration</label>
+        <label class="checkbox-row"><input name="audioToolbarHidden" type="checkbox"> Hide audio toolbar</label>
+        <p class="field-note">The toolbar can stay hidden while audio plays and pages follow. Space still plays or pauses narration. Clear this option to show the toolbar again.</p>
         <label class="checkbox-row"><input name="podcastMode" type="checkbox"> Use podcast mode</label>
         <label class="checkbox-row"><input name="audioHighlight" type="checkbox"> Highlight spoken words</label>
         <label class="field">Playback speed <input name="audioRate" type="number" min="0.5" max="2" step="0.05" value="1"></label>
@@ -260,6 +265,18 @@
         </div>
         <p id="kokoro-result" class="field-note" role="status" hidden></p>
       </section>
+      <section class="modal-body" data-settings-panel="sources" hidden>
+        <h3>Anna’s Archive</h3>
+        <p class="field-note" id="archive-demo-note" hidden>Connect Anna’s Archive on your self-hosted installation. This public demo does not store membership keys or download books from external sources.</p>
+        <div id="archive-settings" class="form-stack" hidden>
+          <label class="field">Anna’s Archive mirror <select name="aa_baseUrl" aria-label="Anna’s Archive mirror"></select></label>
+          <label class="field">Anna’s Archive membership key <input name="aa_apiKey" type="password" maxlength="4096" autocomplete="new-password" spellcheck="false"></label>
+          <label class="checkbox-row"><input name="aa_clearKey" type="checkbox"> Remove saved membership key</label>
+          <p class="field-note">This connection applies to this installation. The key is saved on your server and is never returned by the settings API. Membership eligibility and download limits still apply.</p>
+          <p class="field-note">Save the connection, then choose Anna’s Archive in Import book and paste a book link or MD5. Import supports EPUB and PDF within the normal size limit.</p>
+        </div>
+        <p class="field-note" id="archive-result" role="status" hidden></p>
+      </section>
       <p class="form-error" id="settings-error" role="alert" hidden></p>
       <footer class="modal-footer"><button class="button quiet" type="button" data-close>Cancel</button><button class="button primary" type="submit">Save settings</button></footer>
     </form>
@@ -269,6 +286,14 @@
     <form id="book-form">
       <header class="modal-header"><h2 id="book-dialog-title">Import book</h2><button class="icon-button" type="button" aria-label="Close book details" data-close><i data-lucide="x"></i></button></header>
       <div class="modal-body">
+        <label class="field" id="import-source-field">Import from
+          <select name="source" id="book-source" aria-label="Import from"><option value="file">Upload file</option><option value="anna">Anna’s Archive</option></select>
+        </label>
+        <div class="form-stack" id="archive-book-fields" hidden>
+          <label class="field">Anna’s Archive book link or MD5 <input name="archiveReference" maxlength="2000" autocomplete="off" spellcheck="false" placeholder="Book link or 32-character MD5"></label>
+          <p class="field-note">Uses the membership key saved in Settings → Book sources. EPUB or PDF, up to 120 MiB. The download continues on the server if this dialog is closed.</p>
+          <button class="button quiet" type="button" id="configure-archive" data-settings="sources">Configure Anna’s Archive</button>
+        </div>
         <label class="file-field" id="file-field">
           <i data-lucide="upload"></i><strong id="file-label">Choose an EPUB or PDF</strong>
           <small id="file-limit"></small>
@@ -281,6 +306,7 @@
           <label class="field">Category <select name="categoryId" id="book-categories"></select></label>
         </div>
         <p class="field-note" id="book-language-note">EPUBs use their metadata when available. Otherwise the default is Spanish.</p>
+        <p class="field-note" id="book-import-progress" role="status" hidden></p>
         <p class="form-error" id="book-error" role="alert" hidden></p>
       </div>
       <footer class="modal-footer"><button class="button danger" id="remove-book" type="button" hidden>Remove book</button><button class="button quiet" type="button" data-close>Cancel</button><button class="button primary" id="book-submit" type="submit">Import book</button></footer>
@@ -303,6 +329,17 @@
       <label class="checkbox-row"><input type="checkbox" id="replace-book-audio"> Replace existing recordings</label>
       <p id="book-audio-status" class="field-note" role="status"></p>
       <a id="book-audio-download" class="button secondary" hidden>Download complete book MP3</a>
+      <section class="recordings-section">
+        <h3>Your audiobooks</h3>
+        <p class="field-note" id="audio-upload-note">Upload MP3, M4A, M4B, OGG, WAV, FLAC or AAC, up to 1 GiB per file. Sync runs in the background. Recordings of the same edition give better matches.</p>
+        <form id="upload-audio-form" class="form-stack">
+          <label class="field">Recording name <input name="name" maxlength="120" placeholder="Narrator or edition (optional)"></label>
+          <label class="field">Audiobook file <input name="file" type="file" accept=".mp3,.m4a,.m4b,.ogg,.opus,.wav,.flac,.aac,audio/*" required></label>
+          <button class="button secondary" id="upload-audio" type="submit">Upload recording</button>
+        </form>
+        <div id="recordings-list" class="form-stack"></div>
+        <p class="form-error" id="recording-error" role="alert" hidden></p>
+      </section>
       <div id="learning-chapters"></div>
       <p id="learning-error" class="form-error" role="alert" hidden></p>
     </div>

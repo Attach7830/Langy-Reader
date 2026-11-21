@@ -23,6 +23,8 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   const rewind = $('#narration-rewind'), forward = $('#narration-forward');
   const previousChapter = $('#narration-previous-chapter'), nextChapter = $('#narration-next-chapter');
   const rate = $('#narration-rate'), podcastToggle = $('#podcast-toggle');
+  const recordingChoice = $('#narration-recording');
+  let recordingCount = 0;
   let recording, recordingBook, connection = false, previewAudio = false, unit, local, descriptor, timed = [], timingMap = new Map();
   let lifecycle = 0, controller, poll, animation, bookRequest, following = false, followAgain = false, forceFollow = false;
   let wantPlaying = false, enabled = false, initialSeek = true, highlighted, highlightedWindow;
@@ -61,7 +63,9 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     if (index >= 0) chapters.value = String(index);
     const title = index >= 0 ? recording.markers[index].title : segmentAt(time)?.title;
     seek.setAttribute('aria-valuetext', `${timeLabel(time)} of ${timeLabel(recording?.duration)}${title ? ` · ${title}` : ''}`);
-    if (ready() && title) status.textContent = title + (recording.approximateSections ? ' · Some page timing is approximate.' : '');
+    if (ready() && title) status.textContent = title
+      + (recording.quality ? ` · ${recording.quality.textPercent}% of text matched` : '')
+      + (recording.approximateSections ? ' · Some page timing is approximate.' : '');
     $('#podcast-book-title').textContent = book()?.title || 'Book audio';
     deviceControls.update({
       active: enabled && loaded, title: book()?.title || 'Book audio', author: book()?.author, chapter: title,
@@ -195,7 +199,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     generate.title = previewAudio ? 'Connect Kokoro on a self-hosted installation to generate audio.' : '';
     generate.textContent = recording.state === 'error' ? 'Retry book audio' : 'Generate book audio';
     status.textContent = previewAudio && !isReady ? 'Audio and podcast preview · Narration is not connected in this demo.' : ({
-      missing: connection ? 'Generate the complete book to listen.' : 'Connect Kokoro in Settings → Narration.',
+      missing: recordingCount ? 'Choose a synced recording, or generate book audio.' : connection ? 'Generate the complete book to listen.' : 'Connect Kokoro in Settings → Narration.',
       queued: `Generating book audio · ${recording.complete} / ${recording.total} sections`,
       assembling: 'Finishing the complete book recording…', cancelled: 'Book audio generation cancelled.', error: recording.error,
     })[recording.state] || '';
@@ -222,8 +226,14 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     bookRequest = (async () => {
       clearTimeout(poll);
       try {
-        const result = await api(`/api/books/${active.id}/narration`, { signal: controller.signal });
+        const selected = preferences().audioRecordings?.[active.id] || '';
+        const result = await api(`/api/books/${active.id}/narration${selected ? `?recording=${encodeURIComponent(selected)}` : ''}`, { signal: controller.signal });
         if (epoch !== lifecycle) return;
+        const choices = result.recordings || [];
+        recordingCount = choices.length;
+        recordingChoice.replaceChildren(new Option('Generated narration', ''), ...choices.map(({ id, name }) => new Option(name, id)));
+        recordingChoice.value = choices.some((item) => item.id === selected) ? selected : '';
+        $('#recording-choice').hidden = !choices.length;
         await updateRecording(result);
         if (['queued', 'assembling'].includes(recording.state)) poll = setTimeout(() => { void loadRecording(); }, 1800);
       } catch (error) {
@@ -258,11 +268,12 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     following = followAgain = forceFollow = wantPlaying = false;
     initialSeek = true;
     previewAudio = false;
+    recordingCount = 0;
     deviceControls.clear();
     markers.replaceChildren(); chapters.replaceChildren(); play.disabled = seek.disabled = true; controls();
   }
   function apply() {
-    enabled = preferences().audioEnabled; player.hidden = !enabled;
+    enabled = preferences().audioEnabled; player.hidden = !enabled || Boolean(preferences().audioToolbarHidden);
     $('#audio-toggle').setAttribute('aria-pressed', String(enabled));
     audio.playbackRate = preferences().audioRate;
     const podcast = Boolean(preferences().podcastMode);
@@ -288,6 +299,12 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   }
   play.addEventListener('click', toggle);
   podcastToggle.addEventListener('click', () => changePreferences({ podcastMode: !preferences().podcastMode }));
+  recordingChoice.addEventListener('change', () => {
+    const active = book();
+    if (!active) return;
+    changePreferences({ audioRecordings: { ...preferences().audioRecordings, [active.id]: recordingChoice.value } });
+    stop(); apply(); void refresh();
+  });
   rewind.addEventListener('click', () => skipBy(-10));
   forward.addEventListener('click', () => skipBy(10));
   previousChapter.addEventListener('click', () => jumpChapter(-1));

@@ -59,7 +59,17 @@ The OPI assesses a person's speaking. Langy's reading estimate describes text de
 
 Open **Settings → Narration** on your personal installation. Enter your Kokoro API base URL, such as `http://host.docker.internal:8880/v1`, model `kokoro`, and a voice for the book's language, such as `ef_dora` or `em_alex` for Spanish. The optional API key stays on the server. **Save and find voices** tests the connection and accepts both voice IDs and objects returned by Kokoro. You can also initialize the connection with `READER_KOKORO_URL`, `READER_KOKORO_VOICE`, and `READER_KOKORO_API_KEY`.
 
-Enable **Show narration player** or select the headphone button in the reader. **Generate book audio**, available in the player and under **Analysis & audio**, creates one complete MP3 for the entire book. The same recording plays continuously across displayed pages and source sections. Its scrub bar has chapter ticks and a chapter menu, and the MP3 contains chapter metadata. EPUB markers use the table of contents and headings; unlabelled text uses section breaks or clearly labelled reading markers. PDFs use bookmarks when available, with page markers as a fallback.
+Enable **Narration** or select the headphone button in the reader. **Generate book audio**, available in the player and under **Analysis & audio**, creates one complete MP3 for the entire book. The same recording plays continuously across displayed pages and source sections. Its scrub bar has chapter ticks and a chapter menu, and the MP3 contains chapter metadata. EPUB markers use the table of contents and headings; unlabelled text uses section breaks or clearly labelled reading markers. PDFs use bookmarks when available, with page markers as a fallback.
+
+**Settings → Narration → Hide audio toolbar** hides the entire audio player while playback and page following continue. Space still plays and pauses. Clear the option to bring the controls back. Use full screen and **Appearance → Auto-hide docks in full screen** for a view with only the book text.
+
+## Upload your own audiobooks
+
+On a self-hosted installation, open a book's **Analysis & audio → Your audiobooks**. Upload MP3, M4A, M4B, OGG/Opus, WAV, FLAC or AAC, up to **1 GiB** and 72 hours per file, give the recording a name, then select **Sync with book**. Uploads do not require Kokoro. A reverse proxy may impose a smaller upload limit.
+
+Syncing runs in the background using the local multilingual speech model. Transcript checkpoints survive a restart and can be reused for another sync. Unique phrase anchors align recognized speech to the book; the resulting match percentage is displayed. Abridged audio, introductions, OCR errors and different editions can reduce coverage. Recordings with too little matching speech are rejected. Unmatched positions within matched sections are estimated for page following, and estimated words are never highlighted. Sections absent from the recording are skipped during playback.
+
+Upload and sync several recordings of the same book, then choose **Recording** in its reader to select a narrator or edition. Each book's selection is remembered in this browser. Generated narration stays available as a separate choice. Original recordings can be downloaded or removed independently in **Your audiobooks**. The public demo shows these options without accepting audio uploads.
 
 Pages always follow playback and scrubbing, including jumps across chapters and repeated scrubs while paused. **Settings → Narration → Highlight spoken words** independently controls the visible word highlight. Font changes preserve playback position. Turning a page manually seeks to that page in the full recording; clicking a synchronized word or chapter marker also seeks while preserving play or pause state. PDFs stay linked to their fixed page numbers. Scanned pages need an OCR text layer to be narrated.
 
@@ -95,6 +105,14 @@ Open **Settings → AI connection** on your personal instance. The setting appli
 If the chatbot server is on a different machine, use an address reachable from the reader container. For a service running on the same Docker host, `host.docker.internal` points to that host. Configure the upstream service to listen on an interface the container can reach. Enter an API key if the server requires one. The key is stored in the server’s data volume and stays out of browser responses.
 
 For a smaller bundled model, set `READER_MODEL=qwen3:1.7b` and run `docker compose up -d --build` again. If you saved a model in the connection screen, select the newly installed tag there too. To use an existing API from the start, run `docker compose up -d --build --no-deps language reader`, then configure it in Settings.
+
+## Anna’s Archive imports
+
+On your self-hosted installation, open **Settings → Book sources**. Choose one of the listed official mirrors, enter your own membership key, and save. The instance-wide key is stored in a private file in the data volume, is not returned by settings or job responses, and is not placed in browser storage. Saving does not consume a download; membership eligibility and allowance are checked when you import.
+
+In **Import book**, select **Anna’s Archive**, paste the edition's book link or MD5, and choose a category. EPUB metadata is used when available; title, author and language can also be entered. Downloads run in the background with progress, are capped at **120 MiB**, verified against the requested MD5, and pass the same EPUB/PDF validation as manual uploads. Unsupported formats are rejected. An interrupted server restart requires retrying an unfinished download; check your library first. Only one Anna’s Archive import runs at a time. Membership fees and download quotas belong to Anna’s Archive; Langy does not provide a shared key or integrated catalogue search. See the [official API FAQ](https://annas-archive.gl/faq#api).
+
+The public demo shows where to configure a personal installation and does not accept membership keys or external book downloads. Include `archive-settings.json` in private data-volume backups, keep it out of Git, and use **Remove saved membership key** to disconnect.
 
 ## Publish the demo at langy.srtw.win
 

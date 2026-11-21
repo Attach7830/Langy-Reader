@@ -5,3 +5,4 @@ data
 server/thesaurus-data
 .env*
 .secrets/
+**/archive-settings.json
