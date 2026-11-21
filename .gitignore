@@ -7,4 +7,5 @@ data/
 !.env.example
 !.env.demo.example
 .secrets/
+archive-settings.json
 language/__pycache__/

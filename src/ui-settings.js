@@ -2,9 +2,11 @@ import { $, $$, api, element, message, toast } from './ui.js';
 import { defaults, eventKey, fonts, keyLabel, modes, shortcuts, themes } from './settings.js';
 import { languageOptions, parseLanguage } from './languages.js';
 import { narrationSettings } from './ui-narration-settings.js';
+import { archiveSettings } from './ui-archive-settings.js';
 
 export function settingsDialog({ preferences, apply }) {
   const narration = narrationSettings();
+  const archive = archiveSettings();
   const dialog = $('#settings');
   const form = $('#settings-form');
   const fields = form.elements;
@@ -99,6 +101,7 @@ export function settingsDialog({ preferences, apply }) {
     if (dialog.open) return;
     form.reset();
     narration.reset();
+    archive.reset();
     aiConfig = null;
     const current = preferences();
     for (const key of ['mode', 'summaryLanguage', 'translationLanguage', 'theme', 'background', 'font', 'size', 'line', 'width']) {
@@ -108,6 +111,7 @@ export function settingsDialog({ preferences, apply }) {
     fields.pdfNight.checked = current.pdfNight;
     fields.synonymContextHelp.checked = current.synonymContextHelp;
     fields.audioEnabled.checked = current.audioEnabled;
+    fields.audioToolbarHidden.checked = current.audioToolbarHidden;
     fields.podcastMode.checked = current.podcastMode;
     fields.audioHighlight.checked = current.audioHighlight;
     fields.audioRate.value = current.audioRate;
@@ -116,12 +120,14 @@ export function settingsDialog({ preferences, apply }) {
     dialog.showModal();
     if (tab === 'ai') void loadAI();
     if (tab === 'narration') void narration.load();
+    if (tab === 'sources') void archive.load();
   }
 
   for (const tab of $$('[data-settings-tab]')) tab.addEventListener('click', () => {
     section(tab.dataset.settingsTab);
     if (tab === aiTab) void loadAI();
     if (tab.dataset.settingsTab === 'narration') void narration.load();
+    if (tab.dataset.settingsTab === 'sources') void archive.load();
   });
   for (const button of $$('[data-settings]')) button.addEventListener('click', () => open(button.dataset.settings));
 
@@ -196,15 +202,19 @@ export function settingsDialog({ preferences, apply }) {
     saveButton.disabled = true;
     const draft = aiDraft();
     let aiChanged = false;
+    let saveSection = 'narration';
     try {
       await narration.save();
+      saveSection = 'sources';
+      await archive.save();
+      saveSection = 'ai';
       if (canConfigureAI && aiConfig && (draft.provider !== aiConfig.provider || draft.baseUrl !== aiConfig.baseUrl
         || draft.model !== aiConfig.model || draft.apiKey || draft.clearKey)) {
         aiConfig = await api('/api/settings/ai', { method: 'PUT', body: draft });
         aiChanged = true;
       }
     } catch (error) {
-      section('ai');
+      section(saveSection);
       return message('#settings-error', error.message);
     } finally {
       pending = false;
@@ -213,7 +223,9 @@ export function settingsDialog({ preferences, apply }) {
     const updated = {
       mode: fields.mode.value, summaryLanguage, translationLanguage, theme: fields.theme.value,
       synonymContextHelp: fields.synonymContextHelp.checked,
-      audioEnabled: fields.audioEnabled.checked, podcastMode: fields.podcastMode.checked, audioHighlight: fields.audioHighlight.checked,
+      audioEnabled: fields.audioEnabled.checked, audioToolbarHidden: fields.audioToolbarHidden.checked,
+      audioRecordings: preferences().audioRecordings || {},
+      podcastMode: fields.podcastMode.checked, audioHighlight: fields.audioHighlight.checked,
       audioRate: Math.max(.5, Math.min(2, Number(fields.audioRate.value) || 1)),
       background: fields.background.value, font: fields.font.value, width: fields.width.value,
       size: fields.size.valueAsNumber, line: fields.line.valueAsNumber,

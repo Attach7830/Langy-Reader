@@ -23,9 +23,12 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
   ) STRICT;
   CREATE INDEX IF NOT EXISTS book_audio_book ON book_audio(book, created);
   UPDATE book_audio SET state='queued' WHERE state='assembling';`);
+  for (const [name, definition] of [['kind', "TEXT NOT NULL DEFAULT 'generated'"], ['name', "TEXT NOT NULL DEFAULT ''"], ['quality', 'TEXT']]) {
+    if (!db.prepare('PRAGMA table_info(book_audio)').all().some((column) => column.name === name)) db.exec(`ALTER TABLE book_audio ADD COLUMN ${name} ${definition}`);
+  }
 
   const sections = (book) => db.prepare('SELECT key,title,digest,markers,length(trim(text)) AS characters,has_spoken_text(text) AS narratable FROM chapters WHERE book=? ORDER BY ordinal').all(book.id);
-  const newest = (book) => db.prepare('SELECT * FROM book_audio WHERE book=? ORDER BY created DESC,rowid DESC LIMIT 1').get(book.id);
+  const newest = (book) => db.prepare("SELECT * FROM book_audio WHERE book=? AND kind='generated' ORDER BY created DESC,rowid DESC LIMIT 1").get(book.id);
 
   function publicRecording(row) {
     if (!row) return { state: 'missing' };
@@ -34,6 +37,7 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
     const segments = row.state === 'ready' ? JSON.parse(row.segments) : [];
     return {
       id: row.id, state: row.state, error: row.error, complete, total: parts.length, duration: row.duration,
+      kind: row.kind, name: row.name, quality: row.quality ? JSON.parse(row.quality) : null,
       ...(row.state === 'ready' ? {
         url: `/api/books/${row.book}/audio/${row.id}`,
         segments, markers: JSON.parse(row.markers), approximateSections: segments.filter((part) => part.approximate).length,
@@ -41,8 +45,8 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
     };
   }
 
-  function status(book) {
-    const row = newest(book);
+  function status(book, selected) {
+    const row = selected ? db.prepare("SELECT * FROM book_audio WHERE book=? AND id=? AND state='ready'").get(book.id, selected) || newest(book) : newest(book);
     const current = sections(book);
     return { connected: Boolean(configuration().baseUrl), previewAudio, audio: publicRecording(row && row.digest === digest(current) ? row : null) };
   }
@@ -175,7 +179,7 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
 
   return {
     status, queue, segment, assemble, cancel, files,
-    next: () => db.prepare("SELECT * FROM book_audio WHERE state='queued' ORDER BY created,rowid LIMIT 1").get(),
+    next: () => db.prepare("SELECT * FROM book_audio WHERE state='queued' AND kind='generated' ORDER BY created,rowid LIMIT 1").get(),
     fail(job, message) { db.prepare("UPDATE book_audio SET state='error',error=? WHERE id=? AND state!='cancelled'").run(message, job.id); },
     audioFile(book, id) { return db.prepare("SELECT id FROM book_audio WHERE book=? AND id=? AND state='ready'").get(book.id, id) ? join(folder, `${id}.mp3`) : null; },
   };

@@ -14,6 +14,14 @@ export function libraryScreen({ progress, onRemove }) {
   let snapshot = { categories: [], books: [], maxUpload: 120 * 1024 ** 2, demo: false };
   let category = 'all', editingBook, editingCategory, selectedFile;
   let bookPending = false, categoryPending = false;
+  let audioUploading = false;
+  const archiveWorking = (job) => job && ['queued', 'downloading', 'importing'].includes(job.state);
+  function importProgress(job) {
+    if (!job) return '';
+    if (job.state === 'queued') return 'Requesting an Anna’s Archive download…';
+    if (job.state === 'downloading') return `Downloading book · ${(job.bytes / 1024 ** 2).toFixed(1)} MiB${job.total ? ` / ${(job.total / 1024 ** 2).toFixed(1)} MiB` : ''}`;
+    return job.state === 'importing' ? 'Adding book to your library…' : job.state === 'error' ? job.error : '';
+  }
 
   function categoryButton(id, name, count, iconName) {
     const button = element('button', 'rail-item');
@@ -113,6 +121,7 @@ export function libraryScreen({ progress, onRemove }) {
     $('#empty-title').textContent = filter ? 'No matching books' : 'No books here yet';
     $('#empty-detail').textContent = filter ? 'Try a different title or author.' : 'Import an EPUB or PDF to get started.';
     drawIcons();
+    message('#archive-import-status', importProgress(snapshot.archive?.job));
   }
 
   async function refresh() {
@@ -121,8 +130,8 @@ export function libraryScreen({ progress, onRemove }) {
     render();
     clearTimeout(libraryTimer);
     if (snapshot.books.some((book) => ['queued', 'running'].includes(book.learning?.state)
-      || ['queued', 'running'].includes(book.learning?.reading?.state))) {
-      libraryTimer = setTimeout(() => { if (!document.querySelector('dialog[open]')) void refresh(); }, 4500);
+      || ['queued', 'running'].includes(book.learning?.reading?.state)) || archiveWorking(snapshot.archive?.job)) {
+      libraryTimer = setTimeout(() => { if (!document.querySelector('dialog[open]')) void refresh(); }, archiveWorking(snapshot.archive?.job) ? 1200 : 4500);
     }
     return snapshot;
   }
@@ -132,9 +141,38 @@ export function libraryScreen({ progress, onRemove }) {
     clearTimeout(learningTimer);
     const id = learningBook.id;
     try {
-      const result = await api(`/api/books/${id}/learning`);
+      const [result, uploaded] = await Promise.all([api(`/api/books/${id}/learning`), api(`/api/books/${id}/recordings`)]);
       if (learningBook?.id !== id || !learningDialog.open) return;
       const analysis = result.analysis;
+      $('#upload-audio-form').hidden = !uploaded.available;
+      $('#audio-upload-note').textContent = uploaded.available
+        ? 'Upload MP3, M4A, M4B, OGG, WAV, FLAC or AAC, up to 1 GiB per file. Sync runs in the background. Recordings of the same edition give better matches.'
+        : 'Upload and sync your own audiobooks on a self-hosted installation. This demo previews the reading controls.';
+      $('#recordings-list').replaceChildren(...uploaded.recordings.map((recording) => {
+        const item = element('div', 'recording-item');
+        item.append(element('strong', '', recording.name), element('span', 'field-note', recording.state === 'ready'
+          ? `Synced · ${recording.quality.textPercent}% of book words matched. Unmatched passages may differ or be omitted.`
+          : ['queued', 'syncing'].includes(recording.state) ? `Syncing with book · ${Math.round(recording.progress * 100)}%`
+            : recording.error || 'Uploaded · ready to sync'));
+        const actions = element('div', 'button-row');
+        const sync = element('button', 'button secondary small', recording.state === 'ready' ? 'Sync again' : 'Sync with book');
+        sync.type = 'button'; sync.disabled = analysis.state !== 'ready' || ['queued', 'syncing'].includes(recording.state);
+        sync.addEventListener('click', async () => {
+          sync.disabled = true; message('#recording-error');
+          try { await api(`/api/books/${id}/recordings/${recording.id}/sync`, { method: 'POST', body: {} }); await learningStatus(); }
+          catch (error) { message('#recording-error', error.message); sync.disabled = false; }
+        });
+        const download = element('a', 'button quiet small', 'Download original');
+        download.href = recording.downloadUrl; download.download = recording.name;
+        const remove = element('button', 'button quiet small', 'Remove recording'); remove.type = 'button';
+        remove.addEventListener('click', async () => {
+          remove.disabled = true;
+          try { await api(`/api/books/${id}/recordings/${recording.id}`, { method: 'DELETE' }); await learningStatus(); }
+          catch (error) { message('#recording-error', error.message); remove.disabled = false; }
+        });
+        actions.append(sync, download, remove); item.append(actions);
+        return item;
+      }));
       $('#learning-stats').textContent = analysis.lemmaCount == null ? `Analysis ${analysis.state}…`
         : `${analysis.lemmaCount.toLocaleString()} ${analysis.method === 'word forms' ? 'word forms' : 'unique lemmas'} · ${analysis.wordCount.toLocaleString()} words`;
       $('#learning-estimate').textContent = analysis.reading?.band
@@ -174,7 +212,7 @@ export function libraryScreen({ progress, onRemove }) {
       });
       $('#learning-chapters').replaceChildren(...rows);
       if (['queued', 'running'].includes(analysis.state) || ['queued', 'running'].includes(analysis.reading?.state)
-        || working) {
+        || working || uploaded.recordings.some((recording) => ['queued', 'syncing'].includes(recording.state))) {
         learningTimer = setTimeout(() => void learningStatus(), 2200);
       }
     } catch (error) { message('#learning-error', error.message); }
@@ -218,6 +256,21 @@ export function libraryScreen({ progress, onRemove }) {
     learningBook = undefined;
     void refresh();
   });
+  $('#upload-audio-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (audioUploading || !learningBook) return;
+    const form = event.currentTarget, file = form.elements.file.files[0];
+    if (!file || file.size > 1024 ** 3) return message('#recording-error', 'Choose an audiobook of 1 GiB or smaller.');
+    const id = learningBook.id;
+    audioUploading = true; $('#upload-audio').disabled = true; $('#upload-audio').textContent = 'Uploading…';
+    message('#recording-error');
+    try {
+      await api(`/api/books/${id}/recordings`, { method: 'POST', body: new FormData(form) });
+      form.reset(); toast('Recording uploaded. Choose Sync with book to align it.');
+      if (learningBook?.id === id) await learningStatus();
+    } catch (error) { message('#recording-error', error.message); }
+    finally { audioUploading = false; $('#upload-audio').disabled = false; $('#upload-audio').textContent = 'Upload recording'; }
+  });
   $('#cancel-book-audio').addEventListener('click', async () => {
     if (!learningBook) return;
     try {
@@ -248,6 +301,7 @@ export function libraryScreen({ progress, onRemove }) {
   }
 
   function showBook(book) {
+    if (bookPending) { if (!bookDialog.open) bookDialog.showModal(); return; }
     editingBook = book;
     bookForm.reset();
     stageFile();
@@ -256,6 +310,11 @@ export function libraryScreen({ progress, onRemove }) {
     $('#book-submit').textContent = isEdit ? 'Save book' : 'Import book';
     $('#remove-book').hidden = !isEdit;
     $('#file-field').hidden = isEdit;
+    $('#import-source-field').hidden = isEdit;
+    $('#book-source option[value="anna"]').disabled = !snapshot.archive?.available;
+    $('#book-source option[value="anna"]').textContent = snapshot.archive?.available ? 'Anna’s Archive' : 'Anna’s Archive (self-hosted)';
+    $('#archive-book-fields').hidden = true;
+    message('#book-import-progress');
     $('#file-limit').textContent = `Maximum ${snapshot.maxUpload / 1024 ** 2} MiB`;
     const choices = [new Option('Uncategorized', ''), ...snapshot.categories.map(({ id, name }) => new Option(name, id))];
     $('#book-categories').replaceChildren(...choices);
@@ -283,6 +342,13 @@ export function libraryScreen({ progress, onRemove }) {
   $('#add-category').addEventListener('click', () => showCategory());
   $('#all-books').addEventListener('click', () => chooseCategory('all'));
   $('#import-book').addEventListener('click', () => showBook());
+  $('#book-source').addEventListener('change', () => {
+    const archive = $('#book-source').value === 'anna';
+    $('#file-field').hidden = archive;
+    $('#archive-book-fields').hidden = !archive;
+    message('#book-error');
+  });
+  $('#configure-archive').addEventListener('click', () => bookDialog.close());
   search.addEventListener('input', render);
   $('#reading-filter').addEventListener('change', render);
   $('#book-file').addEventListener('change', (event) => stageFile(event.target.files[0]));
@@ -306,7 +372,12 @@ export function libraryScreen({ progress, onRemove }) {
     const language = parseLanguage(rawLanguage);
     if (rawLanguage && !language) return message('#book-error', 'Choose a language or enter a valid language code.');
     data.set('language', language);
-    if (!editingBook && !selectedFile) return message('#book-error', 'Choose an EPUB or PDF within the upload limit.');
+    const archiveImport = !editingBook && $('#book-source').value === 'anna';
+    const reference = bookForm.elements.archiveReference.value.trim();
+    data.delete('source');
+    data.delete('archiveReference');
+    if (archiveImport && !reference) return message('#book-error', 'Paste an Anna’s Archive book link or MD5.');
+    if (!editingBook && !archiveImport && !selectedFile) return message('#book-error', 'Choose an EPUB or PDF within the upload limit.');
     bookPending = true;
     $('#book-submit').disabled = true;
     $('#book-submit').textContent = editingBook ? 'Saving…' : 'Importing…';
@@ -315,6 +386,16 @@ export function libraryScreen({ progress, onRemove }) {
       if (editingBook) {
         data.delete('file');
         await api(`/api/books/${editingBook.id}`, { method: 'PATCH', body: Object.fromEntries(data) });
+      } else if (archiveImport) {
+        data.delete('file');
+        let job = await api('/api/imports/anna', { method: 'POST', body: { ...Object.fromEntries(data), reference } });
+        while (archiveWorking(job)) {
+          message('#book-import-progress', importProgress(job));
+          message('#archive-import-status', importProgress(job));
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          job = await api(`/api/imports/anna/${job.id}`);
+        }
+        if (job.state !== 'ready') throw new Error(job.error || 'The book could not be imported.');
       } else {
         data.set('file', selectedFile);
         await api('/api/books', { method: 'POST', body: data });
@@ -326,6 +407,8 @@ export function libraryScreen({ progress, onRemove }) {
       message(bookDialog.open ? '#book-error' : '#library-error', error.message);
     } finally {
       bookPending = false;
+      message('#book-import-progress');
+      message('#archive-import-status');
       $('#book-submit').disabled = false;
       $('#book-submit').textContent = editingBook ? 'Save book' : 'Import book';
     }
@@ -372,7 +455,7 @@ export function libraryScreen({ progress, onRemove }) {
     finally { categoryPending = false; }
   });
 
-  bookDialog.addEventListener('cancel', (event) => { if (bookPending) event.preventDefault(); });
+  bookDialog.addEventListener('cancel', (event) => { if (bookPending && $('#book-source').value !== 'anna') event.preventDefault(); });
   categoryDialog.addEventListener('cancel', (event) => { if (categoryPending) event.preventDefault(); });
 
   return { refresh, render, get state() { return snapshot; } };

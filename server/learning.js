@@ -9,6 +9,7 @@ import { RequestError } from './books.js';
 import { extractBook, textChunks, readingSamples } from './book-text.js';
 import { bookNarration } from './book-audio.js';
 import { hasUsableTimings, synchronizeChunk } from './audio-timing.js';
+import { uploadedAudio } from './uploaded-audio.js';
 
 const run = promisify(execFile);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
@@ -66,6 +67,7 @@ export async function openLearning(dir, library, demo, ai) {
     db.exec("UPDATE audio SET state='cancelled' WHERE state IN ('queued','generating','aligning')");
   }
   const workerURL = process.env.READER_LANGUAGE_URL || 'http://127.0.0.1:8091';
+  const recordings = uploadedAudio({ db, folder, library, languageCall, wake: () => void work() });
 
   async function languageCall(path, body, type = 'application/json') {
     let response;
@@ -73,12 +75,12 @@ export async function openLearning(dir, library, demo, ai) {
       response = await fetch(new URL(path, workerURL), {
         method: 'POST', headers: { 'Content-Type': type },
         body: type === 'application/json' ? JSON.stringify(body) : body,
-        signal: AbortSignal.timeout(path === '/align' ? 600_000 : 180_000),
+        signal: AbortSignal.timeout(['/align', '/transcribe', '/match-recording'].includes(path) ? 600_000 : 180_000),
       });
     } catch {
       throw new RequestError(503, 'Language processing is unavailable. Start the language service and try again.');
     }
-    if (!response.ok) throw new RequestError(502, path === '/align'
+    if (!response.ok) throw new RequestError(502, ['/align', '/transcribe', '/match-recording'].includes(path)
       ? 'Word synchronization failed. Check the language service and try again.'
       : 'The language service could not read this text.');
     return response.json();
@@ -350,25 +352,32 @@ export async function openLearning(dir, library, demo, ai) {
           job = completeAudio.next();
           if (job) await completeAudio.assemble(job);
           else {
-            type = 'estimate';
-            job = db.prepare("SELECT * FROM estimates WHERE state='queued' ORDER BY rowid LIMIT 1").get();
-            if (job) await estimate(job);
+            type = 'recording';
+            job = demo ? null : recordings.next();
+            if (job) await recordings.process(job);
+            else {
+              type = 'estimate';
+              job = db.prepare("SELECT * FROM estimates WHERE state='queued' ORDER BY rowid LIMIT 1").get();
+              if (job) await estimate(job);
+            }
           }
         }
       }
     } catch (error) {
       const text = error instanceof RequestError ? error.message
-        : ['audio', 'book'].includes(type) ? 'Narration failed. Check Kokoro and the language service, then try again.'
+        : type === 'recording' ? 'Recording synchronization failed. Check the language service and retry Sync with book.'
+          : ['audio', 'book'].includes(type) ? 'Narration failed. Check Kokoro and the language service, then try again.'
           : type === 'estimate' ? 'Reading estimate unavailable. Check the AI connection and try again.'
             : 'This book could not be analyzed. Check the language service and try again.';
       if (job && type === 'book') completeAudio.fail(job, text);
+      else if (job && type === 'recording') recordings.fail(job, text);
       else if (job) {
         const query = type === 'analysis' ? "UPDATE analyses SET state='error', error=? WHERE book=?"
           : type === 'estimate' ? "UPDATE estimates SET state='error',error=? WHERE book=?"
             : "UPDATE audio SET state='error', error=? WHERE id=?";
         db.prepare(query).run(text, type === 'audio' ? job.id : job.book);
       }
-      console.error(type === 'audio' ? 'Narration job failed' : 'Book analysis failed', error.name);
+      console.error(type === 'recording' ? 'Recording synchronization failed' : type === 'audio' ? 'Narration job failed' : 'Book analysis failed', error.name);
     } finally {
       working = false;
     }
@@ -377,20 +386,22 @@ export async function openLearning(dir, library, demo, ai) {
   timer.unref();
 
   async function remove(id) {
-    const recordings = db.prepare('SELECT id FROM audio WHERE book=?').all(id);
+    const sectionRecordings = db.prepare('SELECT id FROM audio WHERE book=?').all(id);
     const completeFiles = completeAudio.files(id);
+    const recordingFiles = recordings.files(id);
     db.prepare('DELETE FROM analyses WHERE book=?').run(id);
-    await Promise.allSettled([...recordings.flatMap(({ id: audioId }) => [
+    await Promise.allSettled([...sectionRecordings.flatMap(({ id: audioId }) => [
       rm(join(folder, `${audioId}.mp3`), { force: true }), rm(join(folder, audioId), { recursive: true, force: true }),
-    ]), ...completeFiles.map((file) => rm(file, { recursive: true, force: true }))]);
+    ]), ...[...completeFiles, ...recordingFiles].map((file) => rm(file, { recursive: true, force: true }))]);
   }
 
   function audioFile(book, id) {
     const complete = completeAudio.audioFile(book, id);
     if (complete) return complete;
-    const row = db.prepare("SELECT id FROM audio WHERE book=? AND id=? AND state='ready'").get(book.id, id);
+    const row = db.prepare("SELECT id,options FROM audio WHERE book=? AND id=? AND state='ready'").get(book.id, id);
     if (!row) throw new RequestError(404, 'Narration not found.');
-    return join(folder, `${row.id}.mp3`);
+    const options = JSON.parse(row.options);
+    return join(folder, `${options.source === 'uploaded' ? options.recording : row.id}.mp3`);
   }
   function cancel(book) {
     const cancelled = completeAudio.cancel(book);
@@ -406,6 +417,10 @@ export async function openLearning(dir, library, demo, ai) {
   }
   return {
     settings, save, voices, info, ensure, unit, chapters, remove, audioFile, prune, cancel,
-    narration: completeAudio.status, queueBook: completeAudio.queue,
+    narration(book, selected) {
+      return { ...completeAudio.status(book, selected), recordings: demo ? [] : recordings.list(book)
+        .filter((item) => item.state === 'ready').map(({ id, name }) => ({ id, name })) };
+    }, queueBook: completeAudio.queue,
+    recordings,
   };
 }

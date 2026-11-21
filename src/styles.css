@@ -348,6 +348,12 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 .file-field small { color: var(--muted); }
 .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .checkbox-row input, input[type="radio"] { accent-color: var(--brand); }
+.form-stack { display: grid; gap: 14px; }
+.recordings-section { display: grid; gap: 14px; border-top: 1px solid var(--border); padding-top: 16px; }
+.recording-item { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
+.recording-item .button-row { flex-wrap: wrap; }
+.recording-choice { display: flex; gap: 8px; align-items: center; min-width: 0; font-size: 12px; }
+.recording-choice select { min-width: 0; max-width: 240px; font-size: 12px; padding: 4px 20px 4px 6px; }
 .tabs { display: flex; flex-wrap: wrap; gap: 7px; padding: 9px 17px 0; }
 .tabs button { border: 0; border-radius: 7px; padding: 8px 10px; background: transparent; color: var(--muted); white-space: nowrap; font-size: 13px; font-weight: 650; }
 .tabs button[aria-current="true"] { color: var(--ink); background: var(--brand-soft); }
@@ -403,11 +409,12 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 .podcast-speed select { width: 78px; min-height: 30px; padding: 3px 20px 3px 6px; font-size: 12px; }
 .narration-player.podcast-mode {
   display: grid; grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas: "title mode" "transport transport" "timeline timeline" "time speed" "chapters status" "generate generate";
+  grid-template-areas: "title mode" "recording recording" "transport transport" "timeline timeline" "time speed" "chapters status" "generate generate";
   align-items: center; gap: 6px 12px; width: min(100%, 760px); margin-inline: auto;
   padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--raised);
 }
 .podcast-mode .podcast-info { grid-area: title; }
+.podcast-mode .recording-choice { grid-area: recording; }
 .podcast-mode #podcast-toggle { grid-area: mode; justify-self: end; }
 .podcast-mode .narration-transport { grid-area: transport; }
 .podcast-mode #narration-play { min-width: 70px; min-height: 42px; font-weight: 700; }
