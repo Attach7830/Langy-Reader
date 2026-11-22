@@ -51,7 +51,9 @@ export function libraryScreen({ progress, onRemove }) {
     const card = element('article', 'book-card');
     const link = element('a');
     link.href = `#read/${encodeURIComponent(book.id)}`;
-    link.setAttribute('aria-label', `${progress[book.id] ? 'Resume' : 'Read'} ${book.title}`);
+    const saved = progress[book.id]?.syncDirty || !snapshot.progress?.[book.id]
+      ? progress[book.id] : { ...progress[book.id], percent: snapshot.progress[book.id].percentage };
+    link.setAttribute('aria-label', `${saved ? 'Resume' : 'Read'} ${book.title}`);
     const cover = element('div', `book-cover${book.id === 'sample' ? ' cover-sample' : ''}`);
     cover.setAttribute('aria-hidden', 'true');
     cover.dataset.palette = book.id === 'sample' ? '0' : String(book.title.codePointAt(0) % 4);
@@ -71,7 +73,6 @@ export function libraryScreen({ progress, onRemove }) {
     const meta = [book.author, languageName(book.language)].filter(Boolean).join(' · ');
     info.append(element('span', 'book-title', book.title), element('span', 'book-meta', meta));
     link.append(cover, info);
-    const saved = progress[book.id];
     if (saved) {
       const track = element('span', 'progress-track');
       const fill = element('span');

@@ -10,6 +10,7 @@ import { openLearning } from './learning.js';
 import { openArchive } from './annas-archive.js';
 import { maxAudioUpload } from './uploaded-audio.js';
 import { opdsPageSize, opdsRouter } from './opds.js';
+import { openProgressSync } from './progress-sync.js';
 import { demoUploadLimit, demoBookLimit, demoStorageLimit, limitJobs, visitorMiddleware } from './demo.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -17,6 +18,11 @@ const demo = process.env.READER_DEMO === '1';
 const dir = resolve(process.env.READER_DATA || join(root, 'data'));
 const limits = demo ? { upload: demoUploadLimit, books: demoBookLimit, storage: demoStorageLimit } : null;
 const library = await openLibrary(dir, limits);
+const password = process.env.READER_PASSWORD || '';
+const progressSync = openProgressSync(dir, { library, demo,
+  username: process.env.READER_SYNC_USER || process.env.READER_USER || 'reader',
+  password: process.env.READER_SYNC_PASSWORD || password,
+});
 const ai = await openAISettings(dir, demo);
 const lookupSynonyms = openThesaurus();
 const learning = await openLearning(dir, library, demo, ai);
@@ -41,7 +47,10 @@ app.use((req, res, next) => {
 
 app.get('/healthz', (_, res) => res.type('text/plain').send('ok'));
 
-const password = process.env.READER_PASSWORD || '';
+// KOReader clients authenticate with x-auth-user/x-auth-key. Only this isolated
+// router accepts those headers; they never grant access to the library/settings.
+app.use('/kosync', progressSync.router);
+
 if (password) {
   const digest = (text) => createHash('sha256').update(text).digest();
   const expected = digest(`${process.env.READER_USER || 'reader'}:${password}`);
@@ -54,7 +63,7 @@ if (password) {
   });
 }
 
-app.use('/opds', opdsRouter({ library, demo }));
+app.use('/opds', opdsRouter({ library, demo, onDownload: demo ? undefined : progressSync.bookDocument }));
 
 app.use('/api', (req, res, next) => {
   res.set('Cache-Control', 'no-store');
@@ -88,6 +97,14 @@ if (demo) {
 
 app.get('/api/settings/learning', (req, res) => res.json(learning.settings()));
 app.get('/api/settings/archive', (_, res) => res.json(archive.settings()));
+app.get('/api/settings/sync', (_, res) => res.json(progressSync.settings()));
+if (!demo) {
+  app.get('/api/books/:id/progress', async (req, res) => res.json(await progressSync.get(library.getBook(req.params.id))));
+  app.put('/api/books/:id/progress', async (req, res) => {
+    const result = await progressSync.put(library.getBook(req.params.id), req.body);
+    res.status(result.conflict ? 409 : 200).json(result);
+  });
+}
 app.get('/api/settings/opds', (_, res) => res.json({
   available: !demo, path: '/opds', username: !demo && password ? process.env.READER_USER || 'reader' : '',
   authenticated: !demo && Boolean(password), pageSize: opdsPageSize,
@@ -97,6 +114,7 @@ app.get('/api/library', async (req, res) => {
   const snapshot = library.snapshot(req.visitor);
   res.json({
     ...snapshot,
+    progress: demo ? null : progressSync.snapshot(),
     storage: await library.storage(req.visitor),
     archive: { available: !demo, hasKey: archive.settings().hasKey, job: demo ? null : archive.latest() },
     books: snapshot.books.map((book) => ({ ...book, learning: learning.info(library.getBook(book.id, req.visitor)) })),
@@ -123,6 +141,7 @@ app.patch('/api/books/:id', (req, res) => res.json(library.editBook(req.params.i
 app.delete('/api/books/:id', async (req, res) => {
   await library.removeBook(req.params.id, req.visitor);
   await learning.remove(req.params.id);
+  if (!demo) progressSync.forgetBook(req.params.id);
   res.sendStatus(204);
 });
 app.get('/api/books/:id/learning', (req, res) => {

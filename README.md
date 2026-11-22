@@ -62,7 +62,33 @@ Browse **All EPUB books**, **Recently added**, or **Categories**, or search by t
 
 The Xteink must be able to reach that server address over Wi-Fi. `localhost` refers to the device itself. Use HTTPS for connections outside your trusted home network. The catalog, search, covers and downloads all use the same Langy sign-in; passwords are not included in catalog URLs. OPDS is disabled in demo mode to keep visitors' uploads private.
 
-OPDS supplies books to the device. Its firmware handles reading and dictionary lookup; Langy's AI summaries, audio synchronization, and browser reading position do not transfer through OPDS. Actual Xteink hardware has not been tested.
+OPDS supplies books to the device. Its firmware handles reading and dictionary lookup; Langy's AI summaries and audio synchronization remain in the browser. Reading position uses the separate sync connection below. Actual Xteink hardware has not been tested.
+
+## Sync reading progress with CrossPoint or KOReader
+
+Langy includes a single-account **KOReader Sync (KOSync)** endpoint at **`http://YOUR_SERVER_IP:8088/kosync`**. No extra container, model, or paid service is needed. Your Xteink can keep CrossPoint firmware; KOReader Sync is the protocol used to exchange reading positions. Open **Settings → Devices** in Langy to copy your installation's sync URL and set a name for each browser.
+
+On CrossPoint, open **Settings → Connectivity → CrossPoint Sync**:
+
+| Setting | Value |
+| --- | --- |
+| Server type | **KoSync** |
+| Server URL | Your Langy address followed by `/kosync` |
+| Username | `READER_USER` (default `reader`) |
+| Password | Your `READER_PASSWORD` |
+| Document matching | **Binary/content**, if your version offers a choice |
+
+Authenticate with that account. Account registration is disabled. For KOReader, choose the same custom server under **Progress sync**, use content-based document matching, and log in with these credentials. CrossPoint and KOReader versions may label their controls differently. On CrossPoint, open the reader menu and select **Sync Progress** before switching devices. **Sync On Sleep** is optional on versions that offer it; leave **Sync Clippings** off for this server. See the [CrossPoint sync guide](https://github.com/crosspoint-reader/crosspoint-reader/blob/develop/USER_GUIDE.md#367-koreader-sync-quick-setup).
+
+**Download the original EPUB from Langy's OPDS catalog**, then open that same book in Langy. Matching uses the same sampled file checksum as KOReader and CrossPoint, so renaming a file is fine but editing or converting it can produce a different document ID. Use an address both devices can reach; use HTTPS when accessing it outside your home network. Interactive Cloudflare Access login pages cannot be completed by these sync clients.
+
+Langy saves page changes after a short pause, checks on opening a book, when returning to the browser, and every 20 seconds while the reader is visible. Opening a book resumes its shared position automatically when this browser has no unsynced changes. An update arriving while you read, or a conflict with offline reading, offers **Resume there** and **Keep this position**. The browser uses version checks to avoid silently overwriting another device's newer position. Native KOSync clients use the protocol's last-write-wins behavior; sync before switching readers. Moving backward intentionally is supported.
+
+EPUB progress is mapped through source text locations and Unicode offsets, rather than device-specific page numbers. If a reader emits a location Langy cannot resolve, it resumes approximately and tells you. Reflowed pages can start a little before the saved word. PDFs share fixed page positions with compatible readers. The sync button retries an unavailable connection; local browser progress remains saved offline. You can disable syncing for a browser in **Settings → Devices**. This transfers reading position only, not bookmarks, annotations, vocabulary, or audio time.
+
+Device connections require a password. If you prefer separate sync credentials, add `READER_SYNC_USER` and `READER_SYNC_PASSWORD` to `.env` and restart the reader service; blank values use the corresponding Langy login. Browser-to-browser sync also works on a trusted LAN installation without a password, but native device authentication stays disabled until a password is configured. The sync password or its derived key is never sent to the browser settings API. Progress is stored in `progress.sqlite` in Langy's data volume; include the volume in backups. The public demo disables shared progress sync entirely.
+
+Protocol requests, position mapping, browser conflicts, and offline recovery have automated coverage. Physical CrossPoint/KOReader devices still need an end-to-end check after deployment.
 
 ## Available storage
 

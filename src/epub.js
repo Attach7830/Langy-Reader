@@ -5,6 +5,8 @@ import dmSans from '@fontsource/dm-sans/files/dm-sans-latin-400-normal.woff2?url
 import { fonts, themes } from './settings.js';
 import { outlineDocument, spacingRules } from './epub-outline.js';
 import { trackText } from './text-tracking.js';
+import { annotateSyncPaths, koReaderXPath, parseKOReaderXPath, resolveKOReaderXPath,
+  positionFraction, pointAtFraction, weightedPercentage, percentagePosition } from '../shared/epub-sync-position.js';
 
 const blocks = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, div, pre, td, dd, dt, figcaption';
 const excluded = 'script, style, template, [hidden], [aria-hidden="true"]';
@@ -215,6 +217,7 @@ export async function openEpub({ host, url, position, language, settings, hooks,
   const earlierSections = new Map();
   let rendition, observer, renderError, outline;
   let activeSection = 0, lastTarget;
+  let spineSizes = [], syncResolution;
   let preferences = settings;
   let disposed = false;
   const size = () => [host.clientWidth, host.clientHeight];
@@ -240,8 +243,16 @@ export async function openEpub({ host, url, position, language, settings, hooks,
   try {
     await book.open(buffer, 'binary');
     signal.throwIfAborted();
+    spineSizes = book.spine.spineItems.map((section) => {
+      try {
+        const path = decodeURIComponent(archiveURL(section.url).pathname.slice(1));
+        return book.archive.zip.file(path)?._data?.uncompressedSize || 1;
+      } catch { return 1; }
+    });
     const fixed = book.packaging.metadata.layout === 'pre-paginated';
-    book.spine.hooks.content.register((doc) => {
+    book.spine.hooks.content.register((doc, section) => {
+      const body = doc.querySelector('body');
+      if (body) annotateSyncPaths(body, section.index);
       unscript(doc);
       const rules = doc.createElementNS('http://www.w3.org/1999/xhtml', 'style');
       rules.id = 'langy-reader-styles';
@@ -339,8 +350,63 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       };
     }
 
+    function syncPosition() {
+      if (reflowing || disposed) return null;
+      const current = rendition.currentLocation()?.start || rendition.location?.start;
+      const contents = rendition.getContents().find((item) => item.sectionIndex === current?.index);
+      if (!contents?.content || !current?.cfi) return null;
+      let point;
+      try {
+        const range = contents.range(current.cfi);
+        if (range) point = { node: range.startContainer, offset: range.startOffset };
+      } catch { /* A fixed-layout image can have only an element location. */ }
+      point ||= { node: contents.content, offset: 0 };
+      const xpath = koReaderXPath(contents.content, point.node, point.offset, current.index);
+      if (!xpath) return null;
+      const fraction = positionFraction(contents.content, point.node, point.offset);
+      const percentage = weightedPercentage(spineSizes, current.index, fraction);
+      return { progress: xpath, percentage, target: current.cfi,
+        position: { spine: current.index, page: Math.max(0, current.displayed.page - 1),
+          pages: Math.max(1, current.displayed.total), pctQ: Math.round(percentage * 1000000), xpath } };
+    }
+
+    async function resumeProgress(remote) {
+      if (typeof remote.langyTarget === 'string' && remote.langyTarget.startsWith('epubcfi(')) {
+        try {
+          await display(remote.langyTarget);
+          syncResolution = { exact: true };
+          report(rendition.currentLocation());
+          return;
+        } catch { signal.throwIfAborted(); /* Try its portable XPath next. */ }
+      }
+      let xpath = remote.progress, parsed = parseKOReaderXPath(xpath);
+      if (!parsed && remote.position?.xpath) { xpath = remote.position.xpath; parsed = parseKOReaderXPath(xpath); }
+      const fallback = percentagePosition(spineSizes, remote.percentage);
+      const spine = parsed?.spine ?? remote.position?.spine ?? fallback.spine;
+      const index = Number.isInteger(spine) && spine >= 0 && spine < spineSizes.length ? spine : fallback.spine;
+      const section = book.spine.get(index);
+      await section.load(book.load.bind(book));
+      signal.throwIfAborted();
+      const body = section.document.querySelector('body');
+      if (!body) throw new Error('The saved reading position could not be mapped to this EPUB.');
+      let point = parsed?.spine === index ? resolveKOReaderXPath(body, xpath) : null;
+      if (!point) {
+        const total = spineSizes.reduce((a, b) => a + b, 0);
+        const before = spineSizes.slice(0, index).reduce((a, b) => a + b, 0);
+        point = pointAtFraction(body, (remote.percentage * total - before) / spineSizes[index]);
+      }
+      const range = section.document.createRange();
+      range.setStart(point.node, point.offset);
+      range.collapse(true);
+      await display(section.cfiFromRange(range));
+      syncResolution = { exact: point.exact };
+      report(rendition.currentLocation());
+    }
+
     return {
       destroy,
+      syncPosition,
+      get syncResolution() { return syncResolution; },
       get contents() { return epubContents(book); },
       audioUnit() {
         if (reflowing) return null;
@@ -362,6 +428,7 @@ export async function openEpub({ host, url, position, language, settings, hooks,
         return direction > 0 ? rendition.next() : rendition.prev();
       },
       async go(target) {
+        if (target?.sync) return resumeProgress(target.sync);
         let location = target.cfi ?? target.index;
         if (target.fragment) {
           const section = book.spine.get(target.index);

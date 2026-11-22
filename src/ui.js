@@ -25,16 +25,21 @@ export function drawIcons() {
     LibraryBig, List, Maximize, Minus, Pencil, Plus, RotateCcw, Search, Settings2, SkipBack, SkipForward, Sparkles, Upload, X, Headphones } });
 }
 
-export async function api(path, { body, method, signal } = {}) {
+export async function api(path, { body, method, signal, keepalive } = {}) {
   const form = body instanceof FormData;
   const response = await fetch(path, {
-    method, signal,
+    method, signal, keepalive,
     headers: body && !form ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? form ? body : JSON.stringify(body) : undefined,
   });
   if (response.status === 204) return;
   const result = await response.json().catch(() => null);
-  if (!response.ok || !result) throw new Error(result?.error || 'Langy Reader could not complete the request.');
+  if (!response.ok || !result) {
+    const error = new Error(result?.error || 'Langy Reader could not complete the request.');
+    error.status = response.status;
+    error.details = result;
+    throw error;
+  }
   return result;
 }
 

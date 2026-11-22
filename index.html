@@ -95,11 +95,19 @@
         </div>
       </div>
       <div class="reader-actions">
+        <button class="icon-button" id="sync-progress" type="button" title="Sync reading progress" aria-label="Sync reading progress" aria-controls="sync-notice" hidden><i data-lucide="rotate-ccw"></i></button>
         <button class="icon-button" id="contents-button" type="button" title="Contents" aria-label="Contents"><i data-lucide="list"></i></button>
         <button class="icon-button" type="button" data-settings="reading" title="Reading settings" aria-label="Reading settings"><span class="type-icon">Aa</span></button>
         <button class="button quiet summary-toggle" id="summarize" type="button" aria-label="Page summary" aria-controls="summary-panel" aria-expanded="false"><i data-lucide="sparkles"></i><span>Summary</span></button>
         <button class="icon-button" id="audio-toggle" type="button" title="Narration" aria-label="Narration" aria-pressed="false"><i data-lucide="headphones"></i></button>
         <button class="icon-button" id="fullscreen" type="button" title="Full screen" aria-label="Full screen" aria-pressed="false"><i data-lucide="maximize"></i></button>
+      </div>
+      <div id="sync-notice" class="sync-notice" hidden>
+        <p id="sync-notice-text" role="status"></p>
+        <div class="sync-notice-actions">
+          <button class="button secondary" id="sync-resume" type="button">Resume there</button>
+          <button class="button quiet" id="sync-keep" type="button">Keep this position</button>
+        </div>
       </div>
     </header>
     <div id="stage" class="reader-stage">
@@ -296,8 +304,22 @@
           <p class="field-note" id="opds-network-note">Use an address your reader can reach on Wi-Fi. A localhost address only works on the server itself. HTTPS is recommended when connecting outside your home network.</p>
         </div>
         <p class="field-note">EPUBs are listed first, with categories, title/author search and recent additions. PDFs have a separate catalog and may need conversion for Xteink. Downloads use the original book file.</p>
-        <p class="field-note">OPDS transfers books. Reading, dictionary lookup and progress on the device use its own firmware; Langy’s AI summaries and synced audio remain in the web reader.</p>
+        <p class="field-note">OPDS transfers books. Enable reading progress sync below to resume between Langy and a compatible reader. Langy’s AI summaries and synced audio remain in the web reader.</p>
         <p class="field-note" id="opds-result" role="status" hidden></p>
+        <h3>Reading progress sync</h3>
+        <p class="field-note" id="sync-demo-note" hidden>Connect your readers on a self-hosted installation. Sync is disabled in this demo to keep visitors’ reading progress private.</p>
+        <div id="sync-connection" class="form-stack" hidden>
+          <label class="checkbox-row"><input name="progressSyncEnabled" type="checkbox"> Sync this browser’s reading position</label>
+          <label class="field">This browser’s device name <input name="syncDeviceName" maxlength="120" placeholder="Langy browser" autocomplete="off"></label>
+          <label class="field">KOReader Sync server <input id="sync-url" type="url" readonly spellcheck="false"></label>
+          <button class="button secondary" id="copy-sync-url" type="button">Copy sync address</button>
+          <p class="field-note" id="sync-auth"></p>
+          <p class="field-note">On CrossPoint, open Settings → Connectivity → CrossPoint Sync. Choose server type <strong>KoSync</strong>, enter this sync address and your credentials, then authenticate. While reading, open the reader menu and select <strong>Sync Progress</strong> before switching devices.</p>
+          <p class="field-note">Use <strong>Binary/content</strong> document matching and download the same EPUB from OPDS. A converted or edited copy will have a different sync ID. On KOReader, set this custom server in Progress sync and log in with the configured account; do not register a new account.</p>
+          <p class="field-note">Langy resumes saved progress when you open a book. If another device changes it while you are reading, choose which position to keep. Offline progress stays on this browser until it reconnects. Unsupported EPUB locations use an explicitly labelled approximate position.</p>
+          <p class="field-note">This syncs reading position only. Bookmarks, notes and audio playback time are not transferred.</p>
+        </div>
+        <p class="field-note" id="sync-result" role="status" hidden></p>
       </section>
       <p class="form-error" id="settings-error" role="alert" hidden></p>
       <footer class="modal-footer"><button class="button quiet" type="button" data-close>Cancel</button><button class="button primary" type="submit">Save settings</button></footer>

@@ -33,7 +33,7 @@ function pathWith(path, params = {}) {
 
 // Root-relative links keep downloads on the same origin and preserve Basic auth,
 // including when HTTPS is terminated by a reverse proxy or Cloudflare Tunnel.
-export function opdsRouter({ library, demo = false }) {
+export function opdsRouter({ library, demo = false, onDownload }) {
   const router = Router();
   router.use((_req, res, next) => {
     res.set('Cache-Control', 'private, no-store');
@@ -135,9 +135,10 @@ ${book.thumbnailType ? link('http://opds-spec.org/image/thumbnail', `${base}/cov
   router.get('/search.xml', (_req, res) => res.type('application/opensearchdescription+xml').send(`<?xml version="1.0" encoding="UTF-8"?>
 <OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/"><ShortName>Langy Reader</ShortName><Description>Search EPUB books by title or author.</Description><InputEncoding>UTF-8</InputEncoding><Url type="${xml(acquisitionType)}" template="/opds/books?q={searchTerms}"/></OpenSearchDescription>`));
 
-  router.get('/books/:id/file.:format', (req, res) => {
+  router.get('/books/:id/file.:format', async (req, res) => {
     const book = library.getBook(req.params.id);
     if (req.params.format !== book.format) throw new RequestError(404, 'Book format not found.');
+    await onDownload?.(book);
     const filename = [...book.title.replace(/[\p{Cc}<>:"/\\|?*]/gu, '_').replace(/^\.+/u, '')].slice(0, 120).join('') || 'Book';
     res.type(mime[book.format]).download(library.filePath(book), `${filename}.${book.format}`, { dotfiles: 'allow' });
   });

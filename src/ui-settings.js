@@ -118,6 +118,8 @@ export function settingsDialog({ preferences, apply }) {
     fields.podcastMode.checked = current.podcastMode;
     fields.audioHighlight.checked = current.audioHighlight;
     fields.audioRate.value = current.audioRate;
+    fields.progressSyncEnabled.checked = current.progressSyncEnabled;
+    fields.syncDeviceName.value = current.syncDeviceName;
     shadowKeys = { ...current.keys };
     section(tab);
     dialog.showModal();
@@ -232,6 +234,8 @@ export function settingsDialog({ preferences, apply }) {
       audioRecordings: preferences().audioRecordings || {},
       podcastMode: fields.podcastMode.checked, audioHighlight: fields.audioHighlight.checked,
       audioRate: Math.max(.5, Math.min(2, Number(fields.audioRate.value) || 1)),
+      progressSyncEnabled: fields.progressSyncEnabled.checked,
+      syncDeviceName: fields.syncDeviceName.value.trim() || 'Langy browser',
       background: fields.background.value, font: fields.font.value, width: fields.width.value,
       size: fields.size.valueAsNumber, line: fields.line.valueAsNumber,
       autoHideDocks: fields.autoHideDocks.checked,

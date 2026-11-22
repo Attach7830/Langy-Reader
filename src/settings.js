@@ -35,6 +35,7 @@ export const defaults = {
   font: 'spectral', size: 20, line: 1.65, width: 'balanced', pdfNight: true,
   audioEnabled: false, audioToolbarHidden: false, podcastMode: false, audioHighlight: true, audioRate: 1,
   audioRecordings: {},
+  progressSyncEnabled: true, syncDeviceName: 'Langy browser',
   keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's', playback: 'p', audioToolbar: 'a' },
   autoHideDocks: false,
 };
@@ -62,6 +63,14 @@ export function getSettings() {
 export const saveSettings = (settings) => write('langy-settings-v1', settings);
 export const getProgress = () => read('langy-progress-v1', {});
 export const saveProgress = (progress) => write('langy-progress-v1', progress);
+
+export function syncDeviceId() {
+  const saved = read('langy-sync-device-v1', null);
+  if (typeof saved === 'string' && saved.length > 0 && saved.length <= 160) return saved;
+  const id = crypto.randomUUID?.() || Array.from(crypto.getRandomValues(new Uint32Array(4)), (n) => n.toString(16)).join('-');
+  write('langy-sync-device-v1', id);
+  return id;
+}
 
 const labels = { ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓' };
 export function keyLabel(key) { return labels[key] || (key ? key.length === 1 ? key.toUpperCase() : key : 'Unassigned'); }

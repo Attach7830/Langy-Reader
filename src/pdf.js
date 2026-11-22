@@ -42,6 +42,7 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
   let zoom = 1;
   let pageNumber = 1;
   let closed = false;
+  let syncResolution;
   const excerpts = new Map();
   const shell = document.createElement('div');
   shell.className = 'pdf-sheet';
@@ -126,6 +127,8 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
     observer.observe(host);
     return {
       destroy,
+      syncPosition: () => ({ progress: String(pageNumber), percentage: pageNumber / pdf.numPages, target: pageNumber }),
+      get syncResolution() { return syncResolution; },
       contents,
       audioUnit() {
         const root = shell.querySelector('.textLayer');
@@ -139,6 +142,16 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
       get pageNumber() { return pageNumber; },
       move: (direction) => draw(pageNumber + direction),
       async go(target) {
+        if (target?.sync) {
+          const remote = target.sync;
+          const saved = Number.isInteger(remote.langyTarget) ? remote.langyTarget
+            : /^\d+$/u.test(remote.progress) ? Number(remote.progress) : null;
+          const exact = saved != null && saved >= 1 && saved <= pdf.numPages;
+          const page = exact ? saved : Math.max(1, Math.min(pdf.numPages, Math.round(remote.percentage * pdf.numPages)));
+          await draw(page);
+          syncResolution = { exact };
+          return;
+        }
         if (Number.isInteger(target)) return draw(target);
         const destination = typeof target === 'string' ? await pdf.getDestination(target) : target;
         const pageRef = destination?.[0];

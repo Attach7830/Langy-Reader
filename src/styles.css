@@ -227,7 +227,15 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .empty-state h2 { color: var(--ink); font-size: 35px; }
 
 .reader-screen { --top-dock-height: 64px; --bottom-dock-height: 61px; height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--surface); }
-.reader-top { height: var(--top-dock-height); padding-inline: 24px; }
+.reader-top { min-height: var(--top-dock-height); height: auto; padding: 10px 24px; flex-wrap: wrap; gap: 8px 20px; }
+.reader-heading { flex: 1; }
+.reader-actions { flex-shrink: 0; }
+.sync-notice { flex-basis: 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; border-top: 1px solid var(--border); padding-top: 8px; font-size: 13px; }
+.sync-notice p { flex: 1; min-width: min(200px, 100%); margin: 0; }
+.sync-notice-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.sync-notice .button { min-height: 34px; font-size: 12px; }
+#sync-progress[data-state="offline"], #sync-progress[data-state="error"] { color: var(--danger); }
+#sync-progress[data-state="remote"], #sync-progress[data-state="conflict"] { background: var(--brand-soft); }
 .reader-heading, .reader-title { min-width: 0; }
 .reader-title { display: grid; gap: 2px; border-left: 1px solid var(--border); padding-left: 15px; }
 .reader-title strong, .reader-title span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

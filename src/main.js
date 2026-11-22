@@ -11,7 +11,8 @@ import { settingsDialog } from './ui-settings.js';
 import { wordHelp } from './words.js';
 import { earlierPageContext } from './reading-context.js';
 import { narration } from './narration.js';
-import { eventKey, getProgress, getSettings, keyLabel, languageName, modes, saveProgress, saveSettings, updateAppearance } from './settings.js';
+import { readingProgressSync } from './reading-sync.js';
+import { eventKey, getProgress, getSettings, keyLabel, languageName, modes, saveProgress, saveSettings, syncDeviceId, updateAppearance } from './settings.js';
 
 const viewer = $('#viewer');
 const stage = $('#stage');
@@ -50,6 +51,46 @@ const library = libraryScreen({
   onRemove(id) { delete progress[id]; saveProgress(progress); },
 });
 const settingsUI = settingsDialog({ preferences: () => settings, apply: applySettings });
+const readingSync = readingProgressSync({
+  request: api, progress, persist: () => saveProgress(progress), preferences: () => settings,
+  available: () => !library.state.demo, deviceId: syncDeviceId(),
+  visible: () => !document.hidden,
+  async applyRemote(remote) {
+    const view = renderer;
+    const moved = await move(0, { sync: remote });
+    return moved && renderer === view ? view.syncResolution : false;
+  },
+  notify: syncStatus,
+});
+
+function syncStatus({ state, pending, error }) {
+  const button = $('#sync-progress');
+  const notice = $('#sync-notice');
+  const wasHidden = notice.hidden;
+  button.hidden = state === 'disabled';
+  button.disabled = state === 'syncing';
+  button.dataset.state = state;
+  const labels = {
+    syncing: 'Syncing reading progress…', waiting: 'Saving reading progress…',
+    synced: 'Reading progress synced. Check for updates',
+    approximate: 'Resumed near the saved position. Check for updates',
+    offline: 'Progress saved on this browser. Click to retry sync',
+    conflict: 'Choose which reading position to keep', remote: 'Another device saved a reading position',
+    error: error || 'Could not resume the saved position. Click to retry',
+  };
+  button.title = labels[state] || 'Sync reading progress';
+  button.setAttribute('aria-label', button.title);
+  notice.hidden = !pending || state === 'disabled';
+  if (!notice.hidden) {
+    const saved = pending.progress;
+    const date = new Date(saved.timestamp * 1000).toLocaleString();
+    $('#sync-notice-text').textContent = `${saved.device || 'Another device'} saved a position at ${Math.round(saved.percentage * 100)}% (${date}).`
+      + (state === 'error' ? ` ${error}` : ' Resume there or keep your current place.');
+  }
+  $('#sync-resume').disabled = $('#sync-keep').disabled = state === 'syncing';
+  if (wasHidden !== notice.hidden) syncFullscreen();
+  if (state === 'approximate') toast('Resumed near the saved position. This EPUB location could only be mapped approximately.');
+}
 
 for (const close of $$('[data-close]')) {
   close.addEventListener('click', () => {
@@ -74,6 +115,7 @@ function applyAppearance() {
 
 function applySettings(updated, aiChanged) {
   const relayout = ['size', 'font', 'line', 'width', 'summaryLanguage'].some((key) => settings[key] !== updated[key]);
+  const syncChanged = settings.progressSyncEnabled !== updated.progressSyncEnabled;
   settings = updated;
   saveSettings(settings);
   words.clear();
@@ -86,7 +128,9 @@ function applySettings(updated, aiChanged) {
     void checkAI();
   }
   if (relayout || aiChanged) resetSummary();
-  Promise.resolve(renderer?.apply?.(settings)).catch(reportError);
+  Promise.resolve(renderer?.apply?.(settings)).then(() => {
+    if (syncChanged && activeBook && renderer) void readingSync.start(activeBook, renderer);
+  }).catch(reportError);
   if (activeBook) viewer.focus({ preventScroll: true });
 }
 
@@ -133,9 +177,10 @@ function positionChanged(position) {
   activePosition = position;
   const saved = { target: position.target, percent: position.percent };
   if (progress[activeBook.id]?.target !== saved.target || progress[activeBook.id]?.percent !== saved.percent) {
-    progress[activeBook.id] = saved;
+    progress[activeBook.id] = { ...progress[activeBook.id], ...saved };
     saveProgress(progress);
   }
+  if (changed && !position.reflowed) readingSync.changed();
   $('#page-label').textContent = position.label;
   $('#position-detail').textContent = position.detail;
   $('#previous').disabled = !position.previous;
@@ -308,7 +353,7 @@ function syncFullscreen() {
   $('#fullscreen').setAttribute('aria-pressed', String(fullscreen));
   $('#fullscreen').setAttribute('aria-label', fullscreen ? 'Exit full screen' : 'Full screen');
   $('#fullscreen').title = fullscreen ? 'Exit full screen' : 'Full screen';
-  setDockAutoHide(Boolean(activeBook && fullscreen && settings.autoHideDocks));
+  setDockAutoHide(Boolean(activeBook && fullscreen && settings.autoHideDocks && $('#sync-notice').hidden));
 }
 
 async function toggleFullscreen() {
@@ -324,6 +369,7 @@ async function toggleFullscreen() {
 }
 
 function closeReader() {
+  readingSync.stop();
   audio.stop();
   loadController?.abort();
   loadController = undefined;
@@ -391,6 +437,7 @@ async function openBook(book) {
     contentsButton.disabled = false;
     audio.apply();
     void audio.refresh();
+    void readingSync.start(book, opened);
     readerMessage();
     if (!document.querySelector('dialog[open]')) viewer.focus({ preventScroll: true });
   } catch (error) {
@@ -590,6 +637,9 @@ function keydown(event) {
 $('#previous').addEventListener('click', () => { viewer.focus({ preventScroll: true }); void move(-1); });
 $('#next').addEventListener('click', () => { viewer.focus({ preventScroll: true }); void move(1); });
 $('#contents-button').addEventListener('click', contents);
+$('#sync-progress').addEventListener('click', () => void readingSync.check());
+$('#sync-resume').addEventListener('click', () => void readingSync.resume());
+$('#sync-keep').addEventListener('click', () => void readingSync.keepLocal());
 $('#fullscreen').addEventListener('click', toggleFullscreen);
 $('#audio-toggle').addEventListener('click', () => {
   settings = { ...settings, audioEnabled: !settings.audioEnabled };
@@ -608,6 +658,11 @@ $('#ai-status').addEventListener('click', checkAI);
 document.addEventListener('fullscreenchange', syncFullscreen);
 document.addEventListener('keydown', keydown);
 window.addEventListener('resize', words.clear);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) void readingSync.flush();
+  else void readingSync.check();
+});
+window.addEventListener('pagehide', () => void readingSync.flush());
 
 drawIcons();
 applyAppearance();
