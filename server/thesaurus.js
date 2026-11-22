@@ -64,6 +64,11 @@ export function openThesaurus() {
     const code = dictionaryLanguage(language);
     const key = wordKey(word, code);
     let rows = sensesFor(code, key);
+    const contextualLemma = typeof body.lemma === 'string' ? body.lemma.trim().slice(0, 100) : '';
+    if (contextualLemma && wordKey(contextualLemma, code) !== key) {
+      const contextualRows = sensesFor(code, wordKey(contextualLemma, code));
+      if (contextualRows.length) rows = contextualRows;
+    }
     if (!rows.length && !db && !wiki) return missing('The local synonym dictionaries are unavailable.');
     if (!rows.length && !languages.has(code)) return missing('No local dictionary entries for this language.');
     if (!rows.length) {

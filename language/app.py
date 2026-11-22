@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 app = FastAPI()
 lock = threading.RLock()
-MODELS = {"es": "es_core_news_sm", "en": "en_core_web_sm"}
+MODELS = {"es": "es_core_news_sm", "en": "en_core_web_sm", "pt": "pt_core_news_sm"}
 WORD = re.compile(r"[^\W_]+(?:['’][^\W_]+)*", re.UNICODE)
 
 
@@ -57,7 +57,16 @@ def health():
 
 @app.post("/analyze")
 def analyze(body: Analysis):
-    language = body.language.split("-")[0]
+    language = body.language.replace("_", "-").split("-")[0].lower()
+    if language in {"zh", "cmn"}:
+        tokens, offset = [], 0
+        for char in body.text:
+            width = 2 if ord(char) > 0xffff else 1
+            point = ord(char)
+            if 0x3400 <= point <= 0x9fff or 0xf900 <= point <= 0xfaff or 0x20000 <= point <= 0x3ffff or char == "〇":
+                tokens.append({"word": char, "from": offset, "to": offset + width, "lemma": char, "pos": "", "properName": False, "language": "zh"})
+            offset += width
+        return {"tokens": tokens, "lemmas": sorted({token["word"] for token in tokens}), "method": "characters"}
     with lock:
         model, method = pipeline(language)
         doc = model(body.text)
@@ -80,6 +89,8 @@ def analyze(body: Analysis):
         if not is_name:
             if language == "es" and token.text.casefold() in {"al", "del"}:
                 lemmas.update(("a" if token.text.casefold() == "al" else "de", "el"))
+            elif language == 'pt' and token.pos_ == 'ADP' and ' ' in lemma:
+                lemmas.update(lemma.split())
             else:
                 lemmas.add(lemma)
         tokens.append({
@@ -104,6 +115,9 @@ def normalized(text):
 
 
 def match_timings(words, heard):
+    if any(any(0x3400 <= ord(char) <= 0x9fff or 0x20000 <= ord(char) <= 0x3ffff for char in word) for word in words):
+        from book_alignment import align_recording
+        return align_recording(words, [{"word": word, "start": start, "end": end} for word, start, end, _ in heard])["timings"]
     source = [normalized(word) for word in words]
     detected = [word[0] for word in heard]
     times = [None] * len(source)
@@ -123,8 +137,11 @@ def match_timings(words, heard):
 
 
 def recognized_words(model, samples, language, words, retry=False, vad=False):
+    language = language.replace('_', '-').split('-')[0].lower()
+    automatic = language in {'', 'mul', 'und', 'auto'}
+    if language == 'cmn': language = 'zh'
     segments, _ = model.transcribe(
-        samples, language=language, word_timestamps=True, beam_size=5 if retry else 3,
+        samples, language=None if automatic else language, multilingual=automatic, task='transcribe', word_timestamps=True, beam_size=5 if retry else 3,
         condition_on_previous_text=False, temperature=0.0,
         initial_prompt=None if retry else " ".join(words[:40]),
         # Whisper can classify short headings as silence. Retry only the failed chunk.

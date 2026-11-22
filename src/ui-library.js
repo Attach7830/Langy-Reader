@@ -4,6 +4,8 @@ import { parseLanguage } from './languages.js';
 import { refreshStorage, showStorage } from './storage.js';
 import { audioTools, audioChanged } from './ui-audio-tools.js';
 
+const vocabularyLabel = (vocabulary) => vocabulary?.byLanguage?.map((item) => `${item.count.toLocaleString()} ${item.language === 'zh' ? 'Mandarin Han characters' : `${languageName(item.language)} ${item.unit}`}`).join(' · ');
+
 export function libraryScreen({ progress, onRemove }) {
   const search = $('#search');
   const books = $('#books');
@@ -86,8 +88,8 @@ export function libraryScreen({ progress, onRemove }) {
     card.append(link);
     const analysis = book.learning;
     const detail = element('div', 'book-learning');
-    const count = analysis?.lemmaCount;
-    const vocabulary = count == null ? '' : `${count.toLocaleString()} ${analysis.method === 'word forms' ? 'word forms' : 'lemmas'}`;
+    const count = analysis?.vocabulary?.count ?? analysis?.lemmaCount;
+    const vocabulary = vocabularyLabel(analysis?.vocabulary) || (count == null ? '' : `${count.toLocaleString()} ${analysis.vocabulary?.unit === 'characters' ? 'Han characters' : analysis.method === 'word forms' ? 'word forms' : 'lemmas'}`);
     const estimate = analysis?.reading?.band ? `Est. ${analysis.reading.band}` : '';
     detail.append(element('span', 'book-meta', [vocabulary, estimate].filter(Boolean).join(' · ')));
     const tools = element('button', 'button quiet small', 'Analysis & audio');
@@ -196,8 +198,24 @@ export function libraryScreen({ progress, onRemove }) {
         }
         return item;
       }));
-      $('#learning-stats').textContent = analysis.lemmaCount == null ? `Analysis ${analysis.state}…`
-        : `${analysis.lemmaCount.toLocaleString()} ${analysis.method === 'word forms' ? 'word forms' : 'unique lemmas'} · ${analysis.wordCount.toLocaleString()} words`;
+      const vocabulary = analysis.vocabulary;
+      $('#learning-stats').textContent = vocabulary?.byLanguage?.length
+        ? vocabularyLabel(vocabulary)
+        : analysis.lemmaCount == null ? `Analysis ${analysis.state}…`
+          : `${analysis.lemmaCount.toLocaleString()} ${analysis.method === 'word forms' ? 'word forms' : 'unique lemmas'} · ${analysis.wordCount.toLocaleString()} tokens${vocabulary?.characterCount ? ` · ${vocabulary.characterCount} unique Han characters` : ''}`;
+      const breakdown = $('#learning-vocabulary'); breakdown.replaceChildren();
+      if (vocabulary?.byLanguage?.length) {
+        const table = element('table', 'vocabulary-table');
+        const header = element('tr');
+        for (const label of ['Language', 'Unit', 'Unique', 'Text total']) header.append(element('th', '', label));
+        table.append(header);
+        for (const item of vocabulary.byLanguage) {
+          const row = element('tr');
+          for (const text of [item.language === 'zh' ? 'Mandarin' : languageName(item.language), item.unit === 'characters' ? 'Han characters' : item.unit, item.count.toLocaleString(), `${item.total.toLocaleString()} ${item.unit === 'characters' ? 'characters' : 'word tokens'}`]) row.append(element('td', '', text));
+          table.append(row);
+        }
+        breakdown.append(table);
+      }
       $('#learning-estimate').textContent = analysis.reading?.band
         ? `Estimated ACTFL reading demand · ${analysis.reading.band}`
         : analysis.reading?.state === 'error' ? 'Reading estimate unavailable.'
@@ -228,7 +246,8 @@ export function libraryScreen({ progress, onRemove }) {
         const row = element('div', 'learning-chapter');
         const metadata = element('div');
         const availability = chapter.narratable ? '' : chapter.characters ? 'Above demo narration limit' : 'No selectable text';
-        const count = chapter.lemmaCount == null ? '' : `${availability ? ' · ' : ''}${chapter.lemmaCount} lemmas`;
+        const value = chapter.vocabulary?.count ?? chapter.lemmaCount;
+        const count = value == null ? '' : `${availability ? ' · ' : ''}${vocabularyLabel(chapter.vocabulary) || `${value} ${chapter.vocabulary?.unit || 'lemmas'}`}`;
         metadata.append(element('strong', '', chapter.title), element('span', 'book-meta', availability + count));
         row.append(metadata);
         return row;

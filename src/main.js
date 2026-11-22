@@ -3,6 +3,8 @@ import '@fontsource/dm-sans/latin-600.css';
 import '@fontsource/dm-sans/latin-700.css';
 import '@fontsource/instrument-serif/latin-400.css';
 import '@fontsource/spectral/latin-400.css';
+import '@fontsource/noto-sans-sc/400.css';
+import '@fontsource/noto-sans-tc/400.css';
 import './styles.css';
 import { readerDocks } from './reader-docks.js';
 import { $, $$, api, drawIcons, element, message, toast } from './ui.js';
@@ -12,6 +14,7 @@ import { wordHelp } from './words.js';
 import { earlierPageContext } from './reading-context.js';
 import { narration } from './narration.js';
 import { readingProgressSync } from './reading-sync.js';
+import { pinyinOverlay } from './pinyin.js';
 import { eventKey, getProgress, getSettings, keyLabel, languageName, modes, saveProgress, saveSettings, syncDeviceId, updateAppearance } from './settings.js';
 
 const viewer = $('#viewer');
@@ -31,6 +34,7 @@ let activeBook, renderer, loadController, activePosition, summaryController, act
 let moving = false, summaryQueued = false, fallbackFullscreen = false;
 let zoom = 1;
 let statusCheck = 0;
+const pinyin = pinyinOverlay({ host: viewer, preferences: () => settings, renderer: () => renderer, book: () => activeBook, request: api });
 
 const words = wordHelp({
   preferences: () => settings, request: api,
@@ -99,7 +103,7 @@ for (const close of $$('[data-close]')) {
     if (activeBook && !dialog?.open) viewer.focus({ preventScroll: true });
   });
 }
-document.addEventListener('pointerdown', () => words.clear(), true);
+document.addEventListener('pointerdown', (event) => { if (!event.target.closest('#word-help')) words.clear(); }, true);
 viewer.addEventListener('scroll', () => words.clear(), { passive: true });
 
 function applyAppearance() {
@@ -114,7 +118,7 @@ function applyAppearance() {
 }
 
 function applySettings(updated, aiChanged) {
-  const relayout = ['size', 'font', 'line', 'width', 'summaryLanguage'].some((key) => settings[key] !== updated[key]);
+  const relayout = ['size', 'font', 'line', 'width', 'summaryLanguage', 'showPinyin'].some((key) => settings[key] !== updated[key]);
   const syncChanged = settings.progressSyncEnabled !== updated.progressSyncEnabled;
   settings = updated;
   saveSettings(settings);
@@ -129,6 +133,7 @@ function applySettings(updated, aiChanged) {
   }
   if (relayout || aiChanged) resetSummary();
   Promise.resolve(renderer?.apply?.(settings)).then(() => {
+    pinyin.refresh();
     if (syncChanged && activeBook && renderer) void readingSync.start(activeBook, renderer);
   }).catch(reportError);
   if (activeBook) viewer.focus({ preventScroll: true });
@@ -192,6 +197,7 @@ function positionChanged(position) {
     if (!summaryPanel.hidden) void generateSummary();
   }
   void audio.refresh({ seekToPage: changed && !position.reflowed });
+  pinyin.refresh();
 }
 
 function showSummary(visible) {
@@ -369,6 +375,7 @@ async function toggleFullscreen() {
 }
 
 function closeReader() {
+  pinyin.clear();
   readingSync.stop();
   audio.stop();
   loadController?.abort();
@@ -422,12 +429,14 @@ async function openBook(book) {
       language: book.language, settings, signal,
       hooks: {
         keydown, bindWords: words.bind,
+        layout: () => pinyin.refresh(),
         position: (position) => { if (!signal.aborted) positionChanged(position); },
         error: (error) => { if (!signal.aborted) reportError(error); },
       },
     });
     if (signal.aborted) return opened.destroy();
     renderer = opened;
+    pinyin.refresh();
     if (book.format === 'pdf' && opened.contents.length) {
       contentsButton.title = 'Contents';
       contentsButton.setAttribute('aria-label', contentsButton.title);

@@ -1,6 +1,7 @@
 import { getDocument, GlobalWorkerOptions, TextLayer, PasswordResponses } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { trackText } from './text-tracking.js';
+import { hanPattern } from '../shared/language.js';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const baseUrl = new URL('/pdf-assets/', location.href);
@@ -10,7 +11,8 @@ function pageText(content) {
   let text = '';
   for (const item of content.items) {
     if (typeof item.str !== 'string') continue;
-    if (text && !/\s$/u.test(text) && !/^\s|^[,.;:!?]/u.test(item.str)) text += ' ';
+    const chineseBoundary = new RegExp(`${hanPattern}$`, 'u').test(text) && new RegExp(`^${hanPattern}`, 'u').test(item.str);
+    if (text && !chineseBoundary && !/\s$/u.test(text) && !/^\s|^[,.;:!?]/u.test(item.str)) text += ' ';
     text += item.str + (item.hasEOL ? '\n' : '');
   }
   return text.trim();
@@ -130,6 +132,7 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
       syncPosition: () => ({ progress: String(pageNumber), percentage: pageNumber / pdf.numPages, target: pageNumber }),
       get syncResolution() { return syncResolution; },
       contents,
+      readingRoots() { return [shell.querySelector('.textLayer')].filter(Boolean); },
       audioUnit() {
         const root = shell.querySelector('.textLayer');
         return root?.childElementCount ? { key: `pdf:${pageNumber}`, root, track: () => trackText(root, language, true) } : null;

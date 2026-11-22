@@ -3,9 +3,18 @@ from bisect import bisect_left, bisect_right
 from difflib import SequenceMatcher
 import math
 import unicodedata
+from functools import lru_cache
+
+
+@lru_cache(maxsize=1)
+def chinese_converter():
+    from opencc import OpenCC
+    return OpenCC('t2s')
 
 
 def normalized(text):
+    if any(0x3400 <= ord(char) <= 0x9fff or 0x20000 <= ord(char) <= 0x3ffff for char in text):
+        text = chinese_converter().convert(text)
     decomposed = unicodedata.normalize("NFD", text.casefold())
     return "".join(char for char in decomposed if char.isalnum() or char == "\u0303")
 

@@ -14,6 +14,7 @@ import { openProgressSync } from './progress-sync.js';
 import { chapterStorage } from './audio-upload.js';
 import { chapterFileLimit } from './chapter-audio.js';
 import { verifyStorage } from './storage-location.js';
+import { openMandarin } from './mandarin.js';
 import { demoUploadLimit, demoBookLimit, demoStorageLimit, limitJobs, visitorMiddleware } from './demo.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -29,6 +30,7 @@ const progressSync = openProgressSync(dir, { library, demo,
 });
 const ai = await openAISettings(dir, demo);
 const lookupSynonyms = openThesaurus();
+const mandarin = openMandarin();
 const learning = await openLearning(dir, library, demo, ai);
 const archive = await openArchive(dir, { library, demo, onImport: (book) => learning.ensure(library.getBook(book.id)) });
 const uploadLimit = limits?.upload ?? maxUpload;
@@ -37,6 +39,7 @@ const audioUpload = multer({ dest: library.uploads, limits: { fileSize: maxAudio
 const chapterUpload = multer({ storage: chapterStorage(library.uploads), limits: { fileSize: maxAudioUpload, files: chapterFileLimit, fields: 1, fieldSize: 1024 } });
 const demoUploads = demo ? [limitJobs({ perMinute: 32, perVisitor: 8 })] : [];
 const demoGenerations = demo ? [limitJobs({ perMinute: 45, perVisitor: 16 })] : [];
+const demoDictionaryRequests = demo ? [limitJobs({ perMinute: 600, perVisitor: 240 })] : [];
 const app = express();
 app.disable('x-powered-by');
 
@@ -85,7 +88,7 @@ app.use('/api', (req, res, next) => {
 if (demo) {
   const identifyVisitor = await visitorMiddleware(dir);
   app.use(['/api/library', '/api/categories', '/api/books', '/api/storage'], identifyVisitor);
-  app.post(['/api/ai/word', '/api/ai/summary'], identifyVisitor);
+  app.post(['/api/ai/word', '/api/ai/summary', '/api/mandarin/word', '/api/mandarin/readings', '/api/mandarin/pinyin'], identifyVisitor);
   await library.pruneDemoBooks();
   await learning.prune();
   setInterval(() => library.pruneDemoBooks().then(() => learning.prune()).catch(console.error), 15 * 60_000).unref();
@@ -232,6 +235,9 @@ app.get('/api/books/:id/cover', (req, res) => {
 });
 
 app.get('/api/ai/status', async (_, res) => res.json(await ai.status()));
+app.post('/api/mandarin/word', ...demoDictionaryRequests, (req, res) => res.json(mandarin.lookup(req.body ?? {})));
+app.post('/api/mandarin/readings', ...demoDictionaryRequests, (req, res) => res.json(mandarin.readings(req.body ?? {})));
+app.post('/api/mandarin/pinyin', ...demoDictionaryRequests, (req, res) => res.json(mandarin.annotation(req.body ?? {})));
 app.post('/api/ai/word', (req, res, next) => {
   if (req.body?.mode !== 'synonyms') return next();
   res.json(lookupSynonyms(req.body));

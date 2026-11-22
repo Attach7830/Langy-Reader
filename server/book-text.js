@@ -4,6 +4,7 @@ import { DOMParser } from '@xmldom/xmldom';
 import { XMLParser } from 'fast-xml-parser';
 import yauzl from 'yauzl';
 import { readingText } from '../shared/reading-text.js';
+import { languageSpans } from '../shared/language.js';
 import { RequestError } from './books.js';
 
 const xml = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true, parseTagValue: false, processEntities: false });
@@ -60,7 +61,8 @@ function chapterMarkers(doc, body, content, targets, title) {
 export async function extractBook(book, path, languageCall) {
   if (book.format === 'pdf') {
     const data = await languageCall('/pdf', await readFile(path), 'application/pdf');
-    return data.chapters;
+    return data.chapters.map((section) => ({ ...section, languages: languageSpans({ text: section.text,
+      runs: [{ start: 0, end: section.text.length, node: null }] }, book.language) }));
   }
   const zip = await yauzl.openPromise(path, { autoClose: false });
   try {
@@ -118,6 +120,7 @@ export async function extractBook(book, path, languageCall) {
       const content = readingText(body);
       chapters.push({
         key: `epub:${index}`, title, text: content.text,
+        languages: languageSpans(content, book.language),
         markers: chapterMarkers(doc, body, content, targets.filter((target) => target.file === file), title),
       });
     }
@@ -142,6 +145,14 @@ export function textChunks(text, limit) {
     while (text[from] === ' ') from++;
   }
   return chunks;
+}
+
+export function languageChunks(section, limit, fallback) {
+  const languages = Array.isArray(section.languages) ? section.languages : JSON.parse(section.languages || '[]');
+  const spans = languages.length ? languages : languageSpans({ text: section.text,
+    runs: [{ start: 0, end: section.text.length, node: null }] }, fallback);
+  return spans.flatMap((span) => textChunks(section.text.slice(span.from, span.to), limit)
+    .map((chunk) => ({ ...chunk, from: chunk.from + span.from, to: chunk.to + span.from, language: span.language })));
 }
 
 export function readingSamples(sections, limit = 900, maximum = 5) {

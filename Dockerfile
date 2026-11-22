@@ -3,7 +3,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY server ./server
-COPY scripts/build-thesaurus.js scripts/build-wiktionary.js ./scripts/
+COPY shared ./shared
+COPY scripts/build-thesaurus.js scripts/build-wiktionary.js scripts/build-mandarin.js ./scripts/
 RUN npm run build:thesaurus
 COPY index.html ./
 COPY src ./src

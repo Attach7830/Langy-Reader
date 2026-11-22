@@ -7,6 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { RequestError } from './books.js';
 import { hasUsableTimings } from './audio-timing.js';
+import { narrationOptions, sectionLanguages } from './language-voices.js';
 
 const run = promisify(execFile);
 const pending = new Set(['queued', 'generating', 'aligning']);
@@ -27,7 +28,8 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
     if (!db.prepare('PRAGMA table_info(book_audio)').all().some((column) => column.name === name)) db.exec(`ALTER TABLE book_audio ADD COLUMN ${name} ${definition}`);
   }
 
-  const sections = (book) => db.prepare('SELECT key,title,digest,markers,length(trim(text)) AS characters,has_spoken_text(text) AS narratable FROM chapters WHERE book=? ORDER BY ordinal').all(book.id);
+  const hasLanguages = db.prepare('PRAGMA table_info(chapters)').all().some((column) => column.name === 'languages');
+  const sections = (book) => db.prepare(`SELECT key,title,digest,markers,${hasLanguages ? 'languages' : "'[]' AS languages"},length(trim(text)) AS characters,has_spoken_text(text) AS narratable FROM chapters WHERE book=? ORDER BY ordinal`).all(book.id);
   const newest = (book) => db.prepare("SELECT * FROM book_audio WHERE book=? AND kind='generated' ORDER BY created DESC,rowid DESC LIMIT 1").get(book.id);
 
   function publicRecording(row) {
@@ -63,7 +65,7 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
     }
     const current = newest(book);
     const config = configuration();
-    const options = JSON.stringify({ voice: config.voice, model: config.model, speed: config.speed, baseUrl: config.baseUrl });
+    const options = JSON.stringify(narrationOptions(config, sectionLanguages(all, book.language)));
     const sourceHash = digest(all);
     if (current && current.digest === sourceHash && active.has(current.state)) return publicRecording(current);
     if (!replace && current?.state === 'ready' && current.digest === sourceHash && current.options === options) return publicRecording(current);

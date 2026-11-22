@@ -18,6 +18,7 @@ export const fonts = {
   georgia: { name: 'Georgia', stack: 'Georgia, serif' },
   sans: { name: 'DM Sans', stack: "'DM Sans', Arial, sans-serif" },
   mono: { name: 'Monospace', stack: "'Courier New', monospace" },
+  chinese: { name: 'Noto Sans Chinese', stack: "'Noto Sans SC', 'Noto Sans TC', sans-serif" },
 };
 
 export const shortcuts = {
@@ -31,7 +32,7 @@ export const shortcuts = {
 };
 
 export const defaults = {
-  mode: 'translation', synonymContextHelp: false, translationLanguage: 'en', summaryLanguage: 'en', theme: 'paper', background: 'grain',
+  mode: 'translation', synonymContextHelp: false, showPinyin: false, translationLanguage: 'en', summaryLanguage: 'en', theme: 'paper', background: 'grain',
   font: 'spectral', size: 20, line: 1.65, width: 'balanced', pdfNight: true,
   audioEnabled: false, audioToolbarHidden: false, podcastMode: false, audioHighlight: true, audioRate: 1,
   audioRecordings: {},

@@ -1,5 +1,8 @@
 import { modes, languageName } from './settings.js';
 import { element } from './ui.js';
+import { hasHan, nodeLanguage } from '../shared/language.js';
+import { readingText } from '../shared/reading-text.js';
+import { mandarinHelp } from './mandarin-help.js';
 
 function caretAt(doc, x, y) {
   if (doc.caretPositionFromPoint) {
@@ -19,20 +22,20 @@ function wordAt(root, event, segmenter) {
   const { node, offset } = caret;
   const segments = segmenter?.segment(node.data);
   const candidates = segments
-    ? [...new Set([segments.containing(offset), segments.containing(offset - 1)])].filter((item) => item?.isWordLike)
+    ? [...new Set([segments.containing(offset), segments.containing(offset - 1)])].filter((item) => item?.isWordLike || hasHan(item?.segment || ''))
     : Array.from(node.data.matchAll(/[\p{L}\p{M}\p{N}]+/gu), (match) => ({ index: match.index, segment: match[0] }))
       .filter((item) => item.index <= offset && offset <= item.index + item.segment.length);
 
   const range = doc.createRange();
   for (const { index, segment } of candidates) {
-    if (!/\p{L}/u.test(segment)) continue;
+    if (!/\p{L}/u.test(segment) && !hasHan(segment)) continue;
     range.setStart(node, index);
     range.setEnd(node, index + segment.length);
     const rect = [...range.getClientRects()].find((box) => x >= box.left - 1 && x <= box.right + 1 && y >= box.top && y <= box.bottom);
     if (!rect) continue;
     const frame = doc.defaultView.frameElement?.getBoundingClientRect();
     return {
-      node, index, word: segment,
+      node, index, word: segment, caret: Math.max(index, Math.min(offset, index + segment.length - 1)),
       rect: { left: rect.left + (frame?.left || 0), right: rect.right + (frame?.left || 0),
         top: rect.top + (frame?.top || 0), bottom: rect.bottom + (frame?.top || 0) },
     };
@@ -48,6 +51,8 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
   const lemmaLabel = bubble.querySelector('[data-word-lemma]');
   const cache = new Map();
   let active, controller, timer;
+  bubble.addEventListener('pointerenter', () => clearTimeout(timer));
+  bubble.addEventListener('pointerleave', () => clear());
 
   function clear() {
     clearTimeout(timer);
@@ -68,17 +73,37 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
 
   async function show(item, mode, language, getContext) {
     if (active !== item) return;
+    language = nodeLanguage(item.node, language, item.word);
+    const chinese = hasHan(item.word) && language === 'zh';
+    let mandarin;
+    if (chinese) {
+      const root = item.node.parentElement.closest('p,li,blockquote,td,h1,h2,h3,h4,h5,h6') || item.node.parentElement.closest('.textLayer') || item.node.parentElement;
+      const content = readingText(root);
+      const run = content.runs.find((part) => part.node === item.node && part.offset <= item.caret && part.offset + part.end - part.start > item.caret);
+      const offset = run ? run.start + item.caret - run.offset : item.caret;
+      let from = Math.max(0, offset - 150);
+      const text = run ? content.text : item.node.data;
+      if (/[\uDC00-\uDFFF]/u.test(text[from])) from--;
+      mandarin = { text: text.slice(from, from + 350), offset: offset - from };
+    }
     const { translationLanguage, synonymContextHelp } = preferences();
     const dictionary = mode === 'synonyms';
     const useContextHelp = dictionary && synonymContextHelp === true;
     const context = dictionary && !useContextHelp ? '' : getContext(item);
     const target = mode === 'translation' ? translationLanguage : language;
-    const key = JSON.stringify([mode, language, target, item.word, context]);
+    const key = JSON.stringify([mode, language, target, item.word, context, mandarin]);
     const label = mode === 'translation' ? `${languageName(target)} translation` : modes[mode];
     const detected = lemmaAt(item.node, item.index);
     lemmaLabel.textContent = detected?.lemma ? `Lemma · ${detected.lemma}` : '';
-    lemmaLabel.hidden = !detected?.lemma;
+    lemmaLabel.hidden = chinese || !detected?.lemma;
     function display(result) {
+      if (result.mandarin) {
+        heading.textContent = result.mandarin.word;
+        hint.textContent = 'Mandarin dictionary';
+        answer.replaceChildren(mandarinHelp(result.mandarin));
+        if (result.text) answer.append(element('div', 'word-sense', `${result.status === 'context' ? 'AI context explanation' : label}: ${result.text}`));
+        return;
+      }
       answer.lang = result.language ?? target;
       answer.textContent = result.text;
       const title = result.status === 'context' ? 'AI context explanation'
@@ -117,10 +142,30 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
     controller = lookup;
     const askWord = (task, passage) => request('/api/ai/word', {
       method: 'POST', signal: lookup.signal,
-      body: { mode: task, language, translationLanguage, word: item.word, context: passage, lemma: detected?.lemma },
+      body: { mode: task, language, translationLanguage, word: item.resolvedWord || item.word, context: passage, lemma: detected?.lemma },
     });
     let checkingContext = false;
     try {
+      if (chinese) {
+        const local = await request('/api/mandarin/word', { method: 'POST', signal: lookup.signal, body: mandarin });
+        if (active !== item) return;
+        item.resolvedWord = local.word;
+        const result = { mandarin: local };
+        display(result); place(item.rect);
+        if (!(mode === 'translation' && /^en(?:-|$)/u.test(target))) {
+          try {
+            const passage = getContext(item);
+            let extra = await askWord(mode, passage);
+            if (useContextHelp && extra.status === 'missing' && passage.trim()) extra = { ...await askWord('context', passage), status: 'context' };
+            Object.assign(result, extra);
+          }
+          catch (error) { if (error.name === 'AbortError') throw error; result.text = error.message; }
+        }
+        cache.set(key, result);
+        if (cache.size > 220) cache.delete(cache.keys().next().value);
+        if (active === item) { display(result); place(item.rect); }
+        return;
+      }
       let result = await askWord(mode, dictionary ? '' : context);
       if (active !== item) return;
       if (useContextHelp && result.status === 'missing' && context.trim()) {
@@ -167,7 +212,7 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
     const options = { signal: listeners.signal };
     root.addEventListener('pointermove', inspect, options);
     root.addEventListener('pointerleave', (event) => {
-      if (event.pointerType !== 'touch') clear();
+      if (event.pointerType !== 'touch') { clearTimeout(timer); timer = setTimeout(clear, 180); }
     }, options);
     root.addEventListener('pointerdown', (event) => { if (event.pointerType !== 'touch') clear(); }, options);
     root.addEventListener('pointerup', (event) => { if (event.pointerType === 'touch') inspect(event, true); }, options);

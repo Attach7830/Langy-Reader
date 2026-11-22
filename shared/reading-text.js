@@ -1,5 +1,5 @@
 const blockTags = new Set(['p', 'div', 'section', 'article', 'blockquote', 'pre', 'li', 'dt', 'dd', 'td', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'br']);
-const excludedTags = new Set(['script', 'style', 'template', 'nav', 'noscript', 'form', 'iframe', 'svg']);
+const excludedTags = new Set(['script', 'style', 'template', 'nav', 'noscript', 'form', 'iframe', 'svg', 'rt', 'rp']);
 
 export function readingText(root) {
   let text = '';

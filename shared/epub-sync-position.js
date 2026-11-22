@@ -5,7 +5,7 @@ const name = (node) => (node.localName || node.nodeName?.split(':').at(-1) || ''
 const children = (node) => Array.from(node.childNodes || []);
 const elements = (node) => children(node).filter((item) => item.nodeType === 1);
 const textNodes = (node) => children(node).filter((item) => [3, 4].includes(item.nodeType) && item.data.length);
-const nonVisible = new Set(['head', 'style', 'script', 'title', 'rp']);
+const nonVisible = new Set(['head', 'style', 'script', 'title', 'rp', 'rt']);
 
 export function annotateSyncPaths(body, spine) {
   function visit(node, path) {

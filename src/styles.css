@@ -19,7 +19,7 @@
   --rail: 238px;
   --panel: 315px;
   --page-width: 790px;
-  font-family: "DM Sans", system-ui, sans-serif;
+  font-family: "DM Sans", 'Noto Sans SC', 'Noto Sans TC', system-ui, sans-serif;
 }
 :root[data-theme="sepia"] {
   --ground: #f0e5cf; --surface: #f7ead1; --raised: #fbf1df; --ink: #3b3025; --paper-ink: #3c2f22;
@@ -61,7 +61,7 @@ button:disabled { cursor: default; opacity: .45; }
 a { color: inherit; text-decoration: none; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 h1, h2, p { margin: 0; }
-h1, h2 { font: 400 50px/.99 "Instrument Serif", Georgia, serif; letter-spacing: -.018em; }
+h1, h2 { font: 400 50px/.99 "Instrument Serif", Georgia, "Noto Sans SC", "Noto Sans TC", serif; letter-spacing: -.018em; }
 h2 { font-size: 36px; }
 svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .muted { color: var(--muted); }
@@ -79,7 +79,7 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
   border-bottom: 1px solid var(--border);
 }
 .brand, .header-actions, .reader-heading, .reader-actions { display: flex; align-items: center; gap: 12px; }
-.brand { white-space: nowrap; font: 400 30px/1 "Instrument Serif", Georgia, serif; }
+.brand { white-space: nowrap; font: 400 30px/1 "Instrument Serif", Georgia, "Noto Sans SC", "Noto Sans TC", serif; }
 .brand-mark, .panel-mark {
   display: grid;
   place-items: center;
@@ -208,7 +208,7 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .book-cover[data-palette="3"] { --cover-bg: #a4813d; --cover-ink: #24251e; }
 .cover-format, .cover-author { font-size: 11px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cover-format { letter-spacing: .1em; }
-.cover-title { font: 400 clamp(26px, 3vw, 41px)/.97 "Instrument Serif", Georgia, serif; overflow-wrap: anywhere; }
+.cover-title { font: 400 clamp(26px, 3vw, 41px)/.97 "Instrument Serif", Georgia, "Noto Sans SC", "Noto Sans TC", serif; overflow-wrap: anywhere; }
 .cover-decoration { position: absolute; inset: auto -20% 8% 30%; z-index: -1; aspect-ratio: 1; border: 1px solid currentColor; opacity: .24; border-radius: 50%; box-shadow: 0 0 0 14px #fff1, 0 0 0 27px #fff1; }
 .cover-sample { gap: 13px; }
 .cover-sample .cover-title { max-width: 150px; }
@@ -242,7 +242,7 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .reader-title strong { font-size: 14px; }
 .reader-title span { font-size: 12px; color: var(--muted); }
 .reader-actions { gap: 4px; }
-.type-icon { font: 500 23px/1 "Instrument Serif", Georgia, serif; }
+.type-icon { font: 500 23px/1 "Instrument Serif", Georgia, "Noto Sans SC", "Noto Sans TC", serif; }
 .summary-toggle[aria-expanded="true"] { background: var(--brand-soft); }
 .reader-stage {
   display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr);
@@ -305,7 +305,7 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .panel-mark { background: var(--brand-soft); color: var(--ink); }
 .summary-panel h2 { margin-bottom: 8px; }
 .summary-panel .muted { font-size: 13px; line-height: 1.45; }
-.summary-body { border-top: 1px solid var(--border); margin: 20px 0 17px; padding-top: 16px; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 19px/1.55 "Spectral", Georgia, serif; }
+.summary-body { border-top: 1px solid var(--border); margin: 20px 0 17px; padding-top: 16px; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 19px/1.55 "Spectral", Georgia, "Noto Sans SC", "Noto Sans TC", serif; }
 .summary-body[data-state="idle"], .summary-body[data-state="loading"] { color: var(--muted); }
 .summary-body[data-state="error"] { color: var(--danger); font-size: 16px; }
 .summary-panel .button { justify-content: flex-start; }
@@ -315,7 +315,7 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .summary-actions [aria-pressed="true"] { border-color: var(--focus); background: var(--brand-soft); }
 .summary-detail { margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border); }
 .summary-detail h3 { margin: 0 0 9px; font-size: 15px; line-height: 1.35; overflow-wrap: anywhere; }
-#summary-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font: 400 17px/1.55 "Spectral", Georgia, serif; }
+#summary-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font: 400 17px/1.55 "Spectral", Georgia, "Noto Sans SC", "Noto Sans TC", serif; }
 #summary-detail-body[data-state="loading"] { color: var(--muted); }
 #summary-detail-body[data-state="error"] { color: var(--danger); }
 .reader-footer {
@@ -380,7 +380,7 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 .theme-option input { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; }
 .theme-option .theme-swatch {
   display: grid; place-items: center; min-height: 46px; border: 1px solid var(--border); border-radius: 6px;
-  background: var(--swatch-bg); color: var(--swatch-ink); font: 400 23px/1 "Instrument Serif", Georgia, serif;
+  background: var(--swatch-bg); color: var(--swatch-ink); font: 400 23px/1 "Instrument Serif", Georgia, "Noto Sans SC", "Noto Sans TC", serif;
 }
 .theme-option input:checked + .theme-swatch, .theme-option input:focus-visible + .theme-swatch { outline: 2px solid var(--focus); outline-offset: 1px; }
 .settings-subhead { margin-top: 3px; padding-top: 11px; border-top: 1px solid var(--border); font-weight: 650; font-size: 13px; color: var(--muted); }
@@ -458,6 +458,16 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 .word-sense + .word-sense { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--border); }
 .word-sense-label { color: var(--muted); font-size: 11px; }
 .word-sense-source { color: var(--muted); font-size: 10px; font-weight: 700; }
+.word-help:has(.mandarin-help) { max-width: min(370px, 94vw); max-height: 80vh; overflow: auto; pointer-events: auto; }
+.mandarin-pronunciation { color: var(--brand); font-size: 17px; margin-bottom: 8px; }
+.mandarin-character-heading { margin-top: 10px; }
+.mandarin-character { border-top: 1px solid var(--border); padding-top: 5px; margin-top: 5px; }
+.mandarin-character-name { display: flex; align-items: baseline; gap: 8px; }
+.mandarin-reading { color: var(--muted); }
+.pinyin-layer { position: absolute; inset: 0; pointer-events: none; overflow: clip; z-index: 2; }
+.pinyin-layer span { position: absolute; display: block; white-space: nowrap; text-align: center; color: var(--muted); font-family: 'DM Sans', sans-serif; font-weight: 400; line-height: 1; }
+.vocabulary-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-block: 10px; }
+.vocabulary-table :is(th,td) { text-align: left; border-bottom: 1px solid var(--border); padding: 7px 5px; }
 .toast { inset: auto auto 16px 50%; transform: translateX(-50%); width: max-content; max-width: 93vw; padding: 9px 15px; }
 
 @media (max-width: 900px) {

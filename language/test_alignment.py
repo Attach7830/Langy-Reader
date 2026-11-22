@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 from unittest.mock import patch
 
-from app import Alignment, align, match_timings, normalized, recognized_words, rescan_recording
+from app import Alignment, Analysis, analyze, align, match_timings, normalized, recognized_words, rescan_recording
 
 
 def speech_word(word, start, end):
@@ -12,6 +12,35 @@ def speech_word(word, start, end):
 
 
 class AlignmentTests(unittest.TestCase):
+    def test_mandarin_analysis_counts_han_characters_with_utf16_offsets_and_keeps_latin_separate(self):
+        text = '我𠮷我 English 书書'
+        result = analyze(Analysis(text=text, language='zh-Hant'))
+        self.assertEqual(result['method'], 'characters')
+        self.assertEqual(set(result['lemmas']), {'我', '𠮷', '书', '書'})
+        self.assertEqual(result['tokens'][1]['from'], 1)
+        self.assertEqual(result['tokens'][1]['to'], 3)
+        self.assertEqual(result['tokens'][2]['from'], 3)
+        self.assertFalse(any(token['word'] == 'English' for token in result['tokens']))
+
+    def test_mandarin_audio_matches_simplified_speech_against_traditional_text(self):
+        result = match_timings(['我', '去', '銀行'], [('我', 0, .2, .9), ('去', .2, .4, .9), ('银行', .4, 1, .9)])
+        self.assertEqual(len(result), 3)
+        self.assertTrue(all(item is not None for item in result))
+        self.assertEqual(result[-1]['end'], 1)
+
+    def test_mixed_audio_requests_segment_language_detection_and_transcription(self):
+        class Model:
+            def transcribe(self, samples, **options):
+                self.options = options
+                return [types.SimpleNamespace(words=[speech_word('hello', .1, .4)])], None
+        model = Model()
+        heard = recognized_words(model, np.ones(16000), 'mul', [], retry=True)
+        self.assertEqual(heard[0][0], 'hello')
+        self.assertIsNone(model.options['language'])
+        self.assertTrue(model.options['multilingual'])
+        self.assertEqual(model.options['task'], 'transcribe')
+        self.assertFalse(model.options['condition_on_previous_text'])
+
     def test_accents_and_apostrophes_match_without_confusing_enye(self):
         self.assertEqual(normalized("¿Páramo?"), "paramo")
         self.assertNotEqual(normalized("año"), normalized("ano"))

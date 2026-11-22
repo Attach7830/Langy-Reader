@@ -188,6 +188,12 @@ test('passwordless installations support browser sync but do not expose a native
 
 test('chapter, rescan and iVoox endpoints require the web login and preserve original chapter downloads', async (t) => {
   const f = await fixture(t), base = await f.start();
+  for (const endpoint of ['word', 'readings', 'pinyin']) {
+    assert.equal((await fetch(base + '/api/mandarin/' + endpoint, { method: 'POST' })).status, 401);
+  }
+  await response(base, '/api/mandarin/word', { status: 422, method: 'POST', headers: json, body: JSON.stringify({ text: 'hello', offset: 0 }) });
+  const pinyin = await response(base, '/api/mandarin/pinyin', { method: 'POST', headers: json, body: JSON.stringify({ text: '银行中文' }) });
+  assert.equal(pinyin.characters.map((item) => item.pinyin).join(' ').toLowerCase(), 'yín háng zhōng wén');
   const root = '/api/books/sync-book';
   for (const [method, path] of [['POST', '/recordings/chapters'], ['POST', '/ivoox'], ['GET', '/ivoox'],
     ['DELETE', '/ivoox'], ['POST', '/audio/fake/rescan'], ['DELETE', '/audio/fake/rescan'], ['GET', '/recordings/fake/chapters/0/file']]) {

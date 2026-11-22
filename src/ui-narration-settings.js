@@ -12,6 +12,8 @@ export function narrationSettings() {
         ? 'Audio and podcast controls are available to preview. This demo has no Kokoro connection. Connect Kokoro in your self-hosted installation to generate narration.'
         : 'The demo owner manages the narration connection.';
       for (const name of ['baseUrl', 'model', 'voice', 'speed']) fields['kokoro_' + name].value = config[name] ?? '';
+      fields.kokoro_autoLanguages.checked = config.autoLanguageVoices !== false;
+      for (const language of ['en', 'es', 'zh', 'pt']) fields['kokoro_voice_' + language].value = config.voicesByLanguage?.[language] || '';
       fields.kokoro_apiKey.value = '';
       fields.kokoro_clearKey.checked = false;
       fields.kokoro_apiKey.placeholder = config.hasKey ? 'Saved key · leave blank to keep' : 'Optional';
@@ -22,9 +24,11 @@ export function narrationSettings() {
     const body = {
       baseUrl: fields.kokoro_baseUrl.value, voice: fields.kokoro_voice.value, model: fields.kokoro_model.value,
       speed: Number(fields.kokoro_speed.value), apiKey: fields.kokoro_apiKey.value, clearKey: fields.kokoro_clearKey.checked,
+      autoLanguageVoices: fields.kokoro_autoLanguages.checked,
+      voicesByLanguage: Object.fromEntries(Object.entries({ ...config.voicesByLanguage, ...Object.fromEntries(['en', 'es', 'zh', 'pt'].map((language) => [language, fields['kokoro_voice_' + language].value.trim()])) }).filter(([, value]) => value)),
     };
     const changed = ['baseUrl', 'voice', 'model', 'speed'].some((name) => body[name] !== config[name])
-      || body.apiKey || body.clearKey;
+      || body.autoLanguageVoices !== config.autoLanguageVoices || JSON.stringify(body.voicesByLanguage) !== JSON.stringify(config.voicesByLanguage) || body.apiKey || body.clearKey;
     if (changed) config = await api('/api/settings/learning', { method: 'PUT', body });
   }
   $('#kokoro-voices').addEventListener('click', async (event) => {

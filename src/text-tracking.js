@@ -1,4 +1,5 @@
 import { readingText, textWords, normalizedWord } from '../shared/reading-text.js';
+import { hanPattern } from '../shared/language.js';
 
 export function trackText(root, language, pdf = false) {
   let content = readingText(root);
@@ -8,7 +9,8 @@ export function trackText(root, language, pdf = false) {
     for (const span of root.querySelectorAll('span:not(:has(span))')) {
       const part = readingText(span);
       if (!part.text) continue;
-      if (text && !text.endsWith(' ') && !/^[,.;:!?]/u.test(part.text)) text += ' ';
+      const chineseBoundary = new RegExp(`${hanPattern}$`, 'u').test(text) && new RegExp(`^${hanPattern}`, 'u').test(part.text);
+      if (text && !chineseBoundary && !text.endsWith(' ') && !/^[,.;:!?]/u.test(part.text)) text += ' ';
       runs.push(...part.runs.map((run) => ({ ...run, start: run.start + text.length, end: run.end + text.length })));
       text += part.text;
     }

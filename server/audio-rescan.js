@@ -7,6 +7,7 @@ import { textWords } from '../shared/reading-text.js';
 import { synchronizeChunk } from './audio-timing.js';
 import { confirmed, rescanWindows, mergeRescan } from './rescan-timing.js';
 import { RequestError } from './books.js';
+import { sectionLanguages } from './language-voices.js';
 const run = promisify(execFile);
 const hash = (data) => createHash('sha256').update(JSON.stringify(data)).digest('hex');
 const pending = new Set(['queued', 'running']);
@@ -36,7 +37,7 @@ export function audioRescans({ db, folder, library, languageCall, publishUploade
     const recording = db.prepare("SELECT * FROM book_audio WHERE book=? AND id=? AND state='ready'").get(book.id, id);
     if (!recording) throw new RequestError(404, 'Choose a complete, synchronized recording to rescan.');
     if (recording.kind === 'uploaded' && db.prepare('SELECT state FROM recordings WHERE id=?').get(id)?.state !== 'ready') throw new RequestError(409, 'Wait for recording synchronization to finish.');
-    const sections = db.prepare('SELECT key,title,text,digest,markers FROM chapters WHERE book=? ORDER BY ordinal').all(book.id);
+    const sections = db.prepare('SELECT key,title,text,digest,markers,languages FROM chapters WHERE book=? ORDER BY ordinal').all(book.id);
     if (recording.digest !== hash(sections.map(({ key, digest, markers }) => [key, digest, markers]))) throw new RequestError(409, 'The book text changed. Sync this recording with the book again first.');
     const segments = JSON.parse(recording.segments), raw = [], parts = new Map();
     for (const segment of segments) {
@@ -125,7 +126,8 @@ export function audioRescans({ db, folder, library, languageCall, publishUploade
       await run('ffmpeg', ['-nostdin', '-v', 'error', '-y', '-ss', String(window.start), '-i', join(folder, `${job.recording}.mp3`),
         '-t', String(window.end - window.start), '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', path], { timeout: 90000 });
       const result = await languageCall('/rescan', { audio: (await readFile(path)).toString('base64'),
-        words: data.words.slice(window.contextFrom, window.contextTo).map((word) => word.word), language: book.language });
+        words: data.words.slice(window.contextFrom, window.contextTo).map((word) => word.word),
+        language: new Set(sectionLanguages(data.sections, book.language)).size > 1 ? 'mul' : sectionLanguages(data.sections, book.language)[0] });
       if (!valid()) return;
       if (snapshot(book, job.recording).signature !== job.signature) throw new RequestError(409, 'The recording or text changed during rescanning. Start a new rescan.');
       const merged = mergeRescan(timings, window, result.timings, data.recording.duration, (index, start, end) => {

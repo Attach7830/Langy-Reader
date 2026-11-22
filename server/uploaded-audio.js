@@ -7,6 +7,7 @@ import { textWords } from '../shared/reading-text.js';
 import { RequestError } from './books.js';
 import { synchronizeChunk } from './audio-timing.js';
 import { chapterAudio } from './chapter-audio.js';
+import { sectionLanguages } from './language-voices.js';
 
 const run = promisify(execFile);
 export const maxAudioUpload = 1024 * 1024 ** 2;
@@ -79,7 +80,9 @@ export function uploadedAudio({ db, folder, library, languageCall, wake, isResca
     if (job.state === 'assembling') return chapters.assemble(job);
     const owner = db.prepare('SELECT owner FROM analyses WHERE book=?').get(job.book)?.owner;
     const book = library.getBook(job.book, { id: owner });
-    const sections = db.prepare('SELECT key,title,text,digest,markers FROM chapters WHERE book=? ORDER BY ordinal').all(job.book);
+    const sections = db.prepare('SELECT key,title,text,digest,markers,languages FROM chapters WHERE book=? ORDER BY ordinal').all(job.book);
+    const languages = [...new Set(sectionLanguages(sections, book.language))];
+    const recognitionLanguage = languages.length > 1 ? 'mul' : languages[0];
     const words = sections.flatMap((section) => textWords(section.text, book.language).map((word) => ({ ...word, key: section.key })));
     if (!words.length) throw new RequestError(422, 'This book has no selectable text to sync.');
     const valid = () => db.prepare("SELECT id FROM recordings WHERE id=? AND state='syncing'").get(job.id);
@@ -97,17 +100,17 @@ export function uploadedAudio({ db, folder, library, languageCall, wake, isResca
         await rename(target, playback);
         if (!valid()) { await rm(playback, { force: true }); return; }
       }
-      let checkpoint = { offset: 0, heard: [], language: book.language };
+      let checkpoint = { offset: 0, heard: [], language: recognitionLanguage };
       try {
         const saved = JSON.parse(await readFile(transcript(job.id), 'utf8'));
-        if (saved.language === book.language) checkpoint = saved;
+        if (saved.language === recognitionLanguage) checkpoint = saved;
       } catch { /* A new recording starts without a transcript. */ }
       for (let offset = checkpoint.offset; offset < job.duration; offset += 59) {
         if (!valid()) return;
         const chunk = join(temporary, 'chunk.wav');
         await run('ffmpeg', ['-nostdin', '-v', 'error', '-y', '-ss', String(offset), '-i', playback, '-t', '60',
           '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', chunk], { timeout: 90000 });
-        const result = await languageCall('/transcribe', { audio: (await readFile(chunk)).toString('base64'), words: [], language: book.language });
+        const result = await languageCall('/transcribe', { audio: (await readFile(chunk)).toString('base64'), words: [], language: recognitionLanguage });
         if (!valid()) return;
         for (const word of result.heard || []) {
           const start = Number(word.start) + offset, end = Number(word.end) + offset;

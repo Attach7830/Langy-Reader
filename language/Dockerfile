@@ -5,7 +5,8 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && python -m spacy download es_core_news_sm \
-    && python -m spacy download en_core_web_sm
+    && python -m spacy download en_core_web_sm \
+    && python -m spacy download pt_core_news_sm
 COPY install_models.py ./
 RUN python install_models.py && useradd --system --uid 10001 --create-home langy
 COPY app.py ./

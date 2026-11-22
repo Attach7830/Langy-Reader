@@ -218,6 +218,8 @@
       <section class="modal-body" data-settings-panel="language" hidden>
         <label class="field">Word help on hover or tap <select name="mode" id="help-options"></select></label>
         <label class="checkbox-row"><input name="synonymContextHelp" type="checkbox"> Explain missing synonym entries with AI</label>
+        <label class="checkbox-row"><input name="showPinyin" type="checkbox"> Show pinyin above Chinese text</label>
+        <p class="field-note">Remembered on this browser. Hover pronunciation remains available when inline pinyin is off.</p>
         <div class="form-grid">
           <label class="field">Translation language
             <input name="translationLanguage" list="languages" maxlength="70" autocomplete="off" required>
@@ -226,8 +228,9 @@
             <input name="summaryLanguage" list="languages" maxlength="70" autocomplete="off" required>
           </label>
         </div>
-        <p class="field-note">Definitions and synonyms use the book’s language. The optional AI explanation uses the surrounding passage when the dictionaries have no entry.</p>
+        <p class="field-note">Definitions and synonyms use the passage’s language, guided by EPUB language tags and automatic detection. The optional AI explanation uses the surrounding passage when the dictionaries have no entry.</p>
         <p class="field-note">Dictionary data from <a href="https://es.wiktionary.org/" target="_blank" rel="noopener noreferrer">Wiktionary contributors</a> under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a>.</p>
+        <p class="field-note">Mandarin word and character meanings: <a href="https://www.mdbg.net/chinese/dictionary?page=cc-cedict" target="_blank" rel="noopener noreferrer">CC-CEDICT</a> (CC BY-SA 4.0) and <a href="https://www.unicode.org/reports/tr38/" target="_blank" rel="noopener noreferrer">Unicode Unihan</a>. Pinyin: pinyin-pro (MIT).</p>
       </section>
       <section class="modal-body" data-settings-panel="shortcuts" hidden>
         <div class="shortcut-list" id="shortcut-list"></div>
@@ -275,6 +278,14 @@
             <label class="field">Generation speed <input name="kokoro_speed" type="number" min="0.5" max="2" step="0.1"></label>
           </div>
           <datalist id="narration-voices"></datalist>
+          <label class="checkbox-row"><input name="kokoro_autoLanguages" type="checkbox"> Match Kokoro voices to passage languages</label>
+          <p class="field-note">Uses language-specific Kokoro voices for mixed books. Your TTS server must provide those voices. Set overrides below for your server; Portuguese voice presets use Brazilian Portuguese.</p>
+          <div class="form-grid">
+            <label class="field">English voice <input name="kokoro_voice_en" list="narration-voices" maxlength="120" placeholder="Automatic"></label>
+            <label class="field">Spanish voice <input name="kokoro_voice_es" list="narration-voices" maxlength="120" placeholder="ef_dora"></label>
+            <label class="field">Mandarin voice <input name="kokoro_voice_zh" list="narration-voices" maxlength="120" placeholder="zf_xiaobei"></label>
+            <label class="field">Portuguese voice <input name="kokoro_voice_pt" list="narration-voices" maxlength="120" placeholder="pf_dora"></label>
+          </div>
           <label class="field">API key <input name="kokoro_apiKey" type="password" autocomplete="new-password" maxlength="4096"></label>
           <label class="checkbox-row"><input name="kokoro_clearKey" type="checkbox"> Remove saved key</label>
           <button class="button secondary" id="kokoro-voices" type="button">Save and find voices</button>
@@ -361,6 +372,7 @@
     <header class="modal-header"><h2 id="learning-title">Book analysis</h2><button class="icon-button" type="button" data-close aria-label="Close book analysis"><i data-lucide="x"></i></button></header>
     <div class="modal-body">
       <p id="learning-stats"></p>
+      <div id="learning-vocabulary"></div>
       <p id="learning-estimate"></p>
       <p class="field-note">Estimated reading demand uses sampled passages and broad ACTFL reading descriptors. This estimate describes the text and is provisional.</p>
       <p id="learning-reason"></p>

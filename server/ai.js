@@ -215,7 +215,10 @@ export async function openAISettings(dir, demo) {
         'Advanced: connected factual narration and description across paragraphs, with varied time references and organization.',
         'Superior: complex discussion, abstraction, argument, specialized language and interpretation beyond literal content.',
         'Distinguished: dense or subtle rhetoric, embedded cultural assumptions, nuanced perspective and substantial inferential demands.',
-        'Consider communicative task, context, discourse, vocabulary, syntax and inference together. The unique lemma count measures vocabulary size.',
+        'Consider communicative task, context, discourse, vocabulary, syntax and inference together.',
+        source.vocabulary?.unit === 'characters'
+          ? 'For Mandarin, base vocabulary demand on the supplied Han-character repertoire, recurrence and coverage, the meanings of compound words, and character familiarity in the excerpts. These are character counts, not lemmas. Distinguish character knowledge from understanding a multi-character word. Explain the character demands in your rationale. The top100Coverage figure is frequency within THIS book, not an external corpus rank or proficiency score.'
+          : 'Unique lemmas describe vocabulary variety. In multilingual text, consider the language of each passage.',
         'Judge only the excerpts. Avoid assigning a range from author reputation, title, book length or vocabulary totals alone.',
         'Give one to three exact, short quotations from the excerpts as evidence. Discuss language features without revealing story events.',
         'This is a provisional estimate of text demand and cannot measure a reader’s speaking or reading proficiency. Use broad ranges only.',

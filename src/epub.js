@@ -2,6 +2,8 @@ import ePub from 'epubjs';
 import spectral from '@fontsource/spectral/files/spectral-latin-400-normal.woff2?url';
 import spectralItalic from '@fontsource/spectral/files/spectral-latin-400-italic.woff2?url';
 import dmSans from '@fontsource/dm-sans/files/dm-sans-latin-400-normal.woff2?url';
+import notoSC from '@fontsource/noto-sans-sc/400.css?inline';
+import notoTC from '@fontsource/noto-sans-tc/400.css?inline';
 import { fonts, themes } from './settings.js';
 import { outlineDocument, spacingRules } from './epub-outline.js';
 import { trackText } from './text-tracking.js';
@@ -9,7 +11,7 @@ import { annotateSyncPaths, koReaderXPath, parseKOReaderXPath, resolveKOReaderXP
   positionFraction, pointAtFraction, weightedPercentage, percentagePosition } from '../shared/epub-sync-position.js';
 
 const blocks = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, div, pre, td, dd, dt, figcaption';
-const excluded = 'script, style, template, [hidden], [aria-hidden="true"]';
+const excluded = 'script, style, template, rt, rp, [hidden], [aria-hidden="true"]';
 
 function normalizeReadingText(text) {
   return text.split('\n').map((line) => line.replace(/\s+/gu, ' ').trim()).filter(Boolean).join('\n');
@@ -100,21 +102,24 @@ function unscript(doc) {
 }
 
 function stylesheet(settings, fixed) {
-  if (fixed) return 'html { color-scheme: light; }';
+  const cjk = (notoSC + notoTC).replace(/url\(([^)]+)\)/gu, (_, value) => `url("${new URL(value.replace(/^['"]|['"]$/gu, ''), location.href)}")`);
+  if (fixed) return cjk + 'html { color-scheme: light; }';
   const { ink } = themes[settings.theme];
+  const stack = fonts[settings.font].stack.replace(/,\s*(?:serif|sans-serif|monospace)$/u, '');
   const face = (family, url, style) => `@font-face{font-family:"${family}";src:url("${new URL(url, location.href)}") format("woff2");font-style:${style};font-weight:400;font-display:swap;}`;
   return `
+    ${cjk}
     ${face('Spectral', spectral, 'normal')}
     ${face('Spectral', spectralItalic, 'italic')}
     ${face('DM Sans', dmSans, 'normal')}
     html { background: transparent !important; color-scheme: ${['dark', 'dusk', 'midnight'].includes(settings.theme) ? 'dark' : 'light'}; }
     body { color: ${ink} !important; background: transparent !important; }
     body, body :is(p, li, blockquote, div, dd, td) {
-      font-family: ${fonts[settings.font].stack} !important;
+      font-family: ${stack}, 'Noto Sans SC', 'Noto Sans TC', serif !important;
       font-size: ${settings.size}px !important;
-      line-height: ${settings.line} !important;
+      line-height: ${settings.showPinyin ? Math.max(settings.line, 2.05) : settings.line} !important;
     }
-    body :is(h1, h2, h3, h4, h5, h6) { font-family: ${fonts[settings.font].stack} !important; line-height: 1.2 !important; }
+    body :is(h1, h2, h3, h4, h5, h6) { font-family: ${stack}, 'Noto Sans SC', 'Noto Sans TC', serif !important; line-height: ${settings.showPinyin ? 2.05 : 1.2} !important; }
     body :is(p, span, a, li, blockquote, div, h1, h2, h3, h4, h5, h6, dd, td) { color: inherit !important; }
     body :is(main, article, section, div, p, span, li, blockquote) { background-color: transparent !important; }
     body :is(p, li, blockquote, dd, td) :is(span, a, strong, em) { font-family: inherit !important; font-size: inherit !important; }
@@ -269,6 +274,7 @@ export async function openEpub({ host, url, position, language, settings, hooks,
     rendition.on('displayError', (error) => renderError?.(error));
     rendition.hooks.content.register((contents) => {
       const doc = contents.document;
+      void doc.fonts?.ready.then(() => hooks.layout?.());
       doc.defaultView.frameElement?.setAttribute('title', 'EPUB page');
       doc.addEventListener('keydown', hooks.keydown);
       doc.addEventListener('click', (event) => {
@@ -408,6 +414,7 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       syncPosition,
       get syncResolution() { return syncResolution; },
       get contents() { return epubContents(book); },
+      readingRoots() { return rendition.getContents().map((contents) => contents.content).filter(Boolean); },
       audioUnit() {
         if (reflowing) return null;
         const index = activeSection;
@@ -443,7 +450,7 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       },
       summaryPage,
       async apply(next) {
-        const reflow = ['size', 'font', 'line'].some((key) => next[key] !== preferences[key]);
+        const reflow = ['size', 'font', 'line', 'showPinyin'].some((key) => next[key] !== preferences[key]);
         const recolor = next.theme !== preferences.theme;
         const target = rendition.currentLocation()?.start?.cfi || rendition.location?.start?.cfi;
         preferences = next;

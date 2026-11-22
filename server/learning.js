@@ -6,7 +6,9 @@ import { execFile } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { textWords } from '../shared/reading-text.js';
 import { RequestError } from './books.js';
-import { extractBook, textChunks, readingSamples } from './book-text.js';
+import { extractBook, readingSamples, languageChunks } from './book-text.js';
+import { narrationOptions, sectionLanguages } from './language-voices.js';
+import { addVocabulary, vocabularySummary } from './vocabulary.js';
 import { bookNarration } from './book-audio.js';
 import { hasUsableTimings, synchronizeChunk } from './audio-timing.js';
 import { uploadedAudio } from './uploaded-audio.js';
@@ -52,9 +54,17 @@ export async function openLearning(dir, library, demo, ai) {
   if (!db.prepare('PRAGMA table_info(chapters)').all().some(({ name }) => name === 'markers')) {
     db.exec("ALTER TABLE chapters ADD COLUMN markers TEXT NOT NULL DEFAULT '[]'; UPDATE analyses SET state='queued',error=NULL WHERE state='ready';");
   }
+  let languageUpgrade = false;
+  for (const [table, name, definition] of [['chapters', 'languages', "TEXT NOT NULL DEFAULT '[]'"],
+    ['chapters', 'metrics', 'TEXT'], ['analyses', 'metrics', 'TEXT']]) {
+    if (!db.prepare(`PRAGMA table_info(${table})`).all().some((column) => column.name === name)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`); languageUpgrade = true;
+    }
+  }
+  if (languageUpgrade) db.exec("UPDATE analyses SET state='queued',error=NULL WHERE state='ready'");
   let config = {
     baseUrl: process.env.READER_KOKORO_URL || '', voice: process.env.READER_KOKORO_VOICE || 'ef_dora',
-    model: 'kokoro', speed: 1, apiKey: process.env.READER_KOKORO_API_KEY || '',
+    model: 'kokoro', speed: 1, apiKey: process.env.READER_KOKORO_API_KEY || '', autoLanguageVoices: true, voicesByLanguage: {},
     ...JSON.parse(db.prepare('SELECT json FROM settings WHERE id=1').get()?.json || '{}'),
   };
   const previewAudio = demo && process.env.READER_DEMO_AUDIO_PREVIEW !== '0';
@@ -113,11 +123,16 @@ export async function openLearning(dir, library, demo, ai) {
     const model = asText(body.model, 120);
     const speed = Number(body.speed);
     const key = asText(body.apiKey, 4096);
+    const voicesByLanguage = body.voicesByLanguage === undefined ? config.voicesByLanguage : body.voicesByLanguage;
+    if (!voicesByLanguage || typeof voicesByLanguage !== 'object' || Array.isArray(voicesByLanguage) || Object.keys(voicesByLanguage).length > 20
+      || Object.entries(voicesByLanguage).some(([language, value]) => !/^[a-z]{2,3}$/u.test(language) || typeof value !== 'string' || value.length > 120 || /[\r\n]/u.test(value))) throw new RequestError(422, 'Enter valid language voice IDs.');
     if (!voice || !model || !Number.isFinite(speed) || speed < .5 || speed > 2 || /[\r\n]/u.test(key)) {
       throw new RequestError(422, 'Choose a voice, model, and speed between 0.5 and 2.');
     }
     const updated = {
       baseUrl, voice, model, speed,
+      autoLanguageVoices: body.autoLanguageVoices === undefined ? config.autoLanguageVoices : body.autoLanguageVoices === true,
+      voicesByLanguage: Object.fromEntries(Object.entries(voicesByLanguage).map(([language, value]) => [language, value.trim()]).filter(([, value]) => value)),
       apiKey: body.clearKey ? '' : key || (baseUrl === config.baseUrl ? config.apiKey : ''),
     };
     db.prepare('INSERT INTO settings VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(JSON.stringify(updated));
@@ -165,11 +180,12 @@ export async function openLearning(dir, library, demo, ai) {
 
   function info(book) {
     ensure(book);
-    const row = db.prepare('SELECT state, lemmas, wordCount, method, error FROM analyses WHERE book=?').get(book.id);
+    const row = db.prepare('SELECT state, lemmas, wordCount, method, error, metrics FROM analyses WHERE book=?').get(book.id);
     const count = row.lemmas ? JSON.parse(row.lemmas).length : null;
     const estimate = db.prepare('SELECT * FROM estimates WHERE book=?').get(book.id);
     const reading = estimate ? { state: estimate.state, error: estimate.error, ...JSON.parse(estimate.json || '{}') } : null;
-    return { state: row.state, lemmaCount: count, wordCount: row.wordCount, reading, method: row.method, error: row.error };
+    return { state: row.state, lemmaCount: count, wordCount: row.wordCount, reading, method: row.method, error: row.error,
+      vocabulary: row.metrics ? JSON.parse(row.metrics) : null };
   }
 
   function chapter(book, key) {
@@ -200,6 +216,7 @@ export async function openLearning(dir, library, demo, ai) {
       tokens: JSON.parse(row.tokens || '[]'), audio: publicAudio(audio), connected: Boolean(audioConfig().baseUrl),
       method: db.prepare('SELECT method FROM analyses WHERE book=?').get(book.id)?.method,
       lemmaCount: JSON.parse(row.lemmas || '[]').length,
+      languages: JSON.parse(row.languages || '[]'), vocabulary: row.metrics ? JSON.parse(row.metrics) : null,
       nextKey: db.prepare('SELECT key FROM chapters WHERE book=? AND ordinal>? ORDER BY ordinal LIMIT 1').get(book.id, row.ordinal)?.key,
     };
   }
@@ -208,8 +225,8 @@ export async function openLearning(dir, library, demo, ai) {
     return {
       analysis: info(book),
       narration: narration(book), rescanAvailable: !demo,
-      chapters: db.prepare('SELECT key, title, lemmas, length(trim(text)) AS characters,has_spoken_text(text) AS spoken FROM chapters WHERE book=? ORDER BY ordinal').all(book.id)
-        .map(({ lemmas, spoken, ...row }) => ({ ...row, narratable: Boolean(spoken) && (!demo || row.characters <= 20000),
+      chapters: db.prepare('SELECT key, title, lemmas,metrics, length(trim(text)) AS characters,has_spoken_text(text) AS spoken FROM chapters WHERE book=? ORDER BY ordinal').all(book.id)
+        .map(({ lemmas, spoken, metrics, ...row }) => ({ ...row, vocabulary: metrics ? JSON.parse(metrics) : null, narratable: Boolean(spoken) && (!demo || row.characters <= 20000),
           lemmaCount: JSON.parse(lemmas || '[]').length, audio: publicAudio(audioRow(book, row.key)) })),
     };
   }
@@ -219,7 +236,7 @@ export async function openLearning(dir, library, demo, ai) {
     const row = chapter(book, key);
     if (!/[\p{L}\p{N}]/u.test(row.text)) throw new RequestError(422, 'This section has no selectable text for narration.');
     if (demo && row.text.length > 20000) throw new RequestError(422, 'Demo narration supports sections of up to 20,000 characters.');
-    const options = { voice: config.voice, model: config.model, speed: config.speed, baseUrl: config.baseUrl };
+    const options = narrationOptions(config, sectionLanguages(db.prepare('SELECT languages FROM chapters WHERE book=?').all(book.id), book.language));
     const candidates = db.prepare('SELECT * FROM audio WHERE book=? AND chapter=? AND digest=? AND options=? ORDER BY created DESC,rowid DESC')
       .all(book.id, key, row.digest, JSON.stringify(options));
     const running = candidates.find((candidate) => ['queued', 'generating', 'aligning'].includes(candidate.state));
@@ -239,29 +256,35 @@ export async function openLearning(dir, library, demo, ai) {
     const stillCurrent = () => db.prepare("SELECT book FROM analyses WHERE book=? AND language=? AND state='running'").get(book.id, row.language);
     if (!stillCurrent()) return;
     const unique = new Set();
+    const vocabularyGroups = new Map(), chinesePassages = [];
     let wordCount = 0;
     let method = 'contextual';
     for (const [ordinal, section] of sections.entries()) {
       const tokens = [];
       const lemmas = new Set();
-      for (const chunk of textChunks(section.text, 95000)) {
-        const result = await languageCall('/analyze', { text: chunk.text, language: book.language });
+      const sectionGroups = new Map(), chinese = [];
+      for (const chunk of languageChunks(section, 95000, book.language)) {
+        const result = await languageCall('/analyze', { text: chunk.text, language: chunk.language });
         if (!stillCurrent()) return;
-        tokens.push(...result.tokens.map((token) => ({ ...token, from: token.from + chunk.from, to: token.to + chunk.from })));
-        for (const lemma of result.lemmas) { unique.add(lemma); lemmas.add(lemma); }
-        if (result.method !== 'contextual') method = result.method;
+        addVocabulary(vocabularyGroups, chunk.language, result); addVocabulary(sectionGroups, chunk.language, result);
+        if (chunk.language === 'zh') { chinese.push(chunk.text); chinesePassages.push(chunk.text); }
+        tokens.push(...result.tokens.map((token) => ({ ...token, language: chunk.language, from: token.from + chunk.from, to: token.to + chunk.from })));
+        if (chunk.language !== 'zh') for (const lemma of result.lemmas) { const identity = `${chunk.language}:${lemma}`; unique.add(identity); lemmas.add(identity); }
+        if (!['contextual', 'characters'].includes(result.method)) method = result.method;
       }
-      wordCount += tokens.length;
-      db.prepare(`INSERT INTO chapters(book,key,ordinal,title,text,digest,tokens,lemmas,markers) VALUES(?,?,?,?,?,?,?,?,?)
+      wordCount += tokens.filter((token) => token.language !== 'zh').length;
+      db.prepare(`INSERT INTO chapters(book,key,ordinal,title,text,digest,tokens,lemmas,markers,languages,metrics) VALUES(?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(book,key) DO UPDATE SET ordinal=excluded.ordinal,title=excluded.title,text=excluded.text,
-        digest=excluded.digest,tokens=excluded.tokens,lemmas=excluded.lemmas,markers=excluded.markers`).run(
+        digest=excluded.digest,tokens=excluded.tokens,lemmas=excluded.lemmas,markers=excluded.markers,languages=excluded.languages,metrics=excluded.metrics`).run(
         book.id, section.key, ordinal, section.title, section.text, hash(section.text), JSON.stringify(tokens), JSON.stringify([...lemmas]),
         JSON.stringify(section.markers || [{ title: section.title, from: 0 }]),
+        JSON.stringify(section.languages || []), JSON.stringify(vocabularySummary(chinese.join('\n'), sectionGroups, book.language)),
       );
     }
     if (!db.prepare('SELECT book FROM analyses WHERE book=? AND language=?').get(book.id, row.language)) return;
-    db.prepare("UPDATE analyses SET state='ready', lemmas=?, wordCount=?, method=? WHERE book=?")
-      .run(JSON.stringify([...unique].sort()), wordCount, method, book.id);
+    const metrics = vocabularySummary(chinesePassages.join('\n'), vocabularyGroups, book.language);
+    db.prepare("UPDATE analyses SET state='ready', lemmas=?, wordCount=?, method=?,metrics=? WHERE book=?")
+      .run(JSON.stringify([...unique].sort()), wordCount, metrics.unit === 'characters' ? 'characters' : method, JSON.stringify(metrics), book.id);
     db.prepare("INSERT INTO estimates(book,state) VALUES(?,'queued') ON CONFLICT(book) DO UPDATE SET state='queued',json=NULL,error=NULL").run(book.id);
   }
 
@@ -269,6 +292,9 @@ export async function openLearning(dir, library, demo, ai) {
     db.prepare("UPDATE estimates SET state='running',error=NULL WHERE book=?").run(row.book);
     const chapters = db.prepare('SELECT text FROM chapters WHERE book=? ORDER BY ordinal').all(row.book);
     const sample = readingSamples(chapters);
+    const metrics = JSON.parse(db.prepare('SELECT metrics FROM analyses WHERE book=?').get(row.book)?.metrics || 'null');
+    if (metrics) sample.vocabulary = { unit: metrics.unit, count: metrics.count, languages: metrics.languages, byLanguage: metrics.byLanguage,
+      ...(metrics.unit === 'characters' ? { characterProfile: { ...metrics.characters, inventory: [...metrics.characters.inventory].slice(0, 3000).join('') } } : {}) };
     if (sample.passages.join('').length < 80) {
       db.prepare("UPDATE estimates SET state='ready',json=? WHERE book=?")
         .run(JSON.stringify({ band: null, text: 'More text is needed to estimate reading demand.' }), row.book);
@@ -294,13 +320,13 @@ export async function openLearning(dir, library, demo, ai) {
     const files = [];
     let offset = 0;
     try {
-      for (const [index, chunk] of textChunks(row.text, 1800).entries()) {
+      for (const [index, chunk] of languageChunks(row, 1800, language).entries()) {
         if (!db.prepare('SELECT id FROM audio WHERE id=?').get(job.id)) return;
         const chunkWords = words.map((word, tokenIndex) => ({ ...word, tokenIndex })).filter((word) => word.from >= chunk.from && word.from < chunk.to);
         if (!chunkWords.length) continue;
         db.prepare("UPDATE audio SET state='generating' WHERE id=?").run(job.id);
         const response = await kokoro('/audio/speech', {
-          model: captured.model, voice: captured.voice, speed: captured.speed, input: chunk.text,
+          model: captured.model, voice: options.voiceMap?.[chunk.language] || captured.voice, speed: captured.speed, input: chunk.text,
           response_format: 'wav', stream: false,
         }, captured);
         const data = Buffer.from(await response.arrayBuffer());
@@ -315,7 +341,7 @@ export async function openLearning(dir, library, demo, ai) {
         db.prepare("UPDATE audio SET state='aligning' WHERE id=?").run(job.id);
         const aligned = await languageCall('/align', {
           audio: (await readFile(wav)).toString('base64'), words: chunkWords.map((word) => word.word),
-          language,
+          language: chunk.language,
         });
         for (const stamp of synchronizeChunk(chunkWords, aligned.timings, duration)) {
           if (stamp.start == null) continue;

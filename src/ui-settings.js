@@ -113,6 +113,7 @@ export function settingsDialog({ preferences, apply }) {
     fields.autoHideDocks.checked = current.autoHideDocks;
     fields.pdfNight.checked = current.pdfNight;
     fields.synonymContextHelp.checked = current.synonymContextHelp;
+    fields.showPinyin.checked = current.showPinyin;
     fields.audioEnabled.checked = current.audioEnabled;
     fields.audioToolbarHidden.checked = current.audioToolbarHidden;
     fields.podcastMode.checked = current.podcastMode;
@@ -230,6 +231,7 @@ export function settingsDialog({ preferences, apply }) {
     const updated = {
       mode: fields.mode.value, summaryLanguage, translationLanguage, theme: fields.theme.value,
       synonymContextHelp: fields.synonymContextHelp.checked,
+      showPinyin: fields.showPinyin.checked,
       audioEnabled: fields.audioEnabled.checked, audioToolbarHidden: fields.audioToolbarHidden.checked,
       audioRecordings: preferences().audioRecordings || {},
       podcastMode: fields.podcastMode.checked, audioHighlight: fields.audioHighlight.checked,
