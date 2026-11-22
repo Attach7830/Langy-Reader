@@ -18,7 +18,8 @@ export function vocabularyLibrary({ changed = () => {} } = {}) {
       showKnown(result);
       $('#vocabulary-entries').replaceChildren(...result.entries.map((item) => {
         const row = element('tr');
-        for (const text of [item.term, language(item.language), item.unit, (item.exposures ?? 1).toLocaleString(), item.likelyKnown ? 'Likely known' : 'Below threshold', new Date(item.lastSeen).toLocaleDateString()]) row.append(element('td', '', text));
+        const source = item.completionExposures ? `${(item.trackedExposures || 0).toLocaleString()} tracked · ${item.completionExposures.toLocaleString()} from read books` : 'Tracked reading';
+        for (const text of [item.term, language(item.language), item.unit, (item.exposures ?? 1).toLocaleString(), source, item.likelyKnown ? 'Likely known' : 'Below threshold', new Date(item.lastSeen).toLocaleDateString()]) row.append(element('td', '', text));
         return row;
       }));
       $('#vocabulary-page').textContent = result.total ? `${offset + 1}–${offset + result.entries.length} of ${result.total} entries` : 'No matching vocabulary recorded yet.';
@@ -53,7 +54,7 @@ export function vocabularyLibrary({ changed = () => {} } = {}) {
   return {
     update(summary) {
       const rows = summary?.byLanguage || [];
-      $('#vocabulary-summary').textContent = rows.length ? 'Seen: ' + rows.map((item) => `${item.count.toLocaleString()} ${language(item.language)} ${item.unit}`).join(' · ') : 'Your vocabulary catalogue grows from the pages you read.';
+      $('#vocabulary-summary').textContent = rows.length ? 'Seen: ' + rows.map((item) => `${item.count.toLocaleString()} ${language(item.language)} ${item.unit}`).join(' · ') : 'Your vocabulary catalogue grows from reading and books marked read.';
       showKnown(summary);
       const select = $('#vocabulary-language'), value = select.value;
       select.replaceChildren(new Option('All languages', ''), ...[...new Set(rows.map((item) => item.language))].map((code) => new Option(language(code), code)));

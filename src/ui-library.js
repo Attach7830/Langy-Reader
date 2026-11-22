@@ -139,11 +139,13 @@ export function libraryScreen({ progress, onRemove }) {
     $('#library-title').textContent = current?.name || (category === 'uncategorized' ? 'Uncategorized' : 'Your library');
     $('#library-description').textContent = category === 'all'
       ? 'Read your EPUBs and PDFs with language help on hand.'
-      : current ? 'Books in this category.' : 'Books without a category.';
+      : current?.language ? `${languageName(current.language)} folder · Books added here inherit this language.` : current ? 'Books in this category.' : 'Books without a category.';
     $('#demo-note').hidden = !snapshot.demo;
     const categoryRows = snapshot.categories.map((entry) => {
       const row = element('div', 'category-row');
-      row.append(categoryButton(entry.id, entry.name, snapshot.books.filter((book) => book.categoryId === entry.id).length, 'folder'));
+      const button = categoryButton(entry.id, entry.name, snapshot.books.filter((book) => book.categoryId === entry.id).length, 'folder');
+      if (entry.language) button.title = `${languageName(entry.language)} language folder`;
+      row.append(button);
       if (!snapshot.demo || entry.id !== 'spanish') row.append(editButton(`Edit category ${entry.name}`, () => showCategory(entry)));
       return row;
     });
@@ -435,7 +437,7 @@ export function libraryScreen({ progress, onRemove }) {
     $('#archive-book-fields').hidden = true;
     message('#book-import-progress');
     $('#file-limit').textContent = `Maximum ${snapshot.maxUpload / 1024 ** 2} MiB`;
-    const choices = [new Option('Uncategorized', ''), ...snapshot.categories.map(({ id, name }) => new Option(name, id))];
+    const choices = [new Option('Uncategorized', ''), ...snapshot.categories.map(({ id, name, language }) => new Option(language ? `${name} · ${languageName(language)}` : name, id))];
     $('#book-categories').replaceChildren(...choices);
     const fields = bookForm.elements;
     fields.title.value = book?.title ?? '';
@@ -446,7 +448,18 @@ export function libraryScreen({ progress, onRemove }) {
     languagePicker.set(book?.languages);
     $('#book-language-note').hidden = isEdit;
     fields.categoryId.value = book?.categoryId ?? (['all', 'uncategorized'].includes(category) ? '' : category);
+    showFolderLanguage();
     bookDialog.showModal();
+  }
+
+  function showFolderLanguage() {
+    const language = snapshot.categories.find((entry) => entry.id === bookForm.elements.categoryId.value)?.language;
+    const input = bookForm.elements.language;
+    input.readOnly = Boolean(language);
+    input.required = Boolean(editingBook) && !language;
+    if (language) input.value = language;
+    $('#book-folder-language-note').hidden = !language;
+    $('#book-folder-language-note').textContent = language ? `This folder sets the primary language to ${languageName(language)}. Other explicitly selected book languages are kept.` : '';
   }
 
   function showCategory(existing) {
@@ -454,6 +467,7 @@ export function libraryScreen({ progress, onRemove }) {
     $('#category-dialog-title').textContent = existing ? 'Edit category' : 'New category';
     $('#remove-category').hidden = !existing;
     categoryForm.elements.name.value = existing?.name ?? '';
+    categoryForm.elements.language.value = existing?.language ?? '';
     message('#category-error');
     categoryDialog.showModal();
     categoryForm.elements.name.focus();
@@ -473,6 +487,7 @@ export function libraryScreen({ progress, onRemove }) {
   $('#reading-filter').addEventListener('change', render);
   $('#book-sort').addEventListener('change', render);
   $('#book-status-filter').addEventListener('change', render);
+  $('#book-categories').addEventListener('change', showFolderLanguage);
   $('#book-file').addEventListener('change', (event) => stageFile(event.target.files[0]));
   $('#file-field').addEventListener('dragover', (event) => {
     event.preventDefault();
@@ -554,10 +569,12 @@ export function libraryScreen({ progress, onRemove }) {
   categoryForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (categoryPending) return;
+    const rawLanguage = categoryForm.elements.language.value.trim(), language = parseLanguage(rawLanguage);
+    if (rawLanguage && !language) return message('#category-error', 'Choose a language or enter a valid language code.');
     categoryPending = true;
     try {
       const path = editingCategory ? `/api/categories/${editingCategory.id}` : '/api/categories';
-      const saved = await api(path, { method: editingCategory ? 'PATCH' : 'POST', body: { name: categoryForm.elements.name.value } });
+      const saved = await api(path, { method: editingCategory ? 'PATCH' : 'POST', body: { name: categoryForm.elements.name.value, language } });
       categoryDialog.close();
       category = saved.id;
       search.value = '';

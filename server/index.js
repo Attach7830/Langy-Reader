@@ -120,6 +120,7 @@ app.get('/api/settings/opds', (_, res) => res.json({
 app.get('/api/storage', async (req, res) => res.json(await library.storage(req.visitor)));
 app.get('/api/library', async (req, res) => {
   const snapshot = library.snapshot(req.visitor);
+  const books = snapshot.books.map((book) => ({ ...book, learning: learning.info(library.getBook(book.id, req.visitor)) }));
   const reader = learning.vocabulary.profile(req.visitor);
   res.json({
     ...snapshot,
@@ -127,7 +128,7 @@ app.get('/api/library', async (req, res) => {
     storage: await library.storage(req.visitor),
     archive: { available: !demo, hasKey: archive.settings().hasKey, job: demo ? null : archive.latest() },
     vocabulary: { byLanguage: reader.byLanguage, likelyKnown: reader.knownByLanguage, threshold: reader.threshold },
-    books: snapshot.books.map((book) => ({ ...book, learning: learning.info(library.getBook(book.id, req.visitor)), familiarity: learning.vocabulary.familiarity(book, reader) })),
+    books: books.map((book) => ({ ...book, familiarity: learning.vocabulary.familiarity(book, reader) })),
   });
 });
 app.get('/api/vocabulary', (req, res) => res.json(learning.vocabulary.catalogue(req.visitor, req.query)));
@@ -148,8 +149,13 @@ app.get('/api/books/:id/recommendations', (req, res) => {
   const reader = learning.vocabulary.profile(req.visitor);
   res.json({ books: learning.vocabulary.recommendations(book, library.snapshot(req.visitor).books, reader) });
 });
-app.post('/api/categories', (req, res) => res.status(201).json(library.saveCategory(randomUUID(), req.body ?? {}, true, req.visitor)));
-app.patch('/api/categories/:id', (req, res) => res.json(library.saveCategory(req.params.id, req.body ?? {}, false, req.visitor)));
+function saveCategory(req, res, isNew) {
+  const category = library.saveCategory(isNew ? randomUUID() : req.params.id, req.body ?? {}, isNew, req.visitor);
+  for (const book of library.snapshot(req.visitor).books.filter((item) => item.categoryId === category.id)) learning.ensure(library.getBook(book.id, req.visitor));
+  res.status(isNew ? 201 : 200).json(category);
+}
+app.post('/api/categories', (req, res) => saveCategory(req, res, true));
+app.patch('/api/categories/:id', (req, res) => saveCategory(req, res, false));
 app.delete('/api/categories/:id', (req, res) => {
   library.removeCategory(req.params.id, req.visitor);
   res.sendStatus(204);
@@ -170,7 +176,12 @@ app.patch('/api/books/:id', (req, res) => {
   learning.ensure(library.getBook(book.id, req.visitor));
   res.json(book);
 });
-app.patch('/api/books/:id/read-status', (req, res) => res.json(library.setReadStatus(req.params.id, req.body ?? {}, req.visitor)));
+app.patch('/api/books/:id/read-status', (req, res) => {
+  const status = library.setReadStatus(req.params.id, req.body ?? {}, req.visitor);
+  if (status.readAt) learning.ensure(library.getBook(status.id, req.visitor));
+  learning.vocabulary.syncCompletions(req.visitor);
+  res.json(status);
+});
 app.delete('/api/books/:id', async (req, res) => {
   await library.removeBook(req.params.id, req.visitor);
   await learning.remove(req.params.id);

@@ -364,6 +364,7 @@
           <label class="field">Category <select name="categoryId" id="book-categories"></select></label>
         </div>
         <p class="field-note" id="book-language-note">EPUBs use their metadata when available. Otherwise the default is Spanish.</p>
+        <p class="field-note" id="book-folder-language-note" hidden></p>
         <label class="checkbox-row"><input id="book-language-limit" type="checkbox"> Choose the languages contained in this book</label>
         <div class="form-stack" id="book-language-selection" hidden>
           <label class="field">Add a language <input id="book-language-choice" list="languages" maxlength="70" placeholder="For example, Mandarin or English" autocomplete="off"></label>
@@ -382,7 +383,7 @@
   <dialog class="modal" id="vocabulary-dialog" aria-labelledby="vocabulary-title">
     <header class="modal-header"><h2 id="vocabulary-title">Reading vocabulary</h2><button class="icon-button" type="button" data-close aria-label="Close vocabulary"><i data-lucide="x"></i></button></header>
     <div class="modal-body">
-      <p class="field-note">Collected from text displayed while you read. These are exposure records, not a test of mastery. Mandarin characters and each language’s lemmas remain separate. Earlier reading is not guessed from saved progress.</p>
+      <p class="field-note">Includes tracked reading and books marked read. Marking a book read adds inferred exposures for one full reading, filling only the parts not already tracked. Marking it unread removes those inferred exposures and keeps tracked reading. Mandarin characters and each language’s lemmas remain separate.</p>
       <form id="vocabulary-threshold-form" class="form-grid">
         <label class="field">Exposures before likely known <input id="vocabulary-threshold" type="number" min="1" max="10000" step="1" value="20" required></label>
         <button class="button secondary small" id="save-vocabulary-threshold" type="submit">Save threshold</button>
@@ -390,7 +391,7 @@
       <p class="field-note">Each word occurrence counts once per reading session. Page redraws do not add exposures; reopening a book to reread it starts a new session. The default of 20 is adjustable and is not a validated mastery cutoff.</p>
       <p id="vocabulary-known-detail" role="status"></p>
       <div class="form-grid"><label class="field">Language <select id="vocabulary-language"><option value="">All languages</option></select></label><label class="field">Find a lemma or character <input id="vocabulary-search" type="search" maxlength="100"></label></div>
-      <div class="table-scroll"><table class="vocabulary-table"><thead><tr><th>Lemma / character</th><th>Language</th><th>Unit</th><th>Exposures</th><th>Estimate</th><th>Last seen</th></tr></thead><tbody id="vocabulary-entries"></tbody></table></div>
+      <div class="table-scroll"><table class="vocabulary-table"><thead><tr><th>Lemma / character</th><th>Language</th><th>Unit</th><th>Exposures</th><th>Source</th><th>Estimate</th><th>Last seen</th></tr></thead><tbody id="vocabulary-entries"></tbody></table></div>
       <p id="vocabulary-page" role="status"></p><p class="form-error" id="vocabulary-error" role="alert" hidden></p>
     </div>
     <footer class="modal-footer"><button class="button quiet" id="vocabulary-previous" type="button">Previous</button><button class="button secondary" id="vocabulary-next" type="button">Next</button><button class="button quiet" type="button" data-close>Close</button></footer>
@@ -449,6 +450,8 @@
       <header class="modal-header"><h2 id="category-dialog-title">New category</h2><button class="icon-button" type="button" aria-label="Close category editor" data-close><i data-lucide="x"></i></button></header>
       <div class="modal-body">
         <label class="field">Name <input name="name" maxlength="70" required></label>
+        <label class="field">Folder language <input name="language" list="languages" maxlength="70" placeholder="None" autocomplete="off"></label>
+        <p class="field-note">Optional. Sets the primary language for existing books and books imported or moved here. Explicitly selected additional languages are kept. Clearing this field stops automatic assignment and keeps the books’ current languages.</p>
         <p class="form-error" id="category-error" role="alert" hidden></p>
       </div>
       <footer class="modal-footer"><button class="button danger" id="remove-category" type="button" hidden>Remove category</button><button class="button quiet" type="button" data-close>Cancel</button><button class="button primary" type="submit">Save category</button></footer>

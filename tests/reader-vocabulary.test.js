@@ -8,9 +8,15 @@ function fixture(t) {
   const db = new DatabaseSync(':memory:'); t.after(() => db.close());
   db.exec(`CREATE TABLE analyses(book TEXT PRIMARY KEY,state TEXT,metrics TEXT,lemmas TEXT);
     CREATE TABLE chapters(book TEXT,key TEXT,text TEXT,digest TEXT,tokens TEXT,PRIMARY KEY(book,key));`);
-  const vocabulary = readerVocabulary(db);
+  const completed = new Map();
+  const completedBooks = (visitor) => [...(completed.get(visitor?.id || '')?.values() || [])];
+  const vocabulary = readerVocabulary(db, { completedBooks });
   function book(id, title, text, words) {
-    const tokens = words.map(([word, lemma, language, properName = false]) => ({ word, lemma, language, properName, from: text.indexOf(word), to: text.indexOf(word) + word.length }));
+    let cursor = 0;
+    const tokens = words.map(([word, lemma, language, properName = false]) => {
+      const from = text.indexOf(word, cursor); assert.ok(from >= 0); cursor = from + word.length;
+      return { word, lemma, language, properName, from, to: cursor };
+    });
     const chinese = [...new Set(tokens.filter((token) => token.language === 'zh').map((token) => token.word))].join('');
     const groups = new Map();
     for (const token of tokens) {
@@ -28,7 +34,13 @@ function fixture(t) {
   function record(item, terms, visitor, session) {
     return vocabulary.record(item, { key: 'epub:0', digest: item.digest, ranges: item.tokens.filter((token) => terms.includes(token.word)).map(({ from, to }) => ({ from, to })), ...(session ? { session } : {}) }, visitor);
   }
-  return { db, vocabulary, book, record };
+  function mark(item, read = true, visitor) {
+    const owner = visitor?.id || '';
+    if (!completed.has(owner)) completed.set(owner, new Map());
+    if (read) completed.get(owner).set(item.id, { ...item, readAt: 1000, expires: visitor?.expires ?? null });
+    else completed.get(owner).delete(item.id);
+  }
+  return { db, vocabulary, book, record, mark, completedBooks };
 }
 
 test('only displayed words enter the catalogue; inflections merge and language/character inventories remain separate', (t) => {
@@ -134,4 +146,105 @@ test('existing saved ranges backfill occurrence counts without inflating overlap
   assert.equal(catalogue.entries.find((row) => row.term === 'hablar').exposures, 2);
   assert.equal(catalogue.entries.find((row) => row.term === '中').exposures, 1);
   assert.equal(catalogue.threshold, 20);
+});
+
+test('books marked read contribute all occurrences, preserve language units and use the saved likely-known threshold', (t) => {
+  const f = fixture(t);
+  const source = f.book('completed', 'Completed', 'Hablo hablaron hablaré libros 看看看 read Teresa', [
+    ['Hablo', 'hablar', 'es'], ['hablaron', 'hablar', 'es'], ['hablaré', 'hablar', 'es'], ['libros', 'libro', 'es'],
+    ['看看看', '看看看', 'zh'], ['read', 'read', 'en'], ['Teresa', 'teresa', 'es', true],
+  ]);
+  f.vocabulary.savePreferences({ threshold: 3 }); f.mark(source);
+  let result = f.vocabulary.catalogue();
+  assert.deepEqual(result.byLanguage, [{ language: 'en', unit: 'lemmas', count: 1 }, { language: 'es', unit: 'lemmas', count: 2 }, { language: 'zh', unit: 'characters', count: 1 }]);
+  assert.deepEqual(result.entries.map(({ term, exposures, trackedExposures, completionExposures, likelyKnown }) =>
+    ({ term, exposures, trackedExposures, completionExposures, likelyKnown })).sort((a, b) => a.term.localeCompare(b.term)), [
+    { term: 'hablar', exposures: 3, trackedExposures: 0, completionExposures: 3, likelyKnown: true },
+    { term: 'libro', exposures: 1, trackedExposures: 0, completionExposures: 1, likelyKnown: false },
+    { term: 'read', exposures: 1, trackedExposures: 0, completionExposures: 1, likelyKnown: false },
+    { term: '看', exposures: 3, trackedExposures: 0, completionExposures: 3, likelyKnown: true },
+  ]);
+  f.mark(source); assert.deepEqual(f.vocabulary.catalogue(), result, 'repeated marking and requests are idempotent');
+  assert.equal(f.db.prepare('SELECT count(*) AS n FROM reading_exposures').get().n, 0, 'completion does not fabricate tracked pages');
+  assert.equal(f.vocabulary.catalogue(undefined, { language: 'zh', search: '看' }).total, 1);
+  assert.equal(f.vocabulary.familiarity(source, f.vocabulary.profile()).byLanguage.find((item) => item.language === 'es').unfamiliar, 0);
+  f.mark(source, false);
+  assert.equal(f.vocabulary.catalogue().total, 0);
+});
+
+test('completion fills only untracked positions, retains rereading and reverses without erasing monitored reading', (t) => {
+  const f = fixture(t), source = f.book('overlap', 'Overlap', 'Hablo hablaron hablaré libros 看看看', [
+    ['Hablo', 'hablar', 'es'], ['hablaron', 'hablar', 'es'], ['hablaré', 'hablar', 'es'], ['libros', 'libro', 'es'], ['看看看', '看看看', 'zh'],
+  ]);
+  f.record(source, ['Hablo', '看看看'], undefined, 'pass-one');
+  f.record(source, ['Hablo'], undefined, 'pass-two');
+  f.mark(source);
+  const row = () => f.vocabulary.catalogue().entries.find((entry) => entry.term === 'hablar');
+  assert.equal(row().exposures, 4); assert.equal(row().trackedExposures, 2); assert.equal(row().completionExposures, 2);
+  assert.equal(f.vocabulary.catalogue().entries.find((entry) => entry.term === '看').exposures, 3, 'individual repeated Han characters are distinct source positions');
+  f.record(source, ['hablaron', 'hablaré'], undefined, 'pass-one');
+  assert.equal(row().exposures, 4, 'tracking a previously inferred position replaces its inferred contribution');
+  assert.equal(row().completionExposures, 0);
+  f.vocabulary.reindex(source); assert.equal(row().exposures, 4);
+  f.mark(source, false);
+  assert.equal(row().exposures, 4);
+  assert.equal(f.vocabulary.catalogue().entries.some((entry) => entry.term === 'libro'), false);
+  f.mark(source); f.mark(source, false);
+  assert.equal(row().exposures, 4);
+});
+
+test('pending completed books count after analysis, and reanalysis corrects their language and term frequencies', (t) => {
+  const f = fixture(t);
+  let source = f.book('pending', 'Pending', 'read read books', [['read', 'read', 'de'], ['read', 'read', 'de'], ['books', 'book', 'de']]);
+  f.db.prepare("UPDATE analyses SET state='queued' WHERE book=?").run(source.id);
+  f.mark(source);
+  assert.equal(f.vocabulary.catalogue().total, 0);
+  f.db.prepare("UPDATE analyses SET state='ready' WHERE book=?").run(source.id);
+  f.vocabulary.reindex(source);
+  assert.equal(f.vocabulary.catalogue().entries.find((entry) => entry.term === 'read').exposures, 2);
+  source = f.book('pending', 'Pending', 'read read books', [['read', 'read', 'en'], ['read', 'read', 'en'], ['books', 'book', 'en']]);
+  f.mark(source); f.vocabulary.reindex(source);
+  assert.deepEqual(f.vocabulary.catalogue().byLanguage, [{ language: 'en', unit: 'lemmas', count: 2 }]);
+  const tokens = JSON.parse(f.db.prepare('SELECT tokens FROM chapters WHERE book=?').get(source.id).tokens);
+  f.db.prepare('UPDATE chapters SET tokens=? WHERE book=?').run(JSON.stringify(tokens.slice(1)), source.id);
+  f.vocabulary.reindex(source);
+  assert.equal(f.vocabulary.catalogue().entries.find((entry) => entry.term === 'read').exposures, 1, 'reanalyzing token positions refreshes frequencies even when inventory and source text match');
+});
+
+test('completed books backfill after upgrade, remain private and expire with their demo owner', (t) => {
+  const f = fixture(t), a = { id: 'a', expires: Date.now() + 60000 }, b = { id: 'b', expires: Date.now() + 60000 };
+  const source = f.book('sample', 'Sample', 'pie books', [['pie', 'pie', 'en'], ['books', 'book', 'en']]);
+  f.mark(source, true, a);
+  const reopened = readerVocabulary(f.db, { completedBooks: f.completedBooks });
+  assert.equal(reopened.catalogue(a).total, 2);
+  assert.equal(reopened.catalogue(b).total, 0); assert.equal(reopened.catalogue().total, 0);
+  f.record(source, ['books'], b, 'one');
+  f.mark(source, false, a);
+  assert.equal(reopened.catalogue(a).total, 0); assert.equal(reopened.catalogue(b).total, 1);
+  f.mark(source, true, { ...a, expires: 1 });
+  assert.equal(reopened.catalogue(a).total, 0);
+  assert.equal(f.db.prepare('SELECT count(*) AS n FROM vocabulary_completed_terms WHERE owner=?').get(a.id).n, 0);
+});
+
+test('one full reading includes repeated source positions in different chapters', (t) => {
+  const f = fixture(t), source = f.book('chapters', 'Chapters', 'books', [['books', 'book', 'en']]);
+  f.db.prepare('INSERT INTO chapters SELECT book,?,text,digest,tokens FROM chapters WHERE book=? AND key=?').run('epub:1', source.id, 'epub:0');
+  f.record(source, ['books'], undefined, 'one'); f.mark(source);
+  const entry = f.vocabulary.catalogue().entries[0];
+  assert.equal(entry.exposures, 2); assert.equal(entry.completionExposures, 1);
+  const other = f.book('another', 'Another', 'books', [['books', 'book', 'en']]);
+  f.mark(other);
+  assert.equal(f.vocabulary.catalogue().entries[0].exposures, 3, 'another completed book adds its own occurrences');
+});
+
+test('the completion upgrade rebuilds legacy Han token positions so further reading cannot inflate them', (t) => {
+  const f = fixture(t), source = f.book('han', 'Han', '看看', [['看看', '看看', 'zh']]);
+  f.record(source, ['看看'], undefined, 'same-pass');
+  f.db.exec('DELETE FROM vocabulary_occurrences; DROP TABLE vocabulary_completed_terms; DROP TABLE vocabulary_completions;');
+  f.db.prepare('INSERT INTO vocabulary_occurrences VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run('', source.id, 'epub:0', source.digest, 'same-pass', 'zh', 'characters', '看', 0, 2, 1000, 1000, null);
+  const migrated = readerVocabulary(f.db, { completedBooks: f.completedBooks });
+  assert.equal(migrated.catalogue().entries[0].exposures, 2);
+  migrated.record(source, { key: 'epub:0', digest: source.digest, session: 'same-pass', ranges: [{ from: 0, to: 2 }] });
+  assert.equal(migrated.catalogue().entries[0].exposures, 2);
 });

@@ -160,12 +160,15 @@ export async function openLibrary(dir, limits = null) {
   if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'languages')) {
     db.exec("ALTER TABLE books ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'");
   }
+  if (!db.prepare('PRAGMA table_info(categories)').all().some(({ name }) => name === 'language')) {
+    db.exec('ALTER TABLE categories ADD COLUMN language TEXT');
+  }
   if (db.prepare('PRAGMA user_version').get().user_version === 0) {
     const sample = await sampleBook();
     await writeFile(join(folder, 'sample.epub'), sample);
     db.exec('BEGIN');
     try {
-      db.prepare('INSERT INTO categories VALUES (?, ?, ?, ?)').run('spanish', 'Spanish', shared, null);
+      db.prepare('INSERT INTO categories(id,name,owner,expires) VALUES (?, ?, ?, ?)').run('spanish', 'Spanish', shared, null);
       db.prepare('INSERT INTO books VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
         'sample', 'El café de la esquina', '', 'es', 'epub', 'spanish', null, Date.now(), shared, null, sample.byteLength,
         Date.now(), '[]',
@@ -183,7 +186,7 @@ export async function openLibrary(dir, limits = null) {
   const categoryScope = limits ? "(owner = ? OR id = 'spanish')" : 'owner = ?';
   const editable = (visitor) => visitor?.id ?? shared;
   const publicBook = ({ owner, expires, bytes, ...book }) => ({ ...book, languages: typeof book.languages === 'string' ? JSON.parse(book.languages) : book.languages });
-  const publicCategory = ({ id, name }) => ({ id, name });
+  const publicCategory = ({ id, name, language = null }) => ({ id, name, language });
   const readAt = (id, visitor) => db.prepare('SELECT readAt FROM book_read_status WHERE book=? AND owner=? AND (expires IS NULL OR expires>?)')
     .get(id, editable(visitor), Date.now())?.readAt ?? null;
 
@@ -210,11 +213,26 @@ export async function openLibrary(dir, limits = null) {
     return name;
   }
 
+  function folderAssignment(value, language, languages, visitor) {
+    const id = categoryId(value, visitor);
+    const folderLanguage = id ? db.prepare('SELECT language FROM categories WHERE id=?').get(id)?.language : null;
+    if (!folderLanguage) return { categoryId: id, language, languages };
+    const contained = [folderLanguage, ...languages.filter((code) => baseLanguage(code) !== baseLanguage(folderLanguage))];
+    if (contained.length > 20) throw new RequestError(422, 'Remove a selected book language before adding this folder’s language.');
+    return { categoryId: id, language: folderLanguage, languages: contained };
+  }
+
   function filePath(book) { return join(folder, `${book.id}.${book.format}`); }
   function coverPath(book) { return join(folder, `${book.id}.cover`); }
 
   return {
     uploads, getBook, filePath, coverPath, instanceId,
+    readBooks(visitor) {
+      return db.prepare(`SELECT b.id,b.language,r.readAt,r.expires FROM book_read_status r JOIN books b ON b.id=r.book
+        WHERE r.owner=? AND (r.expires IS NULL OR r.expires>?) AND (b.expires IS NULL OR b.expires>?)
+          AND ${limits ? "(b.owner=? OR b.id='sample')" : 'b.owner=?'}`)
+        .all(editable(visitor), Date.now(), Date.now(), editable(visitor));
+    },
     async storage(visitor) {
       if (limits) {
         const { usedBytes } = db.prepare('SELECT coalesce(sum(bytes), 0) AS usedBytes FROM books WHERE owner = ? AND expires > ?')
@@ -243,24 +261,37 @@ export async function openLibrary(dir, limits = null) {
       return {
         demo: Boolean(limits), maxUpload: limits?.upload ?? maxUpload,
         updatedAt: Number(db.prepare("SELECT value FROM library_meta WHERE key = 'updatedAt'").get().value),
-        categories: db.prepare(`SELECT id, name FROM categories WHERE ${categoryScope} ORDER BY name COLLATE NOCASE`).all(owner),
+        categories: db.prepare(`SELECT id, name, language FROM categories WHERE ${categoryScope} ORDER BY name COLLATE NOCASE`).all(owner),
         books: db.prepare(`SELECT * FROM books WHERE ${bookScope} ORDER BY addedAt DESC, id`).all(owner)
           .map((book) => publicBook({ ...book, readAt: statuses.get(book.id) ?? null })),
       };
     },
     saveCategory(id, body, isNew, visitor) {
       const owner = editable(visitor);
+      const previous = isNew ? null : db.prepare('SELECT language FROM categories WHERE id=? AND owner=?').get(id, owner);
+      if (!isNew && !previous) throw new RequestError(404, 'Category not found.');
       const name = categoryName(body.name, id, visitor);
+      if (body.language != null && typeof body.language !== 'string') throw new RequestError(422, 'Choose a valid folder language.');
+      const language = body.language === undefined ? previous?.language ?? null : normalizeLanguage(body.language) || null;
+      if (typeof body.language === 'string' && body.language.trim() && !language) throw new RequestError(422, 'Choose a valid folder language.');
       if (isNew) {
         if (limits && db.prepare('SELECT count(*) AS count FROM categories WHERE owner = ?').get(owner).count >= 25) {
           throw new RequestError(422, 'A demo session can have up to 25 categories.');
         }
-        db.prepare('INSERT INTO categories VALUES (?, ?, ?, ?)').run(id, name, owner, visitor?.expires ?? null);
-      } else if (!db.prepare('UPDATE categories SET name = ? WHERE id = ? AND owner = ?').run(name, id, owner).changes) {
-        throw new RequestError(404, 'Category not found.');
       }
-      touch();
-      return publicCategory({ id, name });
+      db.exec('BEGIN');
+      try {
+        if (isNew) db.prepare('INSERT INTO categories(id,name,owner,expires,language) VALUES(?,?,?,?,?)').run(id, name, owner, visitor?.expires ?? null, language);
+        else db.prepare('UPDATE categories SET name=?,language=? WHERE id=? AND owner=?').run(name, language, id, owner);
+        if (language) for (const book of db.prepare('SELECT id,language,languages FROM books WHERE categoryId=? AND owner=?').all(id, owner)) {
+          const assignment = folderAssignment(id, book.language, JSON.parse(book.languages), visitor);
+          const contained = JSON.stringify(assignment.languages);
+          if (book.language !== assignment.language || book.languages !== contained) db.prepare('UPDATE books SET language=?,languages=?,updatedAt=? WHERE id=?')
+            .run(assignment.language, contained, Date.now(), book.id);
+        }
+        touch(); db.exec('COMMIT');
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+      return publicCategory({ id, name, language });
     },
     removeCategory(id, visitor) {
       if (!db.prepare('DELETE FROM categories WHERE id = ? AND owner = ?').run(id, editable(visitor)).changes) {
@@ -300,9 +331,10 @@ export async function openLibrary(dir, limits = null) {
           const { used } = db.prepare('SELECT coalesce(sum(bytes), 0) AS used FROM books WHERE expires > ?').get(Date.now());
           if (used + file.size > limits.storage) throw new RequestError(507, 'Demo storage is full. Try later.');
         }
+        const assignment = folderAssignment(body.categoryId, language, languages, visitor);
         db.prepare('INSERT INTO books VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
-          id, title, author, language, format, categoryId(body.categoryId, visitor),
-          metadata.thumbnail ? metadata.thumbnailType : null, Date.now(), owner, visitor?.expires ?? null, file.size, Date.now(), JSON.stringify(languages),
+          id, title, author, assignment.language, format, assignment.categoryId,
+          metadata.thumbnail ? metadata.thumbnailType : null, Date.now(), owner, visitor?.expires ?? null, file.size, Date.now(), JSON.stringify(assignment.languages),
         );
         saved = true;
         touch();
@@ -321,8 +353,9 @@ export async function openLibrary(dir, limits = null) {
       const requestedLanguage = normalizeLanguage(body.language);
       if (!title || !requestedLanguage) throw new RequestError(422, 'Enter a title and a valid language code.');
       const language = primaryLanguage(requestedLanguage, languages);
+      const assignment = folderAssignment(body.categoryId, language, languages, visitor);
       db.prepare('UPDATE books SET title = ?, author = ?, language = ?, categoryId = ?, updatedAt = ?, languages = ? WHERE id = ?')
-        .run(title, asText(body.author, 200), language, categoryId(body.categoryId, visitor), Date.now(), JSON.stringify(languages), id);
+        .run(title, asText(body.author, 200), assignment.language, assignment.categoryId, Date.now(), JSON.stringify(assignment.languages), id);
       touch();
       return publicBook(getBook(id, visitor));
     },

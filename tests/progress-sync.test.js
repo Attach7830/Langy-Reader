@@ -246,9 +246,17 @@ test('book language choices persist through the authenticated API and vocabulary
   base = await f.start();
   assert.deepEqual(await response(base, '/api/vocabulary/settings', { headers: json }), { threshold: 3 });
   assert.deepEqual((await response(base, '/api/library', { headers: json })).books.find((book) => book.id === 'sync-book').languages, ['zh-Hant', 'en']);
+  assert.equal((await fetch(base + '/api/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"name":"Private","language":"pt"}' })).status, 401);
+  const folder = await response(base, '/api/categories', { method: 'POST', status: 201, headers: json, body: '{"name":"Bilingual folder","language":"en"}' });
+  const moved = await response(base, '/api/books/sync-book', { method: 'PATCH', headers: json, body: JSON.stringify({ ...body, categoryId: folder.id }) });
+  assert.equal(moved.language, 'en'); assert.deepEqual(moved.languages, ['en', 'zh-Hant']);
+  await response(base, '/api/categories/' + folder.id, { method: 'PATCH', headers: json, body: '{"name":"Portuguese folder","language":"pt"}' });
+  const assigned = (await response(base, '/api/library', { headers: json })).books.find((book) => book.id === 'sync-book');
+  assert.equal(assigned.language, 'pt'); assert.deepEqual(assigned.languages, ['pt', 'en', 'zh-Hant']);
+  assert.notEqual(assigned.learning.state, 'ready', 'changed folder metadata queues language analysis');
 });
 
-test('read status requires login and persists without changing the shared bookmark or vocabulary', async (t) => {
+test('read status requires login, preserves the bookmark and waits for analysis before contributing vocabulary', async (t) => {
   const f = await fixture(t);
   let base = await f.start();
   const path = '/api/books/sync-book/read-status';

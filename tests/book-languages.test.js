@@ -69,3 +69,26 @@ test('a language change during an outstanding analysis cannot publish obsolete l
   assert.deepEqual(result.vocabulary.languages.sort(), ['en', 'zh']);
   assert.ok(f.learning.unit(f.library.getBook('mixed'), 'epub:0').tokens.every((token) => ['en', 'zh'].includes(token.language)));
 });
+
+test('completed-book vocabulary follows actual book analysis and folder language changes without counting tracked passages twice', async (t) => {
+  const f = await fixture(t), book = f.library.getBook('mixed');
+  f.library.setReadStatus(book.id, { read: true });
+  f.learning.ensure(book);
+  assert.equal(f.learning.vocabulary.catalogue().total, 0, 'pending analysis keeps the completion for later');
+  await f.ready();
+  const before = f.learning.vocabulary.catalogue();
+  assert.ok(before.total > 0);
+  assert.deepEqual(before.byLanguage.map((row) => row.language), ['de', 'jv', 'zh']);
+  const unit = f.learning.unit(book, 'epub:0');
+  f.learning.vocabulary.record(book, { key: unit.key, digest: unit.textHash, session: 'one-pass', ranges: [{ from: 0, to: unit.text.length }] });
+  assert.deepEqual(f.learning.vocabulary.catalogue().entries.map(({ term, exposures }) => [term, exposures]), before.entries.map(({ term, exposures }) => [term, exposures]));
+  assert.ok(f.learning.vocabulary.catalogue().entries.every((row) => row.completionExposures === 0));
+  f.library.saveCategory('bilingual', { name: 'Bilingual', language: 'en' }, true);
+  f.library.editBook(book.id, { title: book.title, language: 'zh', languages: ['zh', 'en'], categoryId: 'bilingual' });
+  f.learning.ensure(f.library.getBook(book.id));
+  await f.ready();
+  assert.deepEqual(f.learning.vocabulary.catalogue().byLanguage.map((row) => row.language), ['en', 'zh']);
+  assert.ok(f.learning.vocabulary.catalogue().entries.every((row) => row.completionExposures === 0), 'source ranges are reclassified with the completed-book contribution');
+  f.library.setReadStatus(book.id, { read: false });
+  assert.deepEqual(f.learning.vocabulary.catalogue().byLanguage.map((row) => row.language), ['en', 'zh'], 'tracked passages survive clearing the completion flag');
+});
