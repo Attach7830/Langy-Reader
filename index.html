@@ -397,12 +397,30 @@
     <footer class="modal-footer"><button class="button quiet" id="vocabulary-previous" type="button">Previous</button><button class="button secondary" id="vocabulary-next" type="button">Next</button><button class="button quiet" type="button" data-close>Close</button></footer>
   </dialog>
 
+  <dialog class="modal" id="book-vocabulary-dialog" aria-labelledby="book-vocabulary-title">
+    <header class="modal-header"><h2 id="book-vocabulary-title">Words below threshold</h2><button class="icon-button" type="button" data-close aria-label="Close book vocabulary"><i data-lucide="x"></i></button></header>
+    <div class="modal-body">
+      <p id="book-vocabulary-summary" class="field-note" role="status"></p>
+      <p class="field-note">Least encountered first, then most frequent in this book. Zero exposures means Langy has no recorded encounter, not that you necessarily do not know the word. Read-book contributions are included. Change the threshold in the library’s Vocabulary panel.</p>
+      <div class="form-grid">
+        <label class="field">Language <select id="book-vocabulary-language"><option value="">All languages</option></select></label>
+        <label class="field">Find a lemma or character <input id="book-vocabulary-search" type="search" maxlength="100"></label>
+        <label class="field">Meanings <select id="book-vocabulary-meaning"><option value="translation">English translation</option><option value="synonyms">Spanish synonyms / equivalents</option><option value="definition">Spanish definition</option></select></label>
+      </div>
+      <p class="field-note">Meanings use your AI connection and an example from the book. Spanish synonyms use local dictionaries; if none are listed, a Spanish definition is shown. AI meanings are labelled and may need checking.</p>
+      <div class="table-scroll"><table class="vocabulary-table book-vocabulary-table"><thead><tr><th>Lemma / character</th><th>Language</th><th>Exposures / threshold</th><th>Occurrences in book</th><th>Meaning</th></tr></thead><tbody id="book-vocabulary-entries"></tbody></table></div>
+      <p id="book-vocabulary-page" role="status"></p><p id="book-vocabulary-error" class="form-error" role="alert" hidden></p>
+    </div>
+    <footer class="modal-footer"><button id="book-vocabulary-previous" class="button quiet" type="button">Previous</button><button id="book-vocabulary-next" class="button secondary" type="button">Next</button><button class="button quiet" type="button" data-close>Close</button></footer>
+  </dialog>
+
   <dialog class="modal" id="learning-dialog" aria-labelledby="learning-title">
     <header class="modal-header"><h2 id="learning-title">Book analysis</h2><button class="icon-button" type="button" data-close aria-label="Close book analysis"><i data-lucide="x"></i></button></header>
     <div class="modal-body">
       <p id="learning-stats"></p>
       <button class="button quiet small" id="edit-book-languages" type="button">Set book languages</button>
       <div id="learning-vocabulary"></div>
+      <button class="button secondary small" id="open-book-vocabulary" type="button" disabled>Words below threshold</button>
       <p class="field-note">“Not yet seen” counts unique lemmas or Mandarin characters absent from your reading catalogue; it does not mean you cannot understand them.</p>
       <button class="button secondary small" id="find-similar-books" type="button">Find books with similar vocabulary</button>
       <p class="field-note">Recommendations come from your library and compare vocabulary within each language. They do not compare plots or genres.</p>

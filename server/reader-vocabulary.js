@@ -167,7 +167,7 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
         const key = identity(item.language, item.unit, item.term), position = JSON.stringify([key, item.from, item.to]);
         if (positions.has(position)) continue;
         positions.add(position);
-        if (!counts.has(key)) counts.set(key, { ...item, occurrences: 0 });
+        if (!counts.has(key)) counts.set(key, { ...item, occurrences: 0, sample: { key: section.key, from: item.from, to: item.to, word: token.word, pos: token.pos || '' } });
         counts.get(key).occurrences++;
       }
     }
@@ -277,6 +277,43 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
     const entries = matches.slice(offset, offset + 100).map((item) => ({ ...item, likelyKnown: item.exposures >= reader.threshold }));
     return { byLanguage: reader.byLanguage, likelyKnown: reader.knownByLanguage, threshold: reader.threshold, entries, total, offset, more: offset + entries.length < total };
   }
+  function bookTerms(book) {
+    const signature = completionSignature(book);
+    if (signature === 'pending') throw new RequestError(409, 'Wait for this book to finish analysis.');
+    return completionSource(book, signature);
+  }
+  function example(book, item) {
+    const text = db.prepare('SELECT text FROM chapters WHERE book=? AND key=?').get(book.id, item.sample.key)?.text || '';
+    let from = Math.max(0, item.sample.from - 180), to = Math.min(text.length, item.sample.to + 180);
+    if (/[\uDC00-\uDFFF]/u.test(text[from] || '')) from--;
+    if (/[\uD800-\uDBFF]/u.test(text[to - 1] || '')) to--;
+    return { text: text.slice(from, to).replace(/\s+/gu, ' ').trim(), word: item.sample.word, pos: item.sample.pos, key: item.sample.key };
+  }
+  function term(book, body) {
+    if (typeof body.term !== 'string' || body.term.length > 500 || typeof body.language !== 'string' || body.language.length > 35 || typeof body.unit !== 'string')
+      throw new RequestError(422, 'Choose a word from this book’s vocabulary.');
+    const source = bookTerms(book);
+    const item = source.counts.find((item) => item.term === body.term && item.language === body.language && item.unit === body.unit);
+    if (!item) throw new RequestError(404, 'This word is not in the analyzed book vocabulary.');
+    return { term: item.term, language: item.language, unit: item.unit, example: example(book, item), revision: source.signature };
+  }
+  function belowThreshold(book, visitor, query = {}) {
+    prune(); syncCompletions(visitor);
+    const source = bookTerms(book), threshold = preferences(visitor).threshold;
+    const recorded = new Map(exposureRows(visitor).map((row) => [identity(row.language, row.unit, row.term), row.exposures]));
+    const rows = source.counts.map((item) => ({ ...item, exposures: recorded.get(identity(item.language, item.unit, item.term)) || 0 }));
+    const byLanguage = [...inventory(book).values()].map(({ language, unit, terms }) => ({ language, unit, total: terms.size,
+      count: rows.filter((row) => row.language === language && row.unit === unit && row.exposures < threshold).length }));
+    const language = typeof query.language === 'string' ? query.language.slice(0, 35) : '';
+    const search = typeof query.search === 'string' ? query.search.trim().toLowerCase().slice(0, 100) : '';
+    const requestedOffset = Math.max(0, Math.min(1_000_000, Number.parseInt(query.offset, 10) || 0)), pageSize = 10;
+    const matches = rows.filter((row) => row.exposures < threshold && (!language || row.language === language) && (!search || row.term.toLowerCase().includes(search)))
+      .sort((a, b) => a.exposures - b.exposures || b.occurrences - a.occurrences || a.language.localeCompare(b.language) || a.term.localeCompare(b.term));
+    const offset = Math.min(requestedOffset, Math.max(0, Math.floor((matches.length - 1) / pageSize) * pageSize));
+    const entries = matches.slice(offset, offset + pageSize).map((item) => ({ language: item.language, unit: item.unit, term: item.term,
+      exposures: item.exposures, remaining: threshold - item.exposures, occurrences: item.occurrences, example: example(book, item) }));
+    return { threshold, byLanguage, entries, total: matches.length, offset, pageSize, more: offset + entries.length < matches.length, revision: source.signature };
+  }
   function recommendations(book, books, reader) {
     const reference = inventory(book);
     if (!reference) return [];
@@ -296,5 +333,5 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
     }).filter(Boolean).sort((a, b) => b.score - a.score || b.familiarity.score - a.familiarity.score || a.title.localeCompare(b.title)).slice(0, 8);
   }
   if (backfill || completionUpgrade) for (const row of db.prepare('SELECT DISTINCT book AS id FROM reading_exposures').all()) reindex(row);
-  return { profile, familiarity, section, record, reindex, catalogue, recommendations, preferences, savePreferences, syncCompletions };
+  return { profile, familiarity, section, record, reindex, catalogue, recommendations, preferences, savePreferences, syncCompletions, belowThreshold, term };
 }

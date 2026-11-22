@@ -261,6 +261,17 @@ export async function openAISettings(dir, demo) {
       const options = { signal, limit: 140, timeout: 60_000 };
       return ask(config, instructions, source, options);
     },
+    async vocabularyMeaning(entry, mode, signal) {
+      const tasks = {
+        translation: 'Translate the queried lemma into English using its sense in the supplied book passage. Give one short phrase.',
+        definition: 'Define the queried lemma in simple Spanish, using its sense in the supplied book passage. Use one short sentence.',
+        synonyms: 'Give one to three natural Spanish equivalents for the queried word as used in the passage. Preserve its part of speech. If there is no concise equivalent, give one short explanation in Spanish.',
+      };
+      if (!Object.hasOwn(tasks, mode)) throw new RequestError(422, 'Choose a vocabulary meaning mode.');
+      return ask(current, `${tasks[mode]} The example surface form may be inflected; explain the queried lemma. If context is insufficient, state that the meaning is uncertain. Do not invent a meaning. Return just the meaning.`,
+        { queryLemma: entry.term, surfaceForm: entry.example.word, partOfSpeech: entry.example.pos, bookLanguage: languageName(entry.language), passage: entry.example.text },
+        { signal, limit: 160, timeout: 60_000, languagePolicy: mode === 'translation' ? 'Answer entirely in English.' : 'Responde únicamente en español, con vocabulario sencillo.' });
+    },
     async summary(body, signal) {
       const config = current;
       const text = typeof body.text === 'string' ? body.text.trim() : '';

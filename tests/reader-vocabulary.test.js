@@ -248,3 +248,48 @@ test('the completion upgrade rebuilds legacy Han token positions so further read
   migrated.record(source, { key: 'epub:0', digest: source.digest, session: 'same-pass', ranges: [{ from: 0, to: 2 }] });
   assert.equal(migrated.catalogue().entries[0].exposures, 2);
 });
+
+test('book vocabulary lists only below-threshold items, sorts least exposed first and breaks ties by frequency in the book', (t) => {
+  const f = fixture(t), source = f.book('target', 'Target', 'apples apples apples bananas bananas read 中文 Teresa', [
+    ['apples', 'apple', 'en'], ['apples', 'apple', 'en'], ['apples', 'apple', 'en'], ['bananas', 'banana', 'en'], ['bananas', 'banana', 'en'],
+    ['read', 'read', 'en'], ['中', '中', 'zh'], ['文', '文', 'zh'], ['Teresa', 'teresa', 'en', true],
+  ]);
+  const history = f.book('history', 'History', 'apples read 中', [['apples', 'apple', 'en'], ['read', 'read', 'en'], ['中', '中', 'zh']]);
+  f.vocabulary.savePreferences({ threshold: 3 });
+  f.record(history, ['apples', 'read', '中'], undefined, 'one');
+  f.record(history, ['read'], undefined, 'two'); f.record(history, ['read'], undefined, 'three');
+  const before = f.vocabulary.catalogue(), result = f.vocabulary.belowThreshold(source);
+  assert.deepEqual(result.entries.map(({ term, exposures, occurrences }) => [term, exposures, occurrences]), [
+    ['banana', 0, 2], ['文', 0, 1], ['apple', 1, 3], ['中', 1, 1],
+  ]);
+  assert.equal(result.threshold, 3); assert.equal(result.entries[0].remaining, 3);
+  assert.deepEqual(result.byLanguage, [{ language: 'en', unit: 'lemmas', total: 3, count: 2 }, { language: 'zh', unit: 'characters', total: 2, count: 2 }]);
+  assert.equal(f.vocabulary.belowThreshold(source, undefined, { language: 'zh' }).entries.length, 2);
+  assert.equal(f.vocabulary.belowThreshold(source, undefined, { search: 'APPLE' }).entries[0].term, 'apple');
+  assert.deepEqual(f.vocabulary.catalogue(), before, 'viewing the list never records new reading exposure');
+  const word = f.vocabulary.term(source, { term: 'apple', language: 'en', unit: 'lemmas' });
+  assert.equal(word.example.word, 'apples'); assert.match(word.example.text, /apples apples/);
+  assert.throws(() => f.vocabulary.term(source, { term: 'apple', language: 'es', unit: 'lemmas' }), { status: 404 });
+  assert.throws(() => f.vocabulary.term(source, { term: '<script>', language: 'en', unit: 'lemmas' }), { status: 404 });
+  f.vocabulary.savePreferences({ threshold: 1 });
+  assert.deepEqual(f.vocabulary.belowThreshold(source).entries.map((row) => row.term), ['banana', '文']);
+  f.mark(source);
+  assert.equal(f.vocabulary.belowThreshold(source).total, 0, 'completed-book contributions use the same threshold');
+  assert.ok(f.vocabulary.belowThreshold(source, { id: 'another-reader' }).total > 0, 'a different visitor has an independent tally');
+});
+
+test('book vocabulary pagination stays bounded and pending or corrected analysis cannot publish stale vocabulary', (t) => {
+  const f = fixture(t), words = Array.from({ length: 26 }, (_, n) => `word${n}`);
+  let source = f.book('pages', 'Pages', words.join(' '), words.map((word) => [word, word, 'en']));
+  const first = f.vocabulary.belowThreshold(source);
+  assert.equal(first.entries.length, 10); assert.equal(first.more, true); assert.equal(first.total, 26);
+  const second = f.vocabulary.belowThreshold(source, undefined, { offset: 10 });
+  assert.equal(second.entries.length, 10); assert.ok(second.entries.every((row) => !first.entries.some((previous) => previous.term === row.term)));
+  const end = f.vocabulary.belowThreshold(source, undefined, { offset: 10000000 });
+  assert.equal(end.offset, 20); assert.equal(end.entries.length, 6); assert.equal(end.more, false);
+  f.db.prepare("UPDATE analyses SET state='queued' WHERE book=?").run(source.id);
+  assert.throws(() => f.vocabulary.belowThreshold(source), { status: 409 });
+  source = f.book('pages', 'Pages', 'livros', [['livros', 'livro', 'pt']]); f.vocabulary.reindex(source);
+  assert.equal(f.vocabulary.belowThreshold(source).entries[0].term, 'livro');
+  assert.throws(() => f.vocabulary.term(source, { term: 'word0', language: 'en', unit: 'lemmas' }), { status: 404 });
+});

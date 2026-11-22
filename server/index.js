@@ -6,6 +6,7 @@ import multer from 'multer';
 import { maxUpload, openLibrary, RequestError } from './books.js';
 import { openAISettings } from './ai.js';
 import { openThesaurus } from './thesaurus.js';
+import { vocabularyMeanings } from './vocabulary-meanings.js';
 import { openLearning } from './learning.js';
 import { openArchive } from './annas-archive.js';
 import { maxAudioUpload } from './uploaded-audio.js';
@@ -32,6 +33,7 @@ const ai = await openAISettings(dir, demo);
 const lookupSynonyms = openThesaurus();
 const mandarin = openMandarin();
 const learning = await openLearning(dir, library, demo, ai);
+const vocabularyMeaning = vocabularyMeanings({ vocabulary: learning.vocabulary, ai, lookupSynonyms });
 const archive = await openArchive(dir, { library, demo, onImport: (book) => learning.ensure(library.getBook(book.id)) });
 const uploadLimit = limits?.upload ?? maxUpload;
 const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 4, fieldSize: 1024 } });
@@ -87,7 +89,7 @@ app.use('/api', (req, res, next) => {
 
 if (demo) {
   const identifyVisitor = await visitorMiddleware(dir);
-  app.use(['/api/library', '/api/categories', '/api/books', '/api/storage'], identifyVisitor);
+  app.use(['/api/library', '/api/categories', '/api/books', '/api/storage', '/api/vocabulary'], identifyVisitor);
   app.post(['/api/ai/word', '/api/ai/summary', '/api/mandarin/word', '/api/mandarin/readings', '/api/mandarin/pinyin'], identifyVisitor);
   await library.pruneDemoBooks();
   await learning.prune();
@@ -134,6 +136,19 @@ app.get('/api/library', async (req, res) => {
 app.get('/api/vocabulary', (req, res) => res.json(learning.vocabulary.catalogue(req.visitor, req.query)));
 app.get('/api/vocabulary/settings', (req, res) => res.json(learning.vocabulary.preferences(req.visitor)));
 app.put('/api/vocabulary/settings', (req, res) => res.json(learning.vocabulary.savePreferences(req.body ?? {}, req.visitor)));
+app.get('/api/books/:id/vocabulary/below-threshold', (req, res) => {
+  const book = library.getBook(req.params.id, req.visitor);
+  learning.ensure(book);
+  res.json(learning.vocabulary.belowThreshold(book, req.visitor, req.query));
+});
+app.post('/api/books/:id/vocabulary/meaning', ...demoGenerations, async (req, res) => {
+  const book = library.getBook(req.params.id, req.visitor);
+  learning.ensure(book);
+  const controller = new AbortController();
+  res.on('close', () => controller.abort());
+  const answer = await vocabularyMeaning(book, req.body ?? {}, controller.signal);
+  if (!controller.signal.aborted) res.json(answer);
+});
 app.get('/api/books/:id/vocabulary/sections/:key', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);
   learning.ensure(book);

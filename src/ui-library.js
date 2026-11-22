@@ -5,6 +5,7 @@ import { refreshStorage, showStorage } from './storage.js';
 import { audioTools, audioChanged } from './ui-audio-tools.js';
 import { bookLanguagePicker } from './book-languages.js';
 import { vocabularyLibrary, unfamiliarLabel, recommendationRows } from './ui-vocabulary.js';
+import { bookVocabulary } from './ui-book-vocabulary.js';
 
 const vocabularyLabel = (vocabulary) => vocabulary?.byLanguage?.map((item) => `${item.count.toLocaleString()} ${item.language === 'zh' ? 'Mandarin Han characters' : `${languageName(item.language)} ${item.unit}`}`).join(' · ');
 
@@ -15,6 +16,7 @@ export function libraryScreen({ progress, onRemove }) {
   const bookForm = $('#book-form');
   const languagePicker = bookLanguagePicker(bookForm);
   const vocabularyUI = vocabularyLibrary({ changed: refresh });
+  const bookVocabularyUI = bookVocabulary();
   const categoryDialog = $('#category-dialog');
   const categoryForm = $('#category-form');
   const learningDialog = $('#learning-dialog');
@@ -195,6 +197,7 @@ export function libraryScreen({ progress, onRemove }) {
       if (learningBook?.id !== id || !learningDialog.open) return;
       const analysis = result.analysis;
       $('#find-similar-books').disabled = analysis.state !== 'ready';
+      $('#open-book-vocabulary').disabled = analysis.state !== 'ready';
       $('#upload-audio-form').hidden = !uploaded.available;
       $('#audio-upload-note').textContent = uploaded.available
         ? 'Upload a complete audiobook or up to 200 chapter files, totalling 1 GiB and at most 72 hours per recording. Files are sorted by name; adjust their order below before upload. Preparation and sync run in the background.'
@@ -311,6 +314,7 @@ export function libraryScreen({ progress, onRemove }) {
     learningBook = book;
     $('#edit-book-languages').hidden = snapshot.demo && book.id === 'sample';
     $('#find-similar-books').disabled = true;
+    $('#open-book-vocabulary').disabled = true;
     $('#similar-books').replaceChildren();
     $('#learning-title').textContent = book.title;
     $('#learning-stats').textContent = 'Loading analysis…';
@@ -356,6 +360,7 @@ export function libraryScreen({ progress, onRemove }) {
     } catch (error) { if (learningBook?.id === id) $('#similar-books').textContent = error.message; }
     finally { $('#find-similar-books').disabled = false; }
   });
+  $('#open-book-vocabulary').addEventListener('click', () => { if (learningBook) bookVocabularyUI.open(learningBook); });
   $('#generate-book-audio').addEventListener('click', async (event) => {
     if (!learningBook) return;
     event.target.disabled = true;

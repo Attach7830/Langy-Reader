@@ -542,3 +542,11 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 .table-scroll { overflow-x: auto; }
 .recommendation-row { display: grid; gap: .3rem; padding: .75rem 0; border-bottom: 1px solid var(--border); }
 #learning-vocabulary { overflow-x: auto; }
+#book-vocabulary-dialog { width: min(1100px, calc(100vw - 2rem)); }
+.book-vocabulary-table { min-width: 680px; }
+.book-vocabulary-table td { vertical-align: top; }
+.book-vocabulary-table small { display: block; }
+.book-vocabulary-meaning-cell { min-width: 200px; max-width: 380px; }
+.vocabulary-meaning { display: block; white-space: pre-line; overflow-wrap: anywhere; }
+.vocabulary-example { max-width: 270px; margin-top: .4rem; font-size: 12px; }
+.vocabulary-example summary { cursor: pointer; color: var(--muted); }

@@ -228,7 +228,11 @@ test('chapter, rescan and iVoox endpoints require the web login and preserve ori
 test('book language choices persist through the authenticated API and vocabulary endpoints require the reader login', async (t) => {
   const f = await fixture(t);
   let base = await f.start();
-  for (const path of ['/api/vocabulary', '/api/vocabulary/settings', '/api/books/sync-book/recommendations', '/api/books/sync-book/vocabulary/sections/epub%3A0']) assert.equal((await fetch(base + path)).status, 401);
+  for (const path of ['/api/vocabulary', '/api/vocabulary/settings', '/api/books/sync-book/recommendations', '/api/books/sync-book/vocabulary/sections/epub%3A0', '/api/books/sync-book/vocabulary/below-threshold']) assert.equal((await fetch(base + path)).status, 401);
+  assert.equal((await fetch(base + '/api/books/sync-book/vocabulary/meaning', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 401);
+  await response(base, '/api/books/sync-book/vocabulary/below-threshold', { headers: json, status: 409 });
+  await response(base, '/api/books/not-visible/vocabulary/below-threshold', { headers: json, status: 404 });
+  await response(base, '/api/books/sync-book/vocabulary/meaning', { method: 'POST', headers: json, body: '{"mode":"invalid"}', status: 422 });
   assert.equal((await fetch(base + '/api/vocabulary/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{"threshold":3}' })).status, 401);
   assert.equal((await fetch(base + '/api/books/sync-book/reading-estimate', { method: 'POST' })).status, 401);
   assert.equal((await fetch(base + '/api/books/sync-book/vocabulary/seen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 401);
@@ -288,4 +292,17 @@ test('demo mode never exposes shared progress, external audio imports, chapter u
     ['DELETE', '/ivoox'], ['POST', '/audio/fake/rescan'], ['DELETE', '/audio/fake/rescan'], ['GET', '/recordings/fake/chapters/0/file']]) {
     assert.equal((await fetch(base + '/api/books/sync-book' + path, { method })).status, 404);
   }
+});
+
+test('demo vocabulary thresholds remain private to each signed visitor', async (t) => {
+  const f = await fixture(t, { demo: true, password: '' }), base = await f.start();
+  const first = await fetch(base + '/api/vocabulary/settings'), second = await fetch(base + '/api/vocabulary/settings');
+  const a = first.headers.get('set-cookie').split(';')[0], b = second.headers.get('set-cookie').split(';')[0];
+  assert.deepEqual(await first.json(), { threshold: 20 }); assert.deepEqual(await second.json(), { threshold: 20 });
+  await response(base, '/api/vocabulary/settings', { method: 'PUT', headers: { Cookie: a, 'Content-Type': 'application/json' }, body: '{"threshold":7}' });
+  assert.deepEqual(await response(base, '/api/vocabulary/settings', { headers: { Cookie: a } }), { threshold: 7 });
+  assert.deepEqual(await response(base, '/api/vocabulary/settings', { headers: { Cookie: b } }), { threshold: 20 });
+  assert.equal((await response(base, '/api/vocabulary', { headers: { Cookie: a } })).threshold, 7);
+  assert.equal((await response(base, '/api/vocabulary', { headers: { Cookie: b } })).threshold, 20);
+  assert.equal((await response(base, '/api/library', { headers: { Cookie: a } })).vocabulary.threshold, 7);
 });
