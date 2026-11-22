@@ -36,7 +36,7 @@ const learning = await openLearning(dir, library, demo, ai);
 const vocabularyMeaning = vocabularyMeanings({ vocabulary: learning.vocabulary, ai, lookupSynonyms });
 const archive = await openArchive(dir, { library, demo, onImport: (book) => learning.ensure(library.getBook(book.id)) });
 const uploadLimit = limits?.upload ?? maxUpload;
-const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 4, fieldSize: 1024 } });
+const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 5, fieldSize: 1024 } });
 const audioUpload = multer({ dest: library.uploads, limits: { fileSize: maxAudioUpload, files: 1, fields: 1, fieldSize: 1024 } });
 const chapterUpload = multer({ storage: chapterStorage(library.uploads), limits: { fileSize: maxAudioUpload, files: chapterFileLimit, fields: 1, fieldSize: 1024 } });
 const demoUploads = demo ? [limitJobs({ perMinute: 32, perVisitor: 8 })] : [];
@@ -323,9 +323,15 @@ app.use((err, _req, res, next) => {
     if (_req.audioUpload) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
       error: err.code === 'LIMIT_FILE_SIZE' ? 'Audio files must be 1 GiB or smaller.' : _req.chapterUpload ? 'Choose at most 200 chapter files and one recording name.' : 'Upload one audiobook at a time.',
     });
-    return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
-      error: err.code === 'LIMIT_FILE_SIZE' ? `Books must be ${uploadLimit / 1024 / 1024} MiB or smaller.` : 'Upload one EPUB or PDF at a time.',
-    });
+    const errors = {
+      LIMIT_FILE_SIZE: `Books must be ${uploadLimit / 1024 / 1024} MiB or smaller.`,
+      LIMIT_FILE_COUNT: 'Upload one EPUB or PDF at a time.',
+      LIMIT_FIELD_COUNT: 'Too many book details were submitted. Refresh the page and try again.',
+      LIMIT_FIELD_VALUE: 'One of the book details is too long. Shorten it and try again.',
+      LIMIT_FIELD_KEY: 'A book detail has an invalid field name.',
+      LIMIT_UNEXPECTED_FILE: err.field === 'file' ? 'Upload one EPUB or PDF at a time.' : 'Unexpected file field in the book upload.',
+    };
+    return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: errors[err.code] || 'The book upload could not be processed. Try again.' });
   }
   const status = err.status && err.status >= 400 && err.status < 600 ? err.status : 500;
   if (status === 500) console.error(err);
