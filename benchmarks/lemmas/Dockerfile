@@ -19,6 +19,6 @@ COPY benchmarks/lemmas/core.py benchmarks/lemmas/sources.json benchmarks/lemmas/
 RUN python /app/benchmarks/lemmas/prepare_corpora.py /opt/benchmark-corpora
 COPY language/app.py /app/language/app.py
 COPY language/spanish_morphology.py /app/language/spanish_morphology.py
-COPY benchmarks/lemmas/benchmark.py benchmarks/lemmas/challenge.json benchmarks/lemmas/spanish-future.json /app/benchmarks/lemmas/
+COPY benchmarks/lemmas/benchmark.py benchmarks/lemmas/challenge.json benchmarks/lemmas/spanish-future.json benchmarks/lemmas/spanish-forms.json /app/benchmarks/lemmas/
 RUN python /app/benchmarks/lemmas/benchmark.py --validate-only --split all
 ENTRYPOINT ["python", "/app/benchmarks/lemmas/benchmark.py"]

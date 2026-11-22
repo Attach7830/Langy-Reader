@@ -1,0 +1,1156 @@
+{
+  "version": 1,
+  "suite": "spanish-forms",
+  "title": "Spanish reader vocabulary normalization regressions",
+  "provenance": "Original assistant-authored targeted checks used during this correction; not independently human-adjudicated or untouched holdout evidence. Includes examples reported by the reader. Participle and gender expectations specify Langy learner-vocabulary grouping, which can differ from published UD lemma conventions.",
+  "license": "CC0-1.0",
+  "conventions": [
+    "Attached pronouns are separate components of their original source word. me/nos -> yo; te/os -> tú; se/lo/la/le and plurals -> él, matching the existing singular-person convention.",
+    "Attested gender inflections such as adulto/adulta share a headword; unrelated nouns such as bolso/bolsa remain distinct.",
+    "Adjectival participles marked as participles by the contextual model are grouped with their attested verb, e.g. almizclada -> almizclar. Lexical nouns such as vestido remain distinct.",
+    "aproximárse includes the reader-reported extra stress mark; recovering its attested base does not change or endorse that spelling."
+  ],
+  "references": [
+    "https://www.rae.es/dpd/pronombres%20personales%20%C3%A1tonos",
+    "https://www.rae.es/dpd/ayuda/modelos-de-conjugacion-verbal",
+    "https://www.rae.es/gtg/g%C3%A9nero",
+    "https://dle.rae.es/adulto"
+  ],
+  "cases": [
+    {
+      "id": "es-forms-mirar-forms",
+      "language": "es",
+      "split": "test",
+      "text": "Quiso mirar la puerta, la miró y decidió mirarlo.",
+      "answers": [
+        [
+          "mirar",
+          [
+            [
+              "mirar",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "miró",
+          [
+            [
+              "mirar",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "mirarlo",
+          [
+            [
+              "mirar",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-achicarme",
+      "language": "es",
+      "split": "test",
+      "text": "Decidió achicarme el uniforme.",
+      "answers": [
+        [
+          "achicarme",
+          [
+            [
+              "achicar",
+              "X"
+            ],
+            [
+              "yo",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-achicandome",
+      "language": "es",
+      "split": "test",
+      "text": "Seguía achicándome la camisa.",
+      "answers": [
+        [
+          "achicándome",
+          [
+            [
+              "achicar",
+              "X"
+            ],
+            [
+              "yo",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-agregarlo",
+      "language": "es",
+      "split": "test",
+      "text": "Podemos agregarlo a la lista.",
+      "answers": [
+        [
+          "agregarlo",
+          [
+            [
+              "agregar",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-agregandole",
+      "language": "es",
+      "split": "dev",
+      "text": "Estaba agregándole agua al vaso.",
+      "answers": [
+        [
+          "agregándole",
+          [
+            [
+              "agregar",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-agregandoselo",
+      "language": "es",
+      "split": "test",
+      "text": "Acabó agregándoselo al documento.",
+      "answers": [
+        [
+          "agregándoselo",
+          [
+            [
+              "agregar",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-aproximarse",
+      "language": "es",
+      "split": "test",
+      "text": "Decidió aproximarse a la puerta.",
+      "answers": [
+        [
+          "aproximarse",
+          [
+            [
+              "aproximar",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-aproximarsele",
+      "language": "es",
+      "split": "test",
+      "text": "Trató de aproximársele sin hacer ruido.",
+      "answers": [
+        [
+          "aproximársele",
+          [
+            [
+              "aproximar",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-aproximarse-reader-spelling",
+      "language": "es",
+      "split": "test",
+      "text": "Trató de aproximárse sin hacer ruido.",
+      "answers": [
+        [
+          "aproximárse",
+          [
+            [
+              "aproximar",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-damelo",
+      "language": "es",
+      "split": "test",
+      "text": "Dámelo antes de salir.",
+      "answers": [
+        [
+          "Dámelo",
+          [
+            [
+              "dar",
+              "X"
+            ],
+            [
+              "yo",
+              "PRON"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-dimelo",
+      "language": "es",
+      "split": "test",
+      "text": "Dímelo en voz baja.",
+      "answers": [
+        [
+          "Dímelo",
+          [
+            [
+              "decir",
+              "X"
+            ],
+            [
+              "yo",
+              "PRON"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-traemelo",
+      "language": "es",
+      "split": "test",
+      "text": "Tráemelo cuando termines.",
+      "answers": [
+        [
+          "Tráemelo",
+          [
+            [
+              "traer",
+              "X"
+            ],
+            [
+              "yo",
+              "PRON"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-cogelo",
+      "language": "es",
+      "split": "test",
+      "text": "Cógelo con cuidado.",
+      "answers": [
+        [
+          "Cógelo",
+          [
+            [
+              "coger",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-deme",
+      "language": "es",
+      "split": "test",
+      "text": "Deme otra copia, por favor.",
+      "answers": [
+        [
+          "Deme",
+          [
+            [
+              "dar",
+              "X"
+            ],
+            [
+              "yo",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-decirselo",
+      "language": "es",
+      "split": "dev",
+      "text": "Prefiero decírselo mañana.",
+      "answers": [
+        [
+          "decírselo",
+          [
+            [
+              "decir",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-contarselo",
+      "language": "es",
+      "split": "test",
+      "text": "Prometió contárselo al volver.",
+      "answers": [
+        [
+          "contárselo",
+          [
+            [
+              "contar",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-diciendome",
+      "language": "es",
+      "split": "test",
+      "text": "Estaba diciéndome la verdad.",
+      "answers": [
+        [
+          "diciéndome",
+          [
+            [
+              "decir",
+              "X"
+            ],
+            [
+              "yo",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-mirandome",
+      "language": "es",
+      "split": "test",
+      "text": "Seguía mirándome desde la ventana.",
+      "answers": [
+        [
+          "mirándome",
+          [
+            [
+              "mirar",
+              "X"
+            ],
+            [
+              "yo",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-sintiendose",
+      "language": "es",
+      "split": "test",
+      "text": "Iba sintiéndose mejor.",
+      "answers": [
+        [
+          "sintiéndose",
+          [
+            [
+              "sentir",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-leyendolo",
+      "language": "es",
+      "split": "test",
+      "text": "Siguió leyéndolo hasta la noche.",
+      "answers": [
+        [
+          "leyéndolo",
+          [
+            [
+              "leer",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-oyendola",
+      "language": "es",
+      "split": "test",
+      "text": "Estuvo oyéndola cantar.",
+      "answers": [
+        [
+          "oyéndola",
+          [
+            [
+              "oír",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-levantarse",
+      "language": "es",
+      "split": "test",
+      "text": "Necesita levantarse temprano.",
+      "answers": [
+        [
+          "levantarse",
+          [
+            [
+              "levantar",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-lavarse",
+      "language": "es",
+      "split": "test",
+      "text": "Fue a lavarse las manos.",
+      "answers": [
+        [
+          "lavarse",
+          [
+            [
+              "lavar",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-sentemonos",
+      "language": "es",
+      "split": "test",
+      "text": "Sentémonos junto a la ventana.",
+      "answers": [
+        [
+          "Sentémonos",
+          [
+            [
+              "sentar",
+              "X"
+            ],
+            [
+              "yo",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-pongamoselo",
+      "language": "es",
+      "split": "test",
+      "text": "Pongámoselo fácil a los visitantes.",
+      "answers": [
+        [
+          "Pongámoselo",
+          [
+            [
+              "poner",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-sentaos",
+      "language": "es",
+      "split": "dev",
+      "text": "Sentaos aquí y escuchad.",
+      "answers": [
+        [
+          "Sentaos",
+          [
+            [
+              "sentar",
+              "X"
+            ],
+            [
+              "tú",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-preterite-regular",
+      "language": "es",
+      "split": "dev",
+      "text": "Ayer hablé y ella habló; después comiste y bebió.",
+      "answers": [
+        [
+          "hablé",
+          [
+            [
+              "hablar",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "habló",
+          [
+            [
+              "hablar",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "comiste",
+          [
+            [
+              "comer",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "bebió",
+          [
+            [
+              "beber",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-preterite-spelling",
+      "language": "es",
+      "split": "test",
+      "text": "Ayer jugué y pagué la entrada.",
+      "answers": [
+        [
+          "jugué",
+          [
+            [
+              "jugar",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "pagué",
+          [
+            [
+              "pagar",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-preterite-oyó",
+      "language": "es",
+      "split": "dev",
+      "text": "La niña oyó lo que oyeron los demás.",
+      "answers": [
+        [
+          "oyó",
+          [
+            [
+              "oír",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "oyeron",
+          [
+            [
+              "oír",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-preterite-leyó",
+      "language": "es",
+      "split": "test",
+      "text": "Él leyó lo que leyeron sus amigos.",
+      "answers": [
+        [
+          "leyó",
+          [
+            [
+              "leer",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "leyeron",
+          [
+            [
+              "leer",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-preterite-strong",
+      "language": "es",
+      "split": "test",
+      "text": "Tuvieron dudas, pero pudieron entrar y dijeron la verdad.",
+      "answers": [
+        [
+          "Tuvieron",
+          [
+            [
+              "tener",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "pudieron",
+          [
+            [
+              "poder",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "dijeron",
+          [
+            [
+              "decir",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-preterite-producing",
+      "language": "es",
+      "split": "dev",
+      "text": "El taller produjo piezas y condujo el proyecto.",
+      "answers": [
+        [
+          "produjo",
+          [
+            [
+              "producir",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "condujo",
+          [
+            [
+              "conducir",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-adulta",
+      "language": "es",
+      "split": "test",
+      "text": "Una adulta habló con otro adulto.",
+      "answers": [
+        [
+          "adulta",
+          [
+            [
+              "adulto",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "adulto",
+          [
+            [
+              "adulto",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-adultas",
+      "language": "es",
+      "split": "test",
+      "text": "Las adultas y los adultos esperaban afuera.",
+      "answers": [
+        [
+          "adultas",
+          [
+            [
+              "adulto",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "adultos",
+          [
+            [
+              "adulto",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-gender-adjectives",
+      "language": "es",
+      "split": "test",
+      "text": "Las noches eran frías y las mañanas frescas.",
+      "answers": [
+        [
+          "frías",
+          [
+            [
+              "frío",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "frescas",
+          [
+            [
+              "fresco",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-gender-nino",
+      "language": "es",
+      "split": "test",
+      "text": "El niño y la niña estaban jugando.",
+      "answers": [
+        [
+          "niño",
+          [
+            [
+              "niño",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "niña",
+          [
+            [
+              "niño",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-almizclada",
+      "language": "es",
+      "split": "dev",
+      "text": "La habitación estaba almizclada.",
+      "answers": [
+        [
+          "almizclada",
+          [
+            [
+              "almizclar",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-almizclado",
+      "language": "es",
+      "split": "test",
+      "text": "El aire almizclado llenó la casa.",
+      "answers": [
+        [
+          "almizclado",
+          [
+            [
+              "almizclar",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-mojada",
+      "language": "es",
+      "split": "test",
+      "text": "La chaqueta estaba mojada.",
+      "answers": [
+        [
+          "mojada",
+          [
+            [
+              "mojar",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-control-tomate",
+      "language": "es",
+      "split": "test",
+      "text": "El tomate estaba sobre la mesa.",
+      "answers": [
+        [
+          "tomate",
+          [
+            [
+              "tomate",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-control-modelo",
+      "language": "es",
+      "split": "dev",
+      "text": "El modelo presentó un proyecto.",
+      "answers": [
+        [
+          "modelo",
+          [
+            [
+              "modelo",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-control-consuelo",
+      "language": "es",
+      "split": "dev",
+      "text": "Buscaba consuelo en sus amigos.",
+      "answers": [
+        [
+          "consuelo",
+          [
+            [
+              "consuelo",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-control-regalo",
+      "language": "es",
+      "split": "test",
+      "text": "El regalo llegó por la mañana.",
+      "answers": [
+        [
+          "regalo",
+          [
+            [
+              "regalo",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-control-vestido",
+      "language": "es",
+      "split": "test",
+      "text": "El vestido rojo estaba limpio.",
+      "answers": [
+        [
+          "vestido",
+          [
+            [
+              "vestido",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-control-bolsa",
+      "language": "es",
+      "split": "dev",
+      "text": "El bolso y la bolsa estaban vacíos.",
+      "answers": [
+        [
+          "bolso",
+          [
+            [
+              "bolso",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "bolsa",
+          [
+            [
+              "bolsa",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-control-huerta",
+      "language": "es",
+      "split": "dev",
+      "text": "El huerto estaba junto a la huerta.",
+      "answers": [
+        [
+          "huerto",
+          [
+            [
+              "huerto",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "huerta",
+          [
+            [
+              "huerta",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-control-alto",
+      "language": "es",
+      "split": "dev",
+      "text": "El hombre alto entró en casa.",
+      "answers": [
+        [
+          "alto",
+          [
+            [
+              "alto",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-control-vino",
+      "language": "es",
+      "split": "test",
+      "text": "El vino estaba servido cuando vino el vecino.",
+      "answers": [
+        [
+          "vino",
+          [
+            [
+              "vino",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "vino",
+          [
+            [
+              "venir",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-forms-utf16",
+      "language": "es",
+      "split": "test",
+      "text": "📖 Estaba achicándome la camisa.",
+      "answers": [
+        [
+          "achicándome",
+          [
+            [
+              "achicar",
+              "X"
+            ],
+            [
+              "yo",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    }
+  ]
+}

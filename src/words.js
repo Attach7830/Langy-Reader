@@ -97,6 +97,8 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
     lemmaLabel.textContent = detected?.lemmaUncertain && detected.lemmaCandidates?.length
       ? `Possible lemmas · ${detected.lemmaCandidates.join(' / ')}`
       : detected?.lemma ? `Lemma · ${detected.lemma}` : '';
+    const attached = detected?.components?.filter((part) => part.pos === 'PRON').map((part) => part.word);
+    if (attached?.length) lemmaLabel.textContent += ` · Pronouns: ${attached.join(' + ')}`;
     lemmaLabel.hidden = chinese || !detected?.lemma;
     function display(result) {
       if (result.mandarin) {

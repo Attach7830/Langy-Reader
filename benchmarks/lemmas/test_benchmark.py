@@ -23,6 +23,15 @@ def prediction(reference):
 
 
 class BenchmarkTests(unittest.TestCase):
+    def test_spanish_reader_normalization_key_is_valid_and_separate_from_reference_lemmas(self):
+        data = json.loads(Path(__file__).with_name("spanish-forms.json").read_text())
+        rows = expand_challenge(data)
+        validate_cases(rows)
+        self.assertEqual(len(rows), 49)
+        self.assertEqual(sum(len(row["groups"]) for row in rows), 67)
+        self.assertEqual({row["suite"] for row in rows}, {"spanish-forms"})
+        self.assertTrue(all(not row["complete"] for row in rows))
+
     def test_future_subjunctive_key_is_valid_and_reported_separately(self):
         data = json.loads(Path(__file__).with_name("spanish-future.json").read_text())
         rows = expand_challenge(data)

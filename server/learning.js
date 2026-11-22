@@ -17,7 +17,7 @@ import { hasUsableTimings, synchronizeChunk } from './audio-timing.js';
 import { uploadedAudio } from './uploaded-audio.js';
 import { audioRescans } from './audio-rescan.js';
 import { openIvoox } from './ivoox.js';
-import { migrateSpanishFutureSubjunctive } from './analysis-migrations.js';
+import { migrateSpanishFutureSubjunctive, migrateSpanishVerbForms } from './analysis-migrations.js';
 
 const run = promisify(execFile);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
@@ -69,6 +69,7 @@ export async function openLearning(dir, library, demo, ai) {
     db.exec("ALTER TABLE analyses ADD COLUMN languageSelection TEXT NOT NULL DEFAULT '[]'");
   }
   migrateSpanishFutureSubjunctive(db);
+  migrateSpanishVerbForms(db);
   const vocabulary = readerVocabulary(db, { completedBooks: library.readBooks ? (visitor) => library.readBooks(visitor) : null });
   const estimates = readingEstimates({ db, ai });
   let config = {

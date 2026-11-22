@@ -1,8 +1,15 @@
 import { baseLanguage, selectedLanguages } from '../shared/language.js';
 
 export function migrateSpanishFutureSubjunctive(db) {
+  return refreshSpanishAnalyses(db, 'spanish-future-subjunctive-v1');
+}
+
+export function migrateSpanishVerbForms(db) {
+  return refreshSpanishAnalyses(db, 'spanish-verb-components-and-inflections-v1');
+}
+
+function refreshSpanishAnalyses(db, name) {
   db.exec('CREATE TABLE IF NOT EXISTS analysis_migrations (name TEXT PRIMARY KEY, appliedAt INTEGER NOT NULL) STRICT');
-  const name = 'spanish-future-subjunctive-v1';
   if (db.prepare('SELECT 1 FROM analysis_migrations WHERE name=?').get(name)) return [];
   const affected = db.prepare("SELECT book,language,languageSelection,metrics FROM analyses WHERE state IN ('ready','error')").all().filter((row) => {
     const metrics = JSON.parse(row.metrics || '{}');

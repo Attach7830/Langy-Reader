@@ -258,6 +258,8 @@ export function libraryScreen({ progress, onRemove }) {
           table.append(row);
         }
         breakdown.append(table);
+        if (vocabulary.byLanguage.some((item) => item.language === 'es')) breakdown.append(element('p', 'field-note',
+          'Spanish totals group inflections and verbal participles with their base word. Attached pronouns count separately.'));
       }
       $('#learning-estimate').textContent = analysis.reading?.band
         ? `Estimated ACTFL reading demand · ${analysis.reading.band}`

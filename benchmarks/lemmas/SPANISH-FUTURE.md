@@ -1,5 +1,7 @@
 # Spanish future-subjunctive correction
 
+This record describes the first future-subjunctive correction. Later pronoun, gender and participle grouping has its own [validation record](SPANISH-FORMS.md), including its differences from published lemma conventions.
+
 The small Spanish model invented headwords such as `hubierir`, `tuvierir` and `hicierir` for future subjunctives. The production correction derives these forms from attested third-person-plural preterites in the already installed `spacy-lookups-data` 1.0.5 dictionary. It preserves accents, original source spans and book text. No additional model or API is required.
 
 RAE describes the [simple future subjunctive](https://www.rae.es/gtg/futuro-simple-de-subjuntivo), [compound future subjunctive](https://www.rae.es/gtg/futuro-compuesto-de-subjuntivo) and [conjugation paradigms](https://www.rae.es/dpd/ayuda/modelos-de-conjugacion-verbal). The regression examples include literary, formulaic and legal constructions that the existing model often misanalysed in these checks.

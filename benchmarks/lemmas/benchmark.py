@@ -52,13 +52,14 @@ def langy_analyzer(language, source):
         result = module.analyze(module.Analysis(text=text, language=language))
         groups = []
         for token in result["tokens"]:
-            lemmas = [token["lemma"]]
+            lemmas = [part["lemma"] for part in token.get("components", [])] or [token["lemma"]]
             if language == "es" and token["word"].casefold() in {"al", "del"}:
                 lemmas = ["a" if token["word"].casefold() == "al" else "de", "el"]
             elif language == "pt" and token["pos"] == "ADP" and " " in token["lemma"]:
                 lemmas = token["lemma"].split()
             groups.append({"from": token["from"], "to": token["to"],
-                           "components": [{"lemma": normalized(lemma), "upos": token["pos"] or "X", "excluded": token["properName"]} for lemma in lemmas]})
+                           "components": [{"lemma": normalized(lemma), "upos": token.get("components", [])[index]["pos"] if token.get("components") else token["pos"] or "X",
+                                           "excluded": token["properName"]} for index, lemma in enumerate(lemmas)]})
         return {"groups": groups, "inventory": sorted(normalized(lemma) for lemma in result["lemmas"])}
     return analyze, metadata
 
@@ -129,6 +130,10 @@ def selected_key(args):
         future = load_json(HERE / "spanish-future.json")
         cases.extend(expand_challenge(future))
         provenance["spanish_future"] = {key: value for key, value in future.items() if key != "cases"}
+    if args.suite in {"all", "challenge", "forms"}:
+        forms = load_json(HERE / "spanish-forms.json")
+        cases.extend(expand_challenge(forms))
+        provenance["spanish_forms"] = {key: value for key, value in forms.items() if key != "cases"}
     if args.suite in {"all", "ud"}:
         path = Path(args.corpora)
         if not path.is_file():
@@ -243,7 +248,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--languages", default="es,pt,en,zh", help="Comma-separated es,pt,en,zh")
     parser.add_argument("--engines", default="langy,stanza")
-    parser.add_argument("--suite", choices=["all", "challenge", "future", "ud"], default="all")
+    parser.add_argument("--suite", choices=["all", "challenge", "future", "forms", "ud"], default="all")
     parser.add_argument("--split", choices=["dev", "test", "all"], default="test")
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--output", default=os.environ.get("BENCHMARK_OUTPUT", str(ROOT / "benchmark-results")))

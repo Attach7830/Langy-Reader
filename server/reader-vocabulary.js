@@ -145,6 +145,10 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
     if (language === 'zh') return [...token.word.matchAll(new RegExp(hanPattern, 'gu'))]
       .filter((match) => group.terms.has(match[0]))
       .map((match) => ({ language, unit: group.unit, term: match[0], from: token.from + match.index, to: token.from + match.index + match[0].length }));
+    if (language === 'es' && token.components?.length) return token.components
+      .filter((part) => group.terms.has(part.lemma) && Number.isInteger(part.from) && Number.isInteger(part.to)
+        && part.from >= token.from && part.to <= token.to && part.to > part.from)
+      .map((part) => ({ language, unit: group.unit, term: part.lemma, from: part.from, to: part.to }));
     let terms = [token.lemma];
     if (language === 'es' && ['al', 'del'].includes(token.word.toLowerCase())) terms = [token.word.toLowerCase() === 'al' ? 'a' : 'de', 'el'];
     else if (language === 'pt' && token.pos === 'ADP' && token.lemma.includes(' ')) terms = token.lemma.split(' ');

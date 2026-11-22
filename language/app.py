@@ -13,7 +13,7 @@ import numpy as np
 
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
-from spanish_morphology import spanish_future_correction
+from spanish_morphology import spanish_correction
 
 app = FastAPI()
 lock = threading.RLock()
@@ -84,10 +84,13 @@ def analyze(body: Analysis):
         correction = None
         is_name = token.pos_ == "PROPN" or token.ent_type_ in {"PER", "PERSON", "LOC", "GPE"}
         if language == "es":
-            correction = spanish_future_correction(token)
+            correction = spanish_correction(token)
             if correction:
                 lemma = correction["lemma"]
                 is_name = False
+                if correction.get("components"):
+                    correction["components"] = [{**part, "from": offsets[token.idx + part["from"]],
+                                                  "to": offsets[token.idx + part["to"]]} for part in correction["components"]]
             if token.text.casefold() in {"hago", "hace"}:
                 lemma = "hacer"
             if token.text.casefold() == "haces" and token.pos_ != "NOUN":
@@ -97,6 +100,8 @@ def analyze(body: Analysis):
                 lemmas.update(("a" if token.text.casefold() == "al" else "de", "el"))
             elif language == 'pt' and token.pos_ == 'ADP' and ' ' in lemma:
                 lemmas.update(lemma.split())
+            elif correction and correction.get("components"):
+                lemmas.update(part["lemma"] for part in correction["components"])
             else:
                 lemmas.add(lemma)
         tokens.append({

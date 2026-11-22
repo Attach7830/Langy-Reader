@@ -115,3 +115,19 @@ test('ambiguous Spanish conjugations show both possible lemmas on hover', async 
   assert.equal(root.textContent, 'fuere');
   help.clear();
 });
+
+test('Spanish attached pronouns are displayed separately and dictionary lookup uses the base verb', async (t) => {
+  const dom = new JSDOM('<p id="book">aproximársele</p><div id="word-help" hidden><div data-word-mode></div><strong data-word></strong><div data-word-lemma></div><div data-word-answer></div></div>', { url: 'https://langy.test', pretendToBeVisual: true });
+  globals(t, dom);
+  const root = document.querySelector('#book');
+  document.caretPositionFromPoint = () => ({ offsetNode: root.firstChild, offset: 2 });
+  dom.window.Range.prototype.getClientRects = () => [{ left: 0, top: 0, right: 160, bottom: 25, width: 160, height: 25 }];
+  const help = wordHelp({ preferences: () => ({ ...defaults, mode: 'synonyms' }),
+    lemmaAt: () => ({ lemma: 'aproximar', components: [{ pos: 'VERB' }, { pos: 'PRON', word: 'se' }, { pos: 'PRON', word: 'le' }] }),
+    async request(path, options) { assert.equal(options.body.lemma, 'aproximar'); assert.equal(options.body.word, 'aproximársele'); return { text: 'acercar', language: 'es' }; } });
+  help.bind(root, 'es', () => root.textContent);
+  root.dispatchEvent(new dom.window.MouseEvent('pointermove', { clientX: 10, clientY: 10, bubbles: true }));
+  await until(() => document.querySelector('[data-word-answer]').textContent === 'acercar');
+  assert.equal(document.querySelector('[data-word-lemma]').textContent, 'Lemma · aproximar · Pronouns: se + le');
+  help.clear();
+});
