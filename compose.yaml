@@ -7,6 +7,7 @@ services:
     environment:
       PORT: "8080"
       READER_DATA: /data
+      READER_STORAGE_ID: ${READER_STORAGE_ID:-}
       READER_MODEL: ${READER_MODEL:-qwen3:4b-instruct-2507-q4_K_M}
       READER_USER: ${READER_USER:-reader}
       READER_PASSWORD: ${READER_PASSWORD:-}
@@ -24,7 +25,7 @@ services:
     ports:
       - "${READER_BIND:-0.0.0.0}:${READER_PORT:-8088}:8080"
     volumes:
-      - library:/data
+      - ${READER_DATA_SOURCE:-library}:/data
     depends_on:
       language:
         condition: service_started

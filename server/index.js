@@ -13,11 +13,13 @@ import { opdsPageSize, opdsRouter } from './opds.js';
 import { openProgressSync } from './progress-sync.js';
 import { chapterStorage } from './audio-upload.js';
 import { chapterFileLimit } from './chapter-audio.js';
+import { verifyStorage } from './storage-location.js';
 import { demoUploadLimit, demoBookLimit, demoStorageLimit, limitJobs, visitorMiddleware } from './demo.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const demo = process.env.READER_DEMO === '1';
 const dir = resolve(process.env.READER_DATA || join(root, 'data'));
+await verifyStorage(dir);
 const limits = demo ? { upload: demoUploadLimit, books: demoBookLimit, storage: demoStorageLimit } : null;
 const library = await openLibrary(dir, limits);
 const password = process.env.READER_PASSWORD || '';

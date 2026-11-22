@@ -92,11 +92,26 @@ Protocol requests, position mapping, browser conflicts, and offline recovery hav
 
 ## Available storage
 
-The library shows **available space and total capacity on the drive containing Langy's data directory**, including space shared with other files and applications. In Docker this is the filesystem backing the `library` volume. The bar includes used and reserved space; the available figure reflects space usable by the reader process. This is server storage, not the Xteink's SD card.
+The library shows **available space and total capacity on the drive containing Langy's data directory**, including space shared with other files and applications. In Docker this is the filesystem backing the `library` volume or your configured host folder. The bar includes used and reserved space; the available figure reflects space usable by the reader process. This is server storage, not the Xteink's SD card.
 
 The meter updates when the library refreshes and every minute while it is visible. Select **Refresh** beside the meter to check immediately, including after adding or removing audiobook recordings. If the filesystem cannot report space, the app shows that availability is unavailable.
 
 Demo visitors see only their personal upload allowance (four books, 20 MiB each); the demo does not expose the server's disk capacity. The shared demo storage cap still applies independently.
+
+## Move an existing library to another drive
+
+Prepare and mount the destination drive first, with a persistent mount configured in `/etc/fstab`. The migration helper does not format disks. For example, with your data drive already mounted at `/srv/langy`, run from the repository:
+
+```bash
+git pull --ff-only
+sudo bash scripts/migrate-storage.sh /srv/langy --tunnel
+```
+
+Omit `--tunnel` if you do not use `compose.tunnel.yaml`. The helper requires a running personal reader using a named Docker volume and an existing `.env`. It refuses an unmounted destination or a nonempty destination `library` folder. It builds the reader before downtime, stops it to copy all books, recordings, settings and SQLite databases, and compares every copied file before switching. The copy uses the running reader's existing image without downloading a helper image. Keep this terminal open until it completes.
+
+The helper preserves permissions, retains the original volume and a private `.env.storage-before-*` backup, and sets `READER_DATA_SOURCE` and `READER_STORAGE_ID` in `.env`. Existing credentials, including literal dollar signs, are retained. The reader validates the destination's `.langy-storage-id` before opening any databases; an absent drive or wrong folder causes startup to fail instead of initializing a new library. A failed copy or startup restores the old settings and attempts to restart the original volume. Copies left by an incomplete migration require inspection before retrying.
+
+Your usual Compose commands, including the tunnel override, continue to use the configured host folder through `.env`; no separate storage override is needed. Refresh the library's storage meter and verify books, recordings and reading progress after migration. The original volume remains a backup on the previous filesystem, so it continues using that disk's space until you choose to remove it. Do not remove it until the migrated installation has been checked. New installations can keep using the default named volume without these optional settings.
 
 ## Lemmas and reading demand
 
