@@ -3,10 +3,12 @@ import { defaults, eventKey, fonts, keyLabel, modes, shortcuts, themes } from '.
 import { languageOptions, parseLanguage } from './languages.js';
 import { narrationSettings } from './ui-narration-settings.js';
 import { archiveSettings } from './ui-archive-settings.js';
+import { deviceSettings } from './ui-device-settings.js';
 
 export function settingsDialog({ preferences, apply }) {
   const narration = narrationSettings();
   const archive = archiveSettings();
+  const devices = deviceSettings();
   const dialog = $('#settings');
   const form = $('#settings-form');
   const fields = form.elements;
@@ -102,6 +104,7 @@ export function settingsDialog({ preferences, apply }) {
     form.reset();
     narration.reset();
     archive.reset();
+    devices.reset();
     aiConfig = null;
     const current = preferences();
     for (const key of ['mode', 'summaryLanguage', 'translationLanguage', 'theme', 'background', 'font', 'size', 'line', 'width']) {
@@ -121,6 +124,7 @@ export function settingsDialog({ preferences, apply }) {
     if (tab === 'ai') void loadAI();
     if (tab === 'narration') void narration.load();
     if (tab === 'sources') void archive.load();
+    if (tab === 'devices') void devices.load();
   }
 
   for (const tab of $$('[data-settings-tab]')) tab.addEventListener('click', () => {
@@ -128,6 +132,7 @@ export function settingsDialog({ preferences, apply }) {
     if (tab === aiTab) void loadAI();
     if (tab.dataset.settingsTab === 'narration') void narration.load();
     if (tab.dataset.settingsTab === 'sources') void archive.load();
+    if (tab.dataset.settingsTab === 'devices') void devices.load();
   });
   for (const button of $$('[data-settings]')) button.addEventListener('click', () => open(button.dataset.settings));
 

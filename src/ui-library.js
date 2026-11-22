@@ -1,6 +1,7 @@
 import { $, api, drawIcons, element, icon, message, toast } from './ui.js';
 import { languageName } from './settings.js';
 import { parseLanguage } from './languages.js';
+import { refreshStorage, showStorage } from './storage.js';
 
 export function libraryScreen({ progress, onRemove }) {
   const search = $('#search');
@@ -15,6 +16,10 @@ export function libraryScreen({ progress, onRemove }) {
   let category = 'all', editingBook, editingCategory, selectedFile;
   let bookPending = false, categoryPending = false;
   let audioUploading = false;
+  $('#refresh-storage').addEventListener('click', () => void refreshStorage());
+  setInterval(() => {
+    if (!document.hidden && !$('#library-screen').hidden) void refreshStorage();
+  }, 60_000);
   const archiveWorking = (job) => job && ['queued', 'downloading', 'importing'].includes(job.state);
   function importProgress(job) {
     if (!job) return '';
@@ -126,6 +131,7 @@ export function libraryScreen({ progress, onRemove }) {
 
   async function refresh() {
     snapshot = await api('/api/library');
+    showStorage(snapshot.storage);
     message('#library-error');
     render();
     clearTimeout(libraryTimer);

@@ -32,8 +32,9 @@ The stack also includes a local `language` service for lemma analysis and audio 
 | F | Full screen |
 | S | Open or close the current page summary |
 | P | Play or pause narration |
+| A | Show or hide the audio toolbar without pausing narration |
 
-Change assigned keys in **Settings → Hotkeys**. Space always controls playback while narration is enabled; when narration is off, its assigned action applies. Navigation and summary buttons also work on touchscreens.
+Change assigned keys in **Settings → Hotkeys**. Space always controls playback while narration is enabled; when narration is off, its assigned action applies. **A** toggles the **Hide audio toolbar** preference while playback and page following continue. If A was already assigned to another action in an older installation, that assignment is preserved and the new toolbar shortcut starts unassigned. Navigation and summary buttons also work on touchscreens.
 
 Open **Contents** to jump to a chapter or a PDF bookmark. **Reading outline** in EPUBs builds a navigable list from headings, section breaks, and the opening words of passages. It opens automatically for books with fewer than two linked entries. Long stretches of uninterrupted text get approximate reading markers. The outline is built locally from the uploaded EPUB. PDFs also support a direct page-number jump.
 
@@ -46,6 +47,30 @@ Open **Contents** to jump to a chapter or a PDF bookmark. **Reading outline** in
 To fill uncovered entries, enable **Explain missing synonym entries with AI** under **Settings → Language help**. In this mode the reader sends the surrounding passage to the configured AI connection and displays the answer as an AI context explanation. The option is off initially. Dictionary lookups run offline.
 
 The summary panel sits to the right of the book or below it on narrow screens. Leave it open to get a new summary as you turn pages. Page summaries stay within three short sentences. Select **Go deeper** for a fuller explanation or choose a suggested question about the page. The AI generates the questions from the reading context and answers them when selected. For longer books, Langy looks across the earlier pages for relevant passages. It can also include relevant historical or author background.
+
+## Connect an OPDS reader
+
+Your self-hosted installation publishes an [OPDS 1.2](https://specs.opds.io/opds-1.2.html) catalog at **`http://YOUR_SERVER_IP:8088/opds`**. Open **Settings → Devices** to copy the address for your current installation. No extra container or model is needed.
+
+On Xteink with [CrossPoint firmware](https://github.com/crosspoint-reader/crosspoint-reader/blob/develop/USER_GUIDE.md), open **Settings → Connectivity → OPDS Servers → Add Server**:
+
+- Server name: `Langy`.
+- Server URL: `http://YOUR_SERVER_IP:8088/opds`, or your installation's HTTPS hostname followed by `/opds`.
+- Username/password: the `READER_USER` and `READER_PASSWORD` from your server's `.env` when sign-in is enabled. CrossPoint supports HTTP Basic authentication; it cannot complete an interactive Cloudflare Access login.
+
+Browse **All EPUB books**, **Recently added**, or **Categories**, or search by title/author. Feeds contain at most 20 entries per page for small readers. Downloads keep the original EPUB and its table of contents. The separate **PDF books** catalog serves original PDFs for compatible readers; Langy does not convert them for Xteink. Other OPDS clients can also use `/opds/books?format=all`.
+
+The Xteink must be able to reach that server address over Wi-Fi. `localhost` refers to the device itself. Use HTTPS for connections outside your trusted home network. The catalog, search, covers and downloads all use the same Langy sign-in; passwords are not included in catalog URLs. OPDS is disabled in demo mode to keep visitors' uploads private.
+
+OPDS supplies books to the device. Its firmware handles reading and dictionary lookup; Langy's AI summaries, audio synchronization, and browser reading position do not transfer through OPDS. Actual Xteink hardware has not been tested.
+
+## Available storage
+
+The library shows **available space and total capacity on the drive containing Langy's data directory**, including space shared with other files and applications. In Docker this is the filesystem backing the `library` volume. The bar includes used and reserved space; the available figure reflects space usable by the reader process. This is server storage, not the Xteink's SD card.
+
+The meter updates when the library refreshes and every minute while it is visible. Select **Refresh** beside the meter to check immediately, including after adding or removing audiobook recordings. If the filesystem cannot report space, the app shows that availability is unavailable.
+
+Demo visitors see only their personal upload allowance (four books, 20 MiB each); the demo does not expose the server's disk capacity. The shared demo storage cap still applies independently.
 
 ## Lemmas and reading demand
 

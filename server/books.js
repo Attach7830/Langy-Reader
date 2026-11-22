@@ -1,4 +1,5 @@
-import { mkdir, open, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, rename, rm, statfs, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { join, posix, extname, basename } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { XMLParser } from 'fast-xml-parser';
@@ -118,6 +119,7 @@ export async function openLibrary(dir, limits = null) {
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
+    CREATE TABLE IF NOT EXISTS library_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
     CREATE TABLE IF NOT EXISTS categories (
       id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE,
       owner TEXT NOT NULL, expires INTEGER, UNIQUE(owner, name)
@@ -130,6 +132,11 @@ export async function openLibrary(dir, limits = null) {
       owner TEXT NOT NULL, expires INTEGER, bytes INTEGER NOT NULL
     ) STRICT;
   `);
+  db.prepare('INSERT OR IGNORE INTO library_meta VALUES (?, ?)').run('instanceId', randomUUID());
+  const instanceId = db.prepare('SELECT value FROM library_meta WHERE key = ?').get('instanceId').value;
+  if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'updatedAt')) {
+    db.exec('ALTER TABLE books ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0; UPDATE books SET updatedAt = addedAt;');
+  }
 
   if (db.prepare('PRAGMA user_version').get().user_version === 0) {
     const sample = await sampleBook();
@@ -137,8 +144,9 @@ export async function openLibrary(dir, limits = null) {
     db.exec('BEGIN');
     try {
       db.prepare('INSERT INTO categories VALUES (?, ?, ?, ?)').run('spanish', 'Spanish', shared, null);
-      db.prepare('INSERT INTO books VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+      db.prepare('INSERT INTO books VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
         'sample', 'El café de la esquina', '', 'es', 'epub', 'spanish', null, Date.now(), shared, null, sample.byteLength,
+        Date.now(),
       );
       db.exec('PRAGMA user_version = 1; COMMIT;');
     } catch (error) {
@@ -146,6 +154,8 @@ export async function openLibrary(dir, limits = null) {
       throw error;
     }
   }
+  db.prepare('INSERT OR IGNORE INTO library_meta VALUES (?, ?)').run('updatedAt', String(Date.now()));
+  const touch = () => db.prepare("UPDATE library_meta SET value = ? WHERE key = 'updatedAt'").run(String(Date.now()));
 
   const bookScope = limits ? "(owner = ? OR id = 'sample')" : 'owner = ?';
   const categoryScope = limits ? "(owner = ? OR id = 'spanish')" : 'owner = ?';
@@ -180,11 +190,33 @@ export async function openLibrary(dir, limits = null) {
   function coverPath(book) { return join(folder, `${book.id}.cover`); }
 
   return {
-    uploads, getBook, filePath, coverPath,
+    uploads, getBook, filePath, coverPath, instanceId,
+    async storage(visitor) {
+      if (limits) {
+        const { usedBytes } = db.prepare('SELECT coalesce(sum(bytes), 0) AS usedBytes FROM books WHERE owner = ? AND expires > ?')
+          .get(editable(visitor), Date.now());
+        const totalBytes = limits.books * limits.upload;
+        return { available: true, scope: 'demo', totalBytes, usedBytes, availableBytes: Math.max(0, totalBytes - usedBytes) };
+      }
+      try {
+        const stats = await statfs(dir, { bigint: true });
+        const totalBytes = Number(stats.blocks * stats.bsize);
+        if (totalBytes <= 0) return { available: false, scope: 'drive' };
+        return {
+          available: true, scope: 'drive', totalBytes,
+          availableBytes: Number(stats.bavail * stats.bsize),
+          usedBytes: Number((stats.blocks - stats.bfree) * stats.bsize),
+          reservedBytes: Number((stats.bfree - stats.bavail) * stats.bsize),
+        };
+      } catch {
+        return { available: false, scope: 'drive' };
+      }
+    },
     snapshot(visitor) {
       const owner = editable(visitor);
       return {
         demo: Boolean(limits), maxUpload: limits?.upload ?? maxUpload,
+        updatedAt: Number(db.prepare("SELECT value FROM library_meta WHERE key = 'updatedAt'").get().value),
         categories: db.prepare(`SELECT id, name FROM categories WHERE ${categoryScope} ORDER BY name COLLATE NOCASE`).all(owner),
         books: db.prepare(`SELECT * FROM books WHERE ${bookScope} ORDER BY addedAt DESC, id`).all(owner).map(publicBook),
       };
@@ -200,12 +232,14 @@ export async function openLibrary(dir, limits = null) {
       } else if (!db.prepare('UPDATE categories SET name = ? WHERE id = ? AND owner = ?').run(name, id, owner).changes) {
         throw new RequestError(404, 'Category not found.');
       }
+      touch();
       return publicCategory({ id, name });
     },
     removeCategory(id, visitor) {
       if (!db.prepare('DELETE FROM categories WHERE id = ? AND owner = ?').run(id, editable(visitor)).changes) {
         throw new RequestError(404, 'Category not found.');
       }
+      touch();
     },
     async importBook(id, file, body, visitor) {
       if (!file) throw new RequestError(422, 'Choose an EPUB or PDF file.');
@@ -238,11 +272,12 @@ export async function openLibrary(dir, limits = null) {
           const { used } = db.prepare('SELECT coalesce(sum(bytes), 0) AS used FROM books WHERE expires > ?').get(Date.now());
           if (used + file.size > limits.storage) throw new RequestError(507, 'Demo storage is full. Try later.');
         }
-        db.prepare('INSERT INTO books VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+        db.prepare('INSERT INTO books VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
           id, title, author, language, format, categoryId(body.categoryId, visitor),
-          metadata.thumbnail ? metadata.thumbnailType : null, Date.now(), owner, visitor?.expires ?? null, file.size,
+          metadata.thumbnail ? metadata.thumbnailType : null, Date.now(), owner, visitor?.expires ?? null, file.size, Date.now(),
         );
         saved = true;
+        touch();
         return publicBook(getBook(id, visitor));
       } finally {
         if (!saved) {
@@ -256,14 +291,16 @@ export async function openLibrary(dir, limits = null) {
       const title = asText(body.title, 250);
       const language = normalizeLanguage(body.language);
       if (!title || !language) throw new RequestError(422, 'Enter a title and a valid language code.');
-      db.prepare('UPDATE books SET title = ?, author = ?, language = ?, categoryId = ? WHERE id = ?')
-        .run(title, asText(body.author, 200), language, categoryId(body.categoryId, visitor), id);
+      db.prepare('UPDATE books SET title = ?, author = ?, language = ?, categoryId = ?, updatedAt = ? WHERE id = ?')
+        .run(title, asText(body.author, 200), language, categoryId(body.categoryId, visitor), Date.now(), id);
+      touch();
       return getBook(id);
     },
     async removeBook(id, visitor) {
       const book = getBook(id, visitor);
       if (book.owner !== editable(visitor)) throw new RequestError(403, 'The sample book is read-only.');
       db.prepare('DELETE FROM books WHERE id = ?').run(id);
+      touch();
       const cleanup = await Promise.allSettled([filePath(book), coverPath(book)].map((path) => rm(path, { force: true })));
       if (cleanup.some((result) => result.status === 'rejected')) console.error('Could not remove every file for book', id);
     },
@@ -272,6 +309,7 @@ export async function openLibrary(dir, limits = null) {
       const expired = db.prepare('SELECT id, format FROM books WHERE expires <= ?').all(now);
       db.prepare('DELETE FROM books WHERE expires <= ?').run(now);
       db.prepare('DELETE FROM categories WHERE expires <= ?').run(now);
+      if (expired.length) touch();
       const paths = expired.flatMap((book) => [filePath(book), coverPath(book)]);
       const removed = await Promise.allSettled(paths.map((path) => rm(path, { force: true })));
       if (removed.some((item) => item.status === 'rejected')) console.error('Could not remove all expired demo files.');

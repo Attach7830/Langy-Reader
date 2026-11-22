@@ -5,7 +5,7 @@ import '@fontsource/instrument-serif/latin-400.css';
 import '@fontsource/spectral/latin-400.css';
 import './styles.css';
 import { readerDocks } from './reader-docks.js';
-import { $, $$, api, drawIcons, element, message } from './ui.js';
+import { $, $$, api, drawIcons, element, message, toast } from './ui.js';
 import { libraryScreen } from './ui-library.js';
 import { settingsDialog } from './ui-settings.js';
 import { wordHelp } from './words.js';
@@ -568,13 +568,19 @@ function keydown(event) {
     return;
   }
   if (event.repeat) return;
-  const { previous, next, alternate, fullscreen, summary, playback } = settings.keys;
-  if (![previous, next, alternate, fullscreen, summary, playback].includes(key)) return;
+  const { previous, next, alternate, fullscreen, summary, playback, audioToolbar } = settings.keys;
+  if (![previous, next, alternate, fullscreen, summary, playback, audioToolbar].includes(key)) return;
   event.preventDefault();
   if (key === previous) void move(-1);
   else if (key === next || key === alternate) void move(1);
   else if (key === fullscreen) void toggleFullscreen();
   else if (key === playback) audio.toggle();
+  else if (key === audioToolbar) {
+    settings = { ...settings, audioToolbarHidden: !settings.audioToolbarHidden };
+    saveSettings(settings);
+    audio.apply();
+    toast(settings.audioToolbarHidden ? 'Audio toolbar hidden' : 'Audio toolbar shown');
+  }
   else if (key === summary) {
     if (summaryPanel.hidden) summarize();
     else closeSummary();

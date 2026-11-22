@@ -36,6 +36,12 @@
         <div><h1 id="library-title">Your library</h1><p id="library-description"></p></div>
         <button class="button primary" id="import-book" type="button"><i data-lucide="plus"></i><span>Import book</span></button>
       </div>
+      <div class="storage-status" id="library-storage" hidden>
+        <span id="storage-summary"></span>
+        <button class="button quiet small" id="refresh-storage" type="button" aria-label="Refresh available storage">Refresh</button>
+        <meter id="storage-meter" min="0" max="1" value="0" aria-label="Library drive space used or reserved"></meter>
+        <small id="storage-detail"></small>
+      </div>
       <div id="demo-note" class="demo-note" hidden>
         <i data-lucide="info"></i>
         <div>
@@ -175,6 +181,7 @@
         <button type="button" data-settings-tab="shortcuts">Hotkeys</button>
         <button type="button" data-settings-tab="narration">Narration</button>
         <button type="button" data-settings-tab="sources">Book sources</button>
+        <button type="button" data-settings-tab="devices">Devices</button>
         <button type="button" data-settings-tab="ai" hidden>AI connection</button>
       </nav>
       <section class="modal-body" data-settings-panel="reading">
@@ -218,6 +225,7 @@
         <div class="shortcut-list" id="shortcut-list"></div>
         <p class="field-note">Select a hotkey, then press its replacement. Press Backspace to clear a hotkey.</p>
         <p class="field-note">While narration is enabled, Space plays or pauses audio and takes priority over its assigned hotkey. With narration off, Space follows your assigned hotkeys.</p>
+        <p class="field-note">A shows or hides the audio toolbar by default. Playback and page following continue while it is hidden.</p>
         <button class="button quiet" id="reset-shortcuts" type="button"><i data-lucide="rotate-ccw"></i>Reset hotkeys</button>
       </section>
       <section class="modal-body" data-settings-panel="ai" hidden>
@@ -276,6 +284,20 @@
           <p class="field-note">Save the connection, then choose Anna’s Archive in Import book and paste a book link or MD5. Import supports EPUB and PDF within the normal size limit.</p>
         </div>
         <p class="field-note" id="archive-result" role="status" hidden></p>
+      </section>
+      <section class="modal-body" data-settings-panel="devices" hidden>
+        <h3>OPDS library</h3>
+        <p class="field-note">Browse and download your books on an OPDS reader. On Xteink with CrossPoint firmware, open Settings → Connectivity → OPDS Servers → Add Server.</p>
+        <p class="field-note" id="opds-demo-note" hidden>OPDS is available on your self-hosted installation. This demo does not publish visitors’ books in a shared catalog.</p>
+        <div id="opds-connection" class="form-stack" hidden>
+          <label class="field">Catalog address <input id="opds-url" type="url" readonly spellcheck="false" aria-describedby="opds-network-note"></label>
+          <button class="button secondary" id="copy-opds-url" type="button">Copy catalog address</button>
+          <p class="field-note" id="opds-auth"></p>
+          <p class="field-note" id="opds-network-note">Use an address your reader can reach on Wi-Fi. A localhost address only works on the server itself. HTTPS is recommended when connecting outside your home network.</p>
+        </div>
+        <p class="field-note">EPUBs are listed first, with categories, title/author search and recent additions. PDFs have a separate catalog and may need conversion for Xteink. Downloads use the original book file.</p>
+        <p class="field-note">OPDS transfers books. Reading, dictionary lookup and progress on the device use its own firmware; Langy’s AI summaries and synced audio remain in the web reader.</p>
+        <p class="field-note" id="opds-result" role="status" hidden></p>
       </section>
       <p class="form-error" id="settings-error" role="alert" hidden></p>
       <footer class="modal-footer"><button class="button quiet" type="button" data-close>Cancel</button><button class="button primary" type="submit">Save settings</button></footer>

@@ -9,6 +9,7 @@ import { openThesaurus } from './thesaurus.js';
 import { openLearning } from './learning.js';
 import { openArchive } from './annas-archive.js';
 import { maxAudioUpload } from './uploaded-audio.js';
+import { opdsPageSize, opdsRouter } from './opds.js';
 import { demoUploadLimit, demoBookLimit, demoStorageLimit, limitJobs, visitorMiddleware } from './demo.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -53,6 +54,8 @@ if (password) {
   });
 }
 
+app.use('/opds', opdsRouter({ library, demo }));
+
 app.use('/api', (req, res, next) => {
   res.set('Cache-Control', 'no-store');
   if (['GET', 'HEAD'].includes(req.method)) return next();
@@ -67,7 +70,7 @@ app.use('/api', (req, res, next) => {
 
 if (demo) {
   const identifyVisitor = await visitorMiddleware(dir);
-  app.use(['/api/library', '/api/categories', '/api/books'], identifyVisitor);
+  app.use(['/api/library', '/api/categories', '/api/books', '/api/storage'], identifyVisitor);
   app.post(['/api/ai/word', '/api/ai/summary'], identifyVisitor);
   await library.pruneDemoBooks();
   await learning.prune();
@@ -85,10 +88,16 @@ if (demo) {
 
 app.get('/api/settings/learning', (req, res) => res.json(learning.settings()));
 app.get('/api/settings/archive', (_, res) => res.json(archive.settings()));
-app.get('/api/library', (req, res) => {
+app.get('/api/settings/opds', (_, res) => res.json({
+  available: !demo, path: '/opds', username: !demo && password ? process.env.READER_USER || 'reader' : '',
+  authenticated: !demo && Boolean(password), pageSize: opdsPageSize,
+}));
+app.get('/api/storage', async (req, res) => res.json(await library.storage(req.visitor)));
+app.get('/api/library', async (req, res) => {
   const snapshot = library.snapshot(req.visitor);
   res.json({
     ...snapshot,
+    storage: await library.storage(req.visitor),
     archive: { available: !demo, hasKey: archive.settings().hasKey, job: demo ? null : archive.latest() },
     books: snapshot.books.map((book) => ({ ...book, learning: learning.info(library.getBook(book.id, req.visitor)) })),
   });

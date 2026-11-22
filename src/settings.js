@@ -27,6 +27,7 @@ export const shortcuts = {
   fullscreen: 'Full screen',
   summary: 'Toggle page summary',
   playback: 'Play or pause narration',
+  audioToolbar: 'Show or hide audio toolbar',
 };
 
 export const defaults = {
@@ -34,7 +35,7 @@ export const defaults = {
   font: 'spectral', size: 20, line: 1.65, width: 'balanced', pdfNight: true,
   audioEnabled: false, audioToolbarHidden: false, podcastMode: false, audioHighlight: true, audioRate: 1,
   audioRecordings: {},
-  keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's', playback: 'p' },
+  keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's', playback: 'p', audioToolbar: 'a' },
   autoHideDocks: false,
 };
 
@@ -50,7 +51,12 @@ function write(key, value) {
 
 export function getSettings() {
   const saved = read('langy-settings-v1', {});
-  return { ...defaults, ...saved, keys: { ...defaults.keys, ...saved.keys } };
+  const keys = { ...defaults.keys, ...saved.keys };
+  // Preserve an existing custom assignment to A when introducing this shortcut.
+  if (!Object.hasOwn(saved.keys || {}, 'audioToolbar') && Object.values(saved.keys || {}).includes(defaults.keys.audioToolbar)) {
+    keys.audioToolbar = '';
+  }
+  return { ...defaults, ...saved, keys };
 }
 
 export const saveSettings = (settings) => write('langy-settings-v1', settings);
