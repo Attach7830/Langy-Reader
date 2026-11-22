@@ -1,0 +1,1052 @@
+{
+  "version": 1,
+  "suite": "spanish-future",
+  "title": "Spanish future subjunctive and lookalike controls",
+  "provenance": "Original assistant-authored targeted regression key; explicitly labelled targets checked against RAE conjugation paradigms. Not independently human-adjudicated. Added after the initial pilot; report separately from the unchanged published reference sample.",
+  "license": "CC0-1.0",
+  "references": [
+    "https://www.rae.es/gtg/futuro-simple-de-subjuntivo",
+    "https://www.rae.es/gtg/futuro-compuesto-de-subjuntivo",
+    "https://www.rae.es/dpd/ayuda/modelos-de-conjugacion-verbal"
+  ],
+  "cases": [
+    {
+      "id": "es-future-hubiere",
+      "language": "es",
+      "split": "test",
+      "text": "Si hubiere tiempo, podremos hablar.",
+      "answers": [
+        [
+          "hubiere",
+          [
+            [
+              "haber",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-hubieres",
+      "language": "es",
+      "split": "test",
+      "text": "Si hubieres terminado, avísame.",
+      "answers": [
+        [
+          "hubieres",
+          [
+            [
+              "haber",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "terminado",
+          [
+            [
+              "terminar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-hubieremos",
+      "language": "es",
+      "split": "test",
+      "text": "Si hubiéremos llegado, nos verán.",
+      "answers": [
+        [
+          "hubiéremos",
+          [
+            [
+              "haber",
+              "AUX"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-hubiereis",
+      "language": "es",
+      "split": "test",
+      "text": "Si hubiereis leído la carta, entenderéis la decisión.",
+      "answers": [
+        [
+          "hubiereis",
+          [
+            [
+              "haber",
+              "AUX"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-hubieren",
+      "language": "es",
+      "split": "dev",
+      "text": "Quienes hubieren declarado podrán marcharse.",
+      "answers": [
+        [
+          "hubieren",
+          [
+            [
+              "haber",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "declarado",
+          [
+            [
+              "declarar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-tuviere",
+      "language": "es",
+      "split": "test",
+      "text": "Quien tuviere noticias deberá avisar.",
+      "answers": [
+        [
+          "tuviere",
+          [
+            [
+              "tener",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-tuvieres",
+      "language": "es",
+      "split": "test",
+      "text": "Si tú tuvieres alguna duda, pregunta.",
+      "answers": [
+        [
+          "tuvieres",
+          [
+            [
+              "tener",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-tuvieremos",
+      "language": "es",
+      "split": "dev",
+      "text": "Si tuviéremos ocasión, volveremos.",
+      "answers": [
+        [
+          "tuviéremos",
+          [
+            [
+              "tener",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-tuviereis",
+      "language": "es",
+      "split": "test",
+      "text": "Si vosotros tuviereis razón, lo aceptaré.",
+      "answers": [
+        [
+          "tuviereis",
+          [
+            [
+              "tener",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-tuvieren",
+      "language": "es",
+      "split": "test",
+      "text": "Los que tuvieren sed podrán beber.",
+      "answers": [
+        [
+          "tuvieren",
+          [
+            [
+              "tener",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-hiciere",
+      "language": "es",
+      "split": "dev",
+      "text": "Quien hiciere daño responderá por ello.",
+      "answers": [
+        [
+          "hiciere",
+          [
+            [
+              "hacer",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-hiciereis",
+      "language": "es",
+      "split": "dev",
+      "text": "Si así lo hiciereis, quedará resuelto.",
+      "answers": [
+        [
+          "hiciereis",
+          [
+            [
+              "hacer",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-hicieremos",
+      "language": "es",
+      "split": "test",
+      "text": "Si hiciéremos ruido, despertarán.",
+      "answers": [
+        [
+          "hiciéremos",
+          [
+            [
+              "hacer",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-hicieren",
+      "language": "es",
+      "split": "test",
+      "text": "Los que hicieren la tarea podrán salir.",
+      "answers": [
+        [
+          "hicieren",
+          [
+            [
+              "hacer",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-pudiere",
+      "language": "es",
+      "split": "test",
+      "text": "Quien pudiere ayudar deberá acercarse.",
+      "answers": [
+        [
+          "pudiere",
+          [
+            [
+              "poder",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-pudieremos",
+      "language": "es",
+      "split": "test",
+      "text": "Si pudiéremos salir, iremos juntos.",
+      "answers": [
+        [
+          "pudiéremos",
+          [
+            [
+              "poder",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-supiere",
+      "language": "es",
+      "split": "test",
+      "text": "Quien supiere la respuesta deberá levantar la mano.",
+      "answers": [
+        [
+          "supiere",
+          [
+            [
+              "saber",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-quisiere",
+      "language": "es",
+      "split": "test",
+      "text": "Quien quisiere entrar tendrá que esperar.",
+      "answers": [
+        [
+          "quisiere",
+          [
+            [
+              "querer",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-viniere",
+      "language": "es",
+      "split": "test",
+      "text": "Si viniere temprano, podrá entrar.",
+      "answers": [
+        [
+          "viniere",
+          [
+            [
+              "venir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-vinieren",
+      "language": "es",
+      "split": "test",
+      "text": "Quienes vinieren mañana encontrarán la puerta abierta.",
+      "answers": [
+        [
+          "vinieren",
+          [
+            [
+              "venir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-dijere",
+      "language": "es",
+      "split": "test",
+      "text": "Quien dijere la verdad podrá descansar.",
+      "answers": [
+        [
+          "dijere",
+          [
+            [
+              "decir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-dijeremos",
+      "language": "es",
+      "split": "dev",
+      "text": "Si dijéremos eso, nos creerán.",
+      "answers": [
+        [
+          "dijéremos",
+          [
+            [
+              "decir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-anduviere",
+      "language": "es",
+      "split": "test",
+      "text": "Quien anduviere por el bosque encontrará señales.",
+      "answers": [
+        [
+          "anduviere",
+          [
+            [
+              "andar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-leyere",
+      "language": "es",
+      "split": "test",
+      "text": "Quien leyere estas páginas comprenderá mi decisión.",
+      "answers": [
+        [
+          "leyere",
+          [
+            [
+              "leer",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-oyere",
+      "language": "es",
+      "split": "test",
+      "text": "Si oyere voces, no abrirá la puerta.",
+      "answers": [
+        [
+          "oyere",
+          [
+            [
+              "oír",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-cayere",
+      "language": "es",
+      "split": "test",
+      "text": "Si cayere la lluvia, buscaremos refugio.",
+      "answers": [
+        [
+          "cayere",
+          [
+            [
+              "caer",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-trajere",
+      "language": "es",
+      "split": "test",
+      "text": "Quien trajere las llaves podrá abrir.",
+      "answers": [
+        [
+          "trajere",
+          [
+            [
+              "traer",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-produjere",
+      "language": "es",
+      "split": "dev",
+      "text": "Quien produjere las pruebas será escuchado.",
+      "answers": [
+        [
+          "produjere",
+          [
+            [
+              "producir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-condujere",
+      "language": "es",
+      "split": "test",
+      "text": "Quien condujere el carro deberá conocer el camino.",
+      "answers": [
+        [
+          "condujere",
+          [
+            [
+              "conducir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-tradujere",
+      "language": "es",
+      "split": "test",
+      "text": "Quien tradujere la carta recibirá una copia.",
+      "answers": [
+        [
+          "tradujere",
+          [
+            [
+              "traducir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-satisficiere",
+      "language": "es",
+      "split": "test",
+      "text": "Si satisficiere las condiciones, será admitido.",
+      "answers": [
+        [
+          "satisficiere",
+          [
+            [
+              "satisfacer",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-deshiciere",
+      "language": "es",
+      "split": "dev",
+      "text": "Quien deshiciere el nudo deberá atarlo de nuevo.",
+      "answers": [
+        [
+          "deshiciere",
+          [
+            [
+              "deshacer",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-previniere",
+      "language": "es",
+      "split": "test",
+      "text": "Quien previniere el peligro evitará la desgracia.",
+      "answers": [
+        [
+          "previniere",
+          [
+            [
+              "prevenir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-sostuviere",
+      "language": "es",
+      "split": "dev",
+      "text": "Quien sostuviere esa afirmación tendrá que probarla.",
+      "answers": [
+        [
+          "sostuviere",
+          [
+            [
+              "sostener",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-repitiere",
+      "language": "es",
+      "split": "test",
+      "text": "Quien repitiere esas palabras será oído.",
+      "answers": [
+        [
+          "repitiere",
+          [
+            [
+              "repetir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-durmiere",
+      "language": "es",
+      "split": "test",
+      "text": "Quien durmiere aquí deberá guardar silencio.",
+      "answers": [
+        [
+          "durmiere",
+          [
+            [
+              "dormir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-muriere",
+      "language": "es",
+      "split": "test",
+      "text": "Si muriere el dueño, decidirán sus herederos.",
+      "answers": [
+        [
+          "muriere",
+          [
+            [
+              "morir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-pidiere",
+      "language": "es",
+      "split": "test",
+      "text": "Quien pidiere ayuda será atendido.",
+      "answers": [
+        [
+          "pidiere",
+          [
+            [
+              "pedir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-sintiere",
+      "language": "es",
+      "split": "test",
+      "text": "Si sintiere frío, cerrará la ventana.",
+      "answers": [
+        [
+          "sintiere",
+          [
+            [
+              "sentir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-cantare",
+      "language": "es",
+      "split": "test",
+      "text": "Si cantare el vecino, escucharemos.",
+      "answers": [
+        [
+          "cantare",
+          [
+            [
+              "cantar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-cantares-verbal",
+      "language": "es",
+      "split": "test",
+      "text": "Si cantares esta noche, iremos a escucharte.",
+      "answers": [
+        [
+          "cantares",
+          [
+            [
+              "cantar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-cantaremos-subj",
+      "language": "es",
+      "split": "test",
+      "text": "Si cantáremos al amanecer, despertarán.",
+      "answers": [
+        [
+          "cantáremos",
+          [
+            [
+              "cantar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-hablaremos-subj",
+      "language": "es",
+      "split": "dev",
+      "text": "Si habláremos claro, nos entenderán.",
+      "answers": [
+        [
+          "habláremos",
+          [
+            [
+              "hablar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-temiere",
+      "language": "es",
+      "split": "dev",
+      "text": "Quien temiere el viaje podrá quedarse.",
+      "answers": [
+        [
+          "temiere",
+          [
+            [
+              "temer",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-partiere",
+      "language": "es",
+      "split": "test",
+      "text": "Si partiere mañana, llegará a tiempo.",
+      "answers": [
+        [
+          "partiere",
+          [
+            [
+              "partir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-viere",
+      "language": "es",
+      "split": "test",
+      "text": "Quien viere la señal deberá detenerse.",
+      "answers": [
+        [
+          "viere",
+          [
+            [
+              "ver",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-diere",
+      "language": "es",
+      "split": "dev",
+      "text": "Quien diere su palabra deberá cumplirla.",
+      "answers": [
+        [
+          "diere",
+          [
+            [
+              "dar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-hallare",
+      "language": "es",
+      "split": "test",
+      "text": "Quien hallare el libro deberá devolverlo.",
+      "answers": [
+        [
+          "hallare",
+          [
+            [
+              "hallar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-fuere-copula",
+      "language": "es",
+      "split": "test",
+      "text": "Si fuere necesario, volveré.",
+      "answers": [
+        [
+          "fuere",
+          [
+            [
+              "ser",
+              "AUX"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-fuere-direction",
+      "language": "es",
+      "split": "test",
+      "text": "Adonde fuere el viajero, encontrará ayuda.",
+      "answers": [
+        [
+          "fuere",
+          [
+            [
+              "ir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-fueres-direction",
+      "language": "es",
+      "split": "dev",
+      "text": "Adonde fueres mañana, llevarás esta carta.",
+      "answers": [
+        [
+          "fueres",
+          [
+            [
+              "ir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-fueren-direction",
+      "language": "es",
+      "split": "test",
+      "text": "Adonde fueren los viajeros, encontrarán refugio.",
+      "answers": [
+        [
+          "fueren",
+          [
+            [
+              "ir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-fuere-fixed",
+      "language": "es",
+      "split": "test",
+      "text": "Sea quien fuere, debe esperar.",
+      "answers": [
+        [
+          "fuere",
+          [
+            [
+              "ser",
+              "AUX"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-fuere-passive",
+      "language": "es",
+      "split": "test",
+      "text": "Quien fuere elegido deberá aceptar el cargo.",
+      "answers": [
+        [
+          "fuere",
+          [
+            [
+              "ser",
+              "AUX"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-fueremos-passive",
+      "language": "es",
+      "split": "test",
+      "text": "Si fuéremos llamados, acudiremos.",
+      "answers": [
+        [
+          "fuéremos",
+          [
+            [
+              "ser",
+              "AUX"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-control-cantares",
+      "language": "es",
+      "split": "test",
+      "text": "Los cantares antiguos emocionaron a los niños.",
+      "answers": [
+        [
+          "cantares",
+          [
+            [
+              "cantar",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-control-pesares",
+      "language": "es",
+      "split": "test",
+      "text": "Recordó sus pesares sin llorar.",
+      "answers": [
+        [
+          "pesares",
+          [
+            [
+              "pesar",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-control-flores",
+      "language": "es",
+      "split": "test",
+      "text": "Las flores cubrían la mesa.",
+      "answers": [
+        [
+          "flores",
+          [
+            [
+              "flor",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-control-madre",
+      "language": "es",
+      "split": "test",
+      "text": "La madre cerró la ventana.",
+      "answers": [
+        [
+          "madre",
+          [
+            [
+              "madre",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-future-control-quiere",
+      "language": "es",
+      "split": "test",
+      "text": "Ella quiere leer el libro.",
+      "answers": [
+        [
+          "quiere",
+          [
+            [
+              "querer",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    }
+  ]
+}

@@ -97,3 +97,21 @@ test('hover in an English passage resolves a Chinese compound across inline mark
   assert.equal(root.innerHTML, source);
   help.clear();
 });
+
+test('ambiguous Spanish conjugations show both possible lemmas on hover', async (t) => {
+  const dom = new JSDOM('<p id="book">fuere</p><div id="word-help" hidden><div data-word-mode></div><strong data-word></strong><div data-word-lemma></div><div data-word-answer></div></div>', { url: 'https://langy.test', pretendToBeVisual: true });
+  globals(t, dom);
+  const root = document.querySelector('#book'), node = root.firstChild;
+  document.caretPositionFromPoint = () => ({ offsetNode: node, offset: 1 });
+  dom.window.Range.prototype.getClientRects = () => [{ left: 0, top: 0, right: 60, bottom: 25, width: 60, height: 25 }];
+  const help = wordHelp({ preferences: () => ({ ...defaults, mode: 'translation' }),
+    lemmaAt: () => ({ lemma: 'ser', lemmaCandidates: ['ir', 'ser'], lemmaUncertain: true }),
+    async request(path, options) { assert.equal(options.body.lemma, 'ser'); return { text: 'were / went', language: 'en' }; } });
+  help.bind(root, 'es', () => root.textContent);
+  root.dispatchEvent(new dom.window.MouseEvent('pointermove', { clientX: 10, clientY: 10, bubbles: true }));
+  await until(() => document.querySelector('[data-word-answer]').textContent === 'were / went');
+  assert.equal(document.querySelector('[data-word-lemma]').textContent, 'Possible lemmas · ir / ser');
+  assert.equal(document.querySelector('[data-word-lemma]').hidden, false);
+  assert.equal(root.textContent, 'fuere');
+  help.clear();
+});

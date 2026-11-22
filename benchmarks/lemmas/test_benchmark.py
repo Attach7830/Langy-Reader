@@ -23,6 +23,16 @@ def prediction(reference):
 
 
 class BenchmarkTests(unittest.TestCase):
+    def test_future_subjunctive_key_is_valid_and_reported_separately(self):
+        data = json.loads(Path(__file__).with_name("spanish-future.json").read_text())
+        rows = expand_challenge(data)
+        validate_cases(rows)
+        self.assertEqual(len(rows), 60)
+        self.assertEqual({row["suite"] for row in rows}, {"spanish-future"})
+        self.assertEqual({row["language"] for row in rows}, {"es"})
+        self.assertEqual({row["split"] for row in rows}, {"dev", "test"})
+        self.assertTrue(all(not row["complete"] for row in rows))
+
     def test_entire_original_answer_key_is_valid_and_covers_languages_and_splits(self):
         data = json.loads(Path(__file__).with_name("challenge.json").read_text())
         rows = expand_challenge(data)

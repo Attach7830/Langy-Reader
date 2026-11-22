@@ -39,7 +39,7 @@ def expand_challenge(document):
     cases = []
     for raw in document["cases"]:
         case = {key: value for key, value in raw.items() if key != "answers"}
-        case.update(suite="characters" if raw.get("kind") == "characters" else "challenge", complete=raw.get("kind") == "characters", groups=[])
+        case.update(suite="characters" if raw.get("kind") == "characters" else document.get("suite", "challenge"), complete=raw.get("kind") == "characters", groups=[])
         cursors = {}
         for answer in raw["answers"]:
             form, expected = answer

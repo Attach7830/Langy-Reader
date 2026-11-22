@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
 COPY install_models.py ./
 RUN python install_models.py && useradd --system --uid 10001 --create-home langy
 COPY app.py ./
+COPY spanish_morphology.py ./
 COPY book_alignment.py ./
 USER langy
 EXPOSE 8000

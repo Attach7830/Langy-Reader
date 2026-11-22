@@ -13,6 +13,7 @@ import numpy as np
 
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
+from spanish_morphology import spanish_future_correction
 
 app = FastAPI()
 lock = threading.RLock()
@@ -80,8 +81,13 @@ def analyze(body: Analysis):
         if not any(char.isalpha() for char in token.text):
             continue
         lemma = unicodedata.normalize("NFC", token.lemma_ or token.text).casefold()
+        correction = None
         is_name = token.pos_ == "PROPN" or token.ent_type_ in {"PER", "PERSON", "LOC", "GPE"}
         if language == "es":
+            correction = spanish_future_correction(token)
+            if correction:
+                lemma = correction["lemma"]
+                is_name = False
             if token.text.casefold() in {"hago", "hace"}:
                 lemma = "hacer"
             if token.text.casefold() == "haces" and token.pos_ != "NOUN":
@@ -96,6 +102,7 @@ def analyze(body: Analysis):
         tokens.append({
             "word": token.text, "from": offsets[token.idx], "to": offsets[token.idx + len(token)],
             "lemma": lemma, "pos": token.pos_, "properName": is_name,
+            **(correction or {}),
         })
     return {"tokens": tokens, "lemmas": sorted(lemmas), "method": method}
 

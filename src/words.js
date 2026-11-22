@@ -94,7 +94,9 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
     const key = JSON.stringify([mode, language, target, item.word, context, mandarin]);
     const label = mode === 'translation' ? `${languageName(target)} translation` : modes[mode];
     const detected = lemmaAt(item.node, item.index);
-    lemmaLabel.textContent = detected?.lemma ? `Lemma · ${detected.lemma}` : '';
+    lemmaLabel.textContent = detected?.lemmaUncertain && detected.lemmaCandidates?.length
+      ? `Possible lemmas · ${detected.lemmaCandidates.join(' / ')}`
+      : detected?.lemma ? `Lemma · ${detected.lemma}` : '';
     lemmaLabel.hidden = chinese || !detected?.lemma;
     function display(result) {
       if (result.mandarin) {

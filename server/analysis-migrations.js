@@ -1,0 +1,23 @@
+import { baseLanguage, selectedLanguages } from '../shared/language.js';
+
+export function migrateSpanishFutureSubjunctive(db) {
+  db.exec('CREATE TABLE IF NOT EXISTS analysis_migrations (name TEXT PRIMARY KEY, appliedAt INTEGER NOT NULL) STRICT');
+  const name = 'spanish-future-subjunctive-v1';
+  if (db.prepare('SELECT 1 FROM analysis_migrations WHERE name=?').get(name)) return [];
+  const affected = db.prepare("SELECT book,language,languageSelection,metrics FROM analyses WHERE state IN ('ready','error')").all().filter((row) => {
+    const metrics = JSON.parse(row.metrics || '{}');
+    const languages = [row.language, ...selectedLanguages(JSON.parse(row.languageSelection || '[]')), ...(metrics.languages || []),
+      ...(metrics.byLanguage || []).map((item) => item.language)];
+    return languages.some((language) => baseLanguage(language, '') === 'es');
+  }).map((row) => row.book);
+  db.exec('BEGIN');
+  try {
+    for (const id of affected) {
+      db.prepare("UPDATE analyses SET state='queued',lemmas=NULL,wordCount=NULL,method=NULL,metrics=NULL,error=NULL WHERE book=?").run(id);
+      db.prepare('DELETE FROM estimates WHERE book=?').run(id);
+    }
+    db.prepare('INSERT INTO analysis_migrations VALUES(?,?)').run(name, Date.now());
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  return affected;
+}

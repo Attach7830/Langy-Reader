@@ -32,11 +32,15 @@ def package_versions():
 
 
 def langy_analyzer(language, source):
+    sys.path.insert(0, str(Path(source).resolve().parent))
     spec = importlib.util.spec_from_file_location("langy_benchmark_app", source)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module; spec.loader.exec_module(module)
     metadata = {"source_sha256": hashlib.sha256(Path(source).read_bytes()).hexdigest(),
-                "name_filter": "Unmodified Langy PROPN/PER/PERSON/LOC/GPE exclusion", "model": "Han character scan"}
+                "name_filter": "Production Langy PROPN/PER/PERSON/LOC/GPE exclusion, including its lexical overrides", "model": "Han character scan"}
+    helper = Path(source).with_name("spanish_morphology.py")
+    if helper.is_file():
+        metadata["spanish_morphology_sha256"] = hashlib.sha256(helper.read_bytes()).hexdigest()
     if language != "zh":
         model, method = module.pipeline(language)
         expected = load_json(HERE / "models.json")["spacy_models"][language]
@@ -97,9 +101,11 @@ def worker(args):
     else:
         analyze, metadata = stanza_analyzer(args.worker_language, args.stanza_models, args.threads)
     load_seconds = time.perf_counter() - started
-    warmup = {"es": "Esta es una frase breve para preparar el modelo.", "pt": "Esta é uma frase simples para preparar o modelo.",
+    warmup = {"es": "Esta es una frase breve para preparar el modelo. Si hubiere tiempo, leeré.", "pt": "Esta é uma frase simples para preparar o modelo.",
               "en": "This is a short sentence to warm up the model.", "zh": "我读书。"}
+    started = time.perf_counter()
     analyze(warmup[args.worker_language])
+    warmup_seconds = time.perf_counter() - started
     rows = []
     for case in load_json(args.worker_key)["cases"]:
         if case["language"] != args.worker_language:
@@ -109,7 +115,7 @@ def worker(args):
         rows.append(score_case(case, prediction))
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024 if sys.platform == "darwin" else 1024)
     result = {"engine": args.worker_engine, "language": args.worker_language, "rows": rows,
-              "metadata": {**metadata, "packages": package_versions(), "load_seconds": load_seconds,
+              "metadata": {**metadata, "packages": package_versions(), "load_seconds": load_seconds, "warmup_seconds": warmup_seconds,
                            "peak_worker_rss_mib": peak, "threads": args.threads}}
     Path(args.worker_output).write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
 
@@ -119,6 +125,10 @@ def selected_key(args):
     cases, provenance = [], {"challenge": {key: value for key, value in challenge.items() if key != "cases"}}
     if args.suite in {"all", "challenge"}:
         cases.extend(expand_challenge(challenge))
+    if args.suite in {"all", "challenge", "future"}:
+        future = load_json(HERE / "spanish-future.json")
+        cases.extend(expand_challenge(future))
+        provenance["spanish_future"] = {key: value for key, value in future.items() if key != "cases"}
     if args.suite in {"all", "ud"}:
         path = Path(args.corpora)
         if not path.is_file():
@@ -233,7 +243,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--languages", default="es,pt,en,zh", help="Comma-separated es,pt,en,zh")
     parser.add_argument("--engines", default="langy,stanza")
-    parser.add_argument("--suite", choices=["all", "challenge", "ud"], default="all")
+    parser.add_argument("--suite", choices=["all", "challenge", "future", "ud"], default="all")
     parser.add_argument("--split", choices=["dev", "test", "all"], default="test")
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--output", default=os.environ.get("BENCHMARK_OUTPUT", str(ROOT / "benchmark-results")))

@@ -16,12 +16,13 @@ The benchmark is a standalone Compose project. It mounts only `benchmark-results
 
 ## The answer key
 
-There are two separately reported sources:
+There are three separately reported sources:
 
 1. **Published references:** fixed, checksum-verified development/test files from Universal Dependencies **r2.15**, using Spanish AnCora, Portuguese Bosque and English EWT. `sources.json` pins repository commits and file SHA-256 values. `prepare_corpora.py` constructs the answer key directly from the existing annotations, without asking either candidate model or an LLM to label them. It selects whole sentences by SHA-256 ordering of sentence IDs, with budgets of 400 lexical components per language for development and 800 for test. Original annotations, multiword-token parents, source text, contributor/license metadata and excluded alignment cases are retained. The upstream annotations have different histories: AnCora lemmas were converted from manual annotation; Bosque annotations were converted with corrections; EWT lemmas were generated with corrections. These are published reference annotations, not a promise that every entry is infallible.
 2. **Original challenge key:** `challenge.json` contains **105 cases and 299 explicitly annotated targets**, including Spanish/Portuguese/English ambiguities, regional nouns, inflections, contractions, attached pronouns, proper names and Mandarin characters. The sentences and expected answers were authored and reviewed by the assistant; they have not been independently adjudicated by a human. The expected answers are explicit and never generated from the model under test. These are targeted checks, so unannotated context is not scored and full vocabulary-inventory statistics are omitted for them. Chinese character checks have complete character annotations and are reported separately from lemma results.
+3. **Spanish future-subjunctive regressions:** `spanish-future.json` adds **60 cases and 62 annotated targets**, reported separately as `spanish-future`. These assistant-authored checks cover regular/irregular paradigms, compound auxiliaries, clear *ser/ir* constructions and noun lookalikes. They were used while implementing the correction and are regression evidence, rather than untouched holdout data. See [the before/after comparison](SPANISH-FUTURE.md). The original challenge and published keys remain unchanged.
 
-The default test run has 787 Spanish, 740 Portuguese and 811 English **published source-word spans**, plus 214 original lemma targets and 27 Mandarin character targets. Component counts differ from source-word counts because a contraction or attached pronoun can represent several grammatical words. `--validate-only` reports exact selected sizes. The full key includes both development and test cases; every run saves its selected, self-contained `answer-key.json` for inspection.
+The default test run has 787 Spanish, 740 Portuguese and 811 English **published source-word spans**, plus 214 original lemma targets, 49 Spanish future-subjunctive targets and 27 Mandarin character targets. Component counts differ from source-word counts because a contraction or attached pronoun can represent several grammatical words. `--validate-only` reports exact selected sizes. The full key includes both development and test cases; every run saves its selected, self-contained `answer-key.json` for inspection.
 
 Reference licenses and authors remain associated with their source in the generated key. The original challenge sentences/annotations are offered under CC0-1.0. Published source annotations retain their upstream licenses; see the generated provenance and the source repositories:
 
@@ -33,7 +34,7 @@ Reference licenses and authors remain associated with their source in the genera
 
 The baseline calls Langy's actual `analyze()` function, retaining its current spaCy models, spelling normalization, overrides, contractions and named-entity exclusions. The pinned baseline uses spaCy 3.8.11 and the three small 3.8.0 language models. The Stanza candidate uses Stanza 1.15.1, resource release 1.15.0, and the pinned default tokenization, multiword-token, POS and lemma models in `models.json`, including character-language-model POS tagging. Stanza's candidate filters PROPN, but does not include NER; the report explicitly records this difference from Langy's current entity filtering.
 
-Every engine/language runs in a fresh process, with four CPU threads by default. A short unscored warm-up precedes timing. Model import/load time and peak whole-worker RSS are recorded separately from warmed inference. Neither uses your chatbot model or GPU. Package versions, model/resource hashes, the exact baseline source hash and reference-key hash accompany the results. Timings and memory reflect the benchmark environment, rather than the live reader's latency or RAM use.
+Every engine/language runs in a fresh process, with four CPU threads by default. A short unscored warm-up precedes timing and initializes the Spanish conjugation index. Model import/load time, warm-up time and peak whole-worker RSS are recorded separately from warmed inference. Neither uses your chatbot model or GPU. Package versions, model/resource hashes, the exact baseline source hash and reference-key hash accompany the results. Timings and memory reflect the benchmark environment, rather than the live reader's latency or RAM use.
 
 The primary context metric is **source-word lemma accuracy**: the complete multiset of expected lemmas must match at each annotated source span. English `don't` can be predicted as two smaller tokens or one parent token with two components; both can match `do + not`. A merged span crossing two reference words is an alignment error. Every lexical character must be covered, and UTF-16 offsets handle supplementary characters. This is an application-specific comparison, **not the official UD token-level score**.
 
@@ -60,8 +61,11 @@ bash scripts/benchmark-lemmas.sh --languages es --threads 2
 # Use development cases while evaluating proposed fixes.
 bash scripts/benchmark-lemmas.sh --split dev
 
-# Original targeted cases only.
+# All original targeted cases, including future-subjunctive regressions.
 bash scripts/benchmark-lemmas.sh --suite challenge
+
+# Just the Spanish future-subjunctive regressions, with both labelled splits.
+bash scripts/benchmark-lemmas.sh --languages es --suite future --split all
 
 # Inspect the built-in challenge key without installing any NLP libraries.
 python3 benchmarks/lemmas/benchmark.py --suite challenge --split all --validate-only
