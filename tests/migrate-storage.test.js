@@ -34,8 +34,10 @@ if (args[0] === 'compose') {
   if (args.includes('up') && args.includes('--wait') && process.env.MOCK_START_FAIL) process.exit(19);
 } else if (args[0] === 'inspect') {
   const format = args[args.indexOf('--format') + 1];
-  process.stdout.write(format === '{{.Image}}' ? 'existing-image\\n' : format.includes('.Type') ? 'original-volume\\n' : source + ' -> /data\\n');
+  process.stdout.write(format === '{{.Image}}' ? 'sha256:unavailable-config-digest\\n' : format === '{{.Config.Image}}' ? 'langy-reader:latest\\n' : format.includes('.Type') ? 'original-volume\\n' : source + ' -> /data\\n');
 } else if (args[0] === 'run') {
+  if (!args.includes('langy-reader:latest')) process.exit(125);
+  if (!args.includes('--mount')) process.exit(process.env.MOCK_HELPER_FAIL ? 125 : 0);
   fs.cpSync(process.env.MOCK_OLD, process.env.MOCK_DEST, { recursive: true, preserveTimestamps: true });
   if (process.env.MOCK_COPY_FAIL) fs.writeFileSync(path.join(process.env.MOCK_DEST, 'library.sqlite'), 'damaged copy');
   const result = cp.spawnSync('diff', ['-qr', '--no-dereference', process.env.MOCK_OLD, process.env.MOCK_DEST], { stdio: 'pipe' });
@@ -45,7 +47,7 @@ if (args[0] === 'compose') {
   const destination = join(mount, 'library'), log = join(root, 'docker.jsonl');
   const env = { ...process.env, PATH: bin + ':' + process.env.PATH, MOCK_PROJECT: project, MOCK_OLD: old,
     MOCK_DEST: destination, MOCK_LOG: log, MOCK_MOUNT: mount, MOCK_MOUNTED: options.mounted === false ? '0' : '1',
-    MOCK_COPY_FAIL: options.copyFail ? '1' : '', MOCK_START_FAIL: options.startFail ? '1' : '' };
+    MOCK_COPY_FAIL: options.copyFail ? '1' : '', MOCK_START_FAIL: options.startFail ? '1' : '', MOCK_HELPER_FAIL: options.helperFail ? '1' : '' };
   return { project, mount, old, destination,
     execute: () => run('bash', [join(project, 'scripts/migrate-storage.sh'), mount, '--tunnel'], { env, timeout: 30000 }),
     settings: () => readFile(join(project, '.env'), 'utf8'),
@@ -71,7 +73,18 @@ test('migration preserves books, audio, progress, original bytes and credentials
   assert.equal(await readFile(join(f.project, backups[0]), 'utf8'), originalSettings);
   const calls = await f.log(), build = calls.findIndex(({ args }) => args.includes('build')), stop = calls.findIndex(({ args }) => args.includes('stop'));
   assert.ok(build >= 0 && stop > build);
+  const probe = calls.findIndex(({ args }) => args[0] === 'run' && !args.includes('--mount'));
+  assert.ok(probe > build && probe < stop);
+  assert.ok(!calls.some(({ args }) => args.includes('sha256:unavailable-config-digest')));
   assert.equal(calls.find(({ args }) => args.includes('--wait')).source, f.destination);
+});
+
+test('an unavailable migration helper fails before stopping the reader or changing settings', async (t) => {
+  const f = await fixture(t, { helperFail: true });
+  await assert.rejects(f.execute());
+  assert.equal(await f.settings(), originalSettings);
+  assert.ok(!(await f.log()).some(({ args }) => args.includes('stop') || args.includes('up')));
+  assert.equal(await readFile(join(f.old, 'library.sqlite'), 'utf8'), 'the complete original library');
 });
 
 test('an unmounted drive or nonempty target cannot stop the reader or overwrite destination data', async (t) => {

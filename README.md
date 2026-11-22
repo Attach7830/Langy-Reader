@@ -107,7 +107,7 @@ git pull --ff-only
 sudo bash scripts/migrate-storage.sh /srv/langy --tunnel
 ```
 
-Omit `--tunnel` if you do not use `compose.tunnel.yaml`. The helper requires a running personal reader using a named Docker volume and an existing `.env`. It refuses an unmounted destination or a nonempty destination `library` folder. It builds the reader before downtime, stops it to copy all books, recordings, settings and SQLite databases, and compares every copied file before switching. The copy uses the running reader's existing image without downloading a helper image. Keep this terminal open until it completes.
+Omit `--tunnel` if you do not use `compose.tunnel.yaml`. The helper requires a running personal reader using a named Docker volume and an existing `.env`. It refuses an unmounted destination or a nonempty destination `library` folder. It builds the reader and verifies its copy tools can run before downtime, stops it to copy all books, recordings, settings and SQLite databases, and compares every copied file before switching. The copy uses the reader's named image without downloading a helper image. Keep this terminal open until it completes.
 
 The helper preserves permissions, retains the original volume and a private `.env.storage-before-*` backup, and sets `READER_DATA_SOURCE` and `READER_STORAGE_ID` in `.env`. Existing credentials, including literal dollar signs, are retained. The reader validates the destination's `.langy-storage-id` before opening any databases; an absent drive or wrong folder causes startup to fail instead of initializing a new library. A failed copy or startup restores the old settings and attempts to restart the original volume. Copies left by an incomplete migration require inspection before retrying.
 

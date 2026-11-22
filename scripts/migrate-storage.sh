@@ -25,7 +25,9 @@ container=$("${compose[@]}" ps -q reader)
 [[ -n $container ]] || die 'Start your existing reader before migrating so its source volume can be identified.'
 volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{if eq .Type "volume"}}{{.Name}}{{end}}{{end}}{{end}}' "$container")
 [[ -n $volume ]] || die 'The current reader is not using a Docker data volume; stopping to avoid overwriting an existing migration.'
-image=$(docker inspect --format '{{.Image}}' "$container")
+# Use the runnable image reference, rather than the container's config digest.
+# Some Docker image stores do not accept that digest as a docker run target.
+image=$(docker inspect --format '{{.Config.Image}}' "$container")
 docker volume inspect "$volume" >/dev/null
 destination=$mount_root/library
 [[ ! -L $destination && ( ! -e $destination || -d $destination ) ]] || die 'The destination library must be a regular directory, not a symbolic link.'
@@ -33,6 +35,9 @@ if [[ -d $destination && -n $(find "$destination" -mindepth 1 -maxdepth 1 -print
 
 # Finish the image build before stopping the reader to limit downtime.
 "${compose[@]}" build reader
+# Verify the rebuilt image can run the copy tools before stopping the reader.
+docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+  "$image" -c 'command -v cp >/dev/null && command -v diff >/dev/null'
 mountpoint -q -- "$mount_root" || die 'The destination drive became unavailable.'
 mkdir -p -- "$destination"
 backup=.env.storage-before-$(date +%Y%m%d-%H%M%S)-$$
