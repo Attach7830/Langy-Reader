@@ -24,6 +24,8 @@ The stack also includes a local `language` service for lemma analysis and audio 
 
 ## Reading controls
 
+Each library card has **Mark as read**, which adds a saved **Read** badge. Select **Mark as unread** to undo it, and use the **All books / Unread / Read** filter to browse by completion. Status is stored on the server and persists across browsers and restarts; demo visitors have their own temporary status, including for the shared sample book. This manual status preserves the current reading position and does not add vocabulary exposure records.
+
 | Key | Action |
 | --- | --- |
 | Right arrow | Next page |
@@ -121,11 +123,17 @@ Mandarin uses **unique Han characters**, with a separate count of character occu
 
 Langy estimates the reading demand from passages sampled across the book with the configured language model. Its rubric follows the broad Novice, Intermediate, Advanced, Superior and Distinguished ranges in the ACTFL reading guidelines. It considers discourse, syntax, context, vocabulary and inference. The book panel shows a rationale, sample count and quotations verified against the sampled text. The library can filter by the estimated reading range. These provisional text estimates have not been calibrated against formal proficiency assessments. [ACTFL proficiency guidelines](https://www.actfl.org/proficiency-guidelines-overview)
 
+Reading-demand estimation has its own queue, so narration, audiobook synchronization and rescans do not hold it up. Only one automatic estimate runs at a time. The analysis panel distinguishes queued and running requests, shows elapsed time and errors, and offers **Retry reading estimate** (or **Restart reading estimate** while pending) without repeating vocabulary analysis. A request has a hard 100-second deadline in addition to the AI connection's request timeout. Interrupted requests resume after a restart; missing estimates for analyzed books are queued automatically. An unavailable or slow model is reported as an error instead of leaving the estimate pending indefinitely.
+
 The OPI assesses a person's speaking. Langy's reading estimate describes text demand. A reader's proficiency requires performance assessment. [ACTFL OPI](https://www.actfl.org/assessments/postsecondary-assessments/opi)
 
 ## Seen vocabulary and recommendations
 
 Langy records vocabulary from the text visible on a page after it remains displayed briefly, independently of whether audio is enabled. Inflected words use the analyzed lemma; proper names are excluded in line with book analysis. Mandarin uses individual Han characters, and each other language keeps its own lemma or word-form inventory. **Vocabulary** in the library opens the saved catalogue, with language/search filters and dates. Records are shared by browsers using the personal installation; demo visitors keep separate, expiring catalogues. Previous reading and KOReader progress do not automatically mark vocabulary as seen. A bounded browser queue retries temporarily failed saves.
+
+**Vocabulary → Exposures before likely known** sets a threshold from 1 to 10,000, initially 20. The catalogue shows each item's exposure count and whether it reaches the threshold, with separate likely-known totals for every language and Mandarin characters. The library can sort by **Most likely known vocabulary**, and book analysis shows likely-known counts alongside seen and not-yet-seen vocabulary. This estimate uses reading exposure alone; marking a book read does not contribute. The default is an adjustable heuristic, not a validated mastery cutoff. Changing the threshold recalculates the estimate immediately and keeps the reading history.
+
+Each occurrence of a lemma or character counts once per reading session. Inflected forms contribute to the same lemma; overlapping pages, retries and font/layout changes do not count the same occurrence again. Reopening a book to reread it starts a new session. Earlier saved reading ranges are reused conservatively as a single legacy session per book because previous versions did not distinguish rereading sessions. Language corrections rebuild the occurrence catalogue from those saved ranges.
 
 Library cards and **Analysis & audio** show how many unique items are **Not yet seen**, separately for each language. This is an exposure estimate, not proof that a word is unknown or mastered. **Most vocabulary seen** sorts the library by average per-language exposure coverage; it does not add character counts to lemma counts. Counts are of distinct items, rather than all occurrences in the text. When a book's language selection changes, its saved reading ranges are reanalyzed to correct the catalogue as well as its book statistics.
 

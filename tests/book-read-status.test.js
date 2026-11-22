@@ -1,0 +1,57 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { openLibrary } from '../server/books.js';
+import { sampleBook } from '../server/sample.js';
+
+test('marking a book read persists, is reversible, and leaves its metadata and original file intact', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'langy-book-read-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const library = await openLibrary(dir), before = library.getBook('sample');
+  const bytes = await readFile(library.filePath(before));
+  assert.equal(before.readAt, null);
+  const marked = library.setReadStatus('sample', { read: true });
+  assert.equal(marked.id, 'sample'); assert.ok(marked.readAt > 0);
+  assert.equal(library.setReadStatus('sample', { read: true }).readAt, marked.readAt, 'repeated marking preserves the original completion date');
+  const reopened = await openLibrary(dir);
+  assert.equal(reopened.getBook('sample').readAt, marked.readAt);
+  assert.equal(reopened.snapshot().books[0].readAt, marked.readAt);
+  const after = library.getBook('sample');
+  assert.deepEqual({ ...after, readAt: null }, before);
+  assert.deepEqual(await readFile(library.filePath(after)), bytes);
+  for (const value of ['true', 1, null, undefined]) assert.throws(() => library.setReadStatus('sample', { read: value }), { status: 422 });
+  assert.equal(library.getBook('sample').readAt, marked.readAt);
+  assert.equal(reopened.setReadStatus('sample', { read: false }).readAt, null);
+  assert.equal(library.snapshot().books[0].readAt, null);
+  assert.equal((await openLibrary(dir)).getBook('sample').readAt, null);
+});
+
+test('demo read status belongs to each visitor, respects book access and expires without changing the shared sample', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'langy-demo-read-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const library = await openLibrary(dir, { books: 4, upload: 20 * 1024 ** 2, storage: 512 * 1024 ** 2 });
+  const a = { id: 'visitor-a', expires: Date.now() + 60000 }, b = { id: 'visitor-b', expires: Date.now() + 60000 };
+  library.setReadStatus('sample', { read: true }, a);
+  assert.ok(library.getBook('sample', a).readAt);
+  assert.equal(library.getBook('sample', b).readAt, null);
+  assert.equal(library.snapshot(b).books[0].readAt, null);
+  library.setReadStatus('sample', { read: true }, b);
+  library.setReadStatus('sample', { read: false }, a);
+  assert.ok(library.getBook('sample', b).readAt);
+  const bytes = await sampleBook(), path = join(library.uploads, 'private.epub'); await writeFile(path, bytes);
+  await library.importBook('private', { path, originalname: 'private.epub', size: bytes.length }, { language: 'es' }, a);
+  assert.throws(() => library.setReadStatus('private', { read: true }, b), { status: 404 });
+  library.setReadStatus('private', { read: true }, a);
+  assert.throws(() => library.setReadStatus('sample', { read: true }, { ...a, expires: 1 }), { status: 410 });
+  const db = new DatabaseSync(join(dir, 'library.sqlite')); t.after(() => db.close());
+  await library.removeBook('private', a);
+  assert.equal(db.prepare('SELECT count(*) AS count FROM book_read_status WHERE book=?').get('private').count, 0);
+  db.prepare('UPDATE book_read_status SET expires=1 WHERE owner=?').run(b.id);
+  assert.equal(library.getBook('sample', b).readAt, null);
+  await library.pruneDemoBooks();
+  assert.equal(db.prepare('SELECT count(*) AS count FROM book_read_status').get().count, 0);
+  assert.equal(library.getBook('sample', a).title, 'El café de la esquina');
+});

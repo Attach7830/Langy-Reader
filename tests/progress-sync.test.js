@@ -228,7 +228,9 @@ test('chapter, rescan and iVoox endpoints require the web login and preserve ori
 test('book language choices persist through the authenticated API and vocabulary endpoints require the reader login', async (t) => {
   const f = await fixture(t);
   let base = await f.start();
-  for (const path of ['/api/vocabulary', '/api/books/sync-book/recommendations', '/api/books/sync-book/vocabulary/sections/epub%3A0']) assert.equal((await fetch(base + path)).status, 401);
+  for (const path of ['/api/vocabulary', '/api/vocabulary/settings', '/api/books/sync-book/recommendations', '/api/books/sync-book/vocabulary/sections/epub%3A0']) assert.equal((await fetch(base + path)).status, 401);
+  assert.equal((await fetch(base + '/api/vocabulary/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{"threshold":3}' })).status, 401);
+  assert.equal((await fetch(base + '/api/books/sync-book/reading-estimate', { method: 'POST' })).status, 401);
   assert.equal((await fetch(base + '/api/books/sync-book/vocabulary/seen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 401);
   const body = { title: 'Mixed languages', author: '', language: 'zh', languages: ['zh-Hant', 'en'], categoryId: '' };
   const edited = await response(base, '/api/books/sync-book', { method: 'PATCH', headers: json, body: JSON.stringify(body) });
@@ -236,10 +238,33 @@ test('book language choices persist through the authenticated API and vocabulary
   assert.equal(edited.owner, undefined);
   await response(base, '/api/books/sync-book', { method: 'PATCH', status: 422, headers: json, body: JSON.stringify({ ...body, languages: ['not a valid code'] }) });
   const catalogue = await response(base, '/api/vocabulary', { headers: json }); assert.deepEqual(catalogue.entries, []);
+  assert.equal(catalogue.threshold, 20);
+  assert.deepEqual(await response(base, '/api/vocabulary/settings', { method: 'PUT', headers: json, body: '{"threshold":3}' }), { threshold: 3 });
+  await response(base, '/api/vocabulary/settings', { method: 'PUT', headers: json, body: '{"threshold":0}', status: 422 });
   await response(base, '/api/books/sync-book/vocabulary/seen', { method: 'POST', status: 422, headers: json, body: '{}' });
   assert.deepEqual((await response(base, '/api/books/sync-book/recommendations', { headers: json })).books, []);
   base = await f.start();
+  assert.deepEqual(await response(base, '/api/vocabulary/settings', { headers: json }), { threshold: 3 });
   assert.deepEqual((await response(base, '/api/library', { headers: json })).books.find((book) => book.id === 'sync-book').languages, ['zh-Hant', 'en']);
+});
+
+test('read status requires login and persists without changing the shared bookmark or vocabulary', async (t) => {
+  const f = await fixture(t);
+  let base = await f.start();
+  const path = '/api/books/sync-book/read-status';
+  assert.equal((await fetch(base + path, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{"read":true}' })).status, 401);
+  const progress = await response(base, '/api/books/sync-book/progress', { headers: json });
+  const vocabulary = await response(base, '/api/vocabulary', { headers: json });
+  const marked = await response(base, path, { method: 'PATCH', headers: json, body: '{"read":true}' });
+  assert.ok(marked.readAt > 0);
+  await response(base, path, { method: 'PATCH', headers: json, body: '{"read":"true"}', status: 422 });
+  await response(base, '/api/books/not-visible/read-status', { method: 'PATCH', headers: json, body: '{"read":true}', status: 404 });
+  assert.deepEqual(await response(base, '/api/books/sync-book/progress', { headers: json }), progress);
+  assert.deepEqual(await response(base, '/api/vocabulary', { headers: json }), vocabulary);
+  base = await f.start();
+  assert.equal((await response(base, '/api/library', { headers: json })).books.find((book) => book.id === 'sync-book').readAt, marked.readAt);
+  assert.equal((await response(base, path, { method: 'PATCH', headers: json, body: '{"read":false}' })).readAt, null);
+  assert.equal(f.library.getBook('sync-book').readAt, null);
 });
 
 test('demo mode never exposes shared progress, external audio imports, chapter uploads or rescans', async (t) => {

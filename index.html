@@ -59,10 +59,11 @@
           <option value="">All reading ranges</option><option>Novice</option><option>Intermediate</option>
           <option>Advanced</option><option>Superior</option><option>Distinguished</option>
         </select>
-        <select id="book-sort" aria-label="Sort books"><option value="recent">Recently added</option><option value="familiar">Most vocabulary seen</option></select>
+        <select id="book-sort" aria-label="Sort books"><option value="recent">Recently added</option><option value="familiar">Most vocabulary seen</option><option value="known">Most likely known vocabulary</option></select>
+        <select id="book-status-filter" aria-label="Reading status"><option value="">All books</option><option value="unread">Unread</option><option value="read">Read</option></select>
         <span class="muted" id="book-count"></span>
       </div>
-      <div class="vocabulary-overview"><p class="field-note" id="vocabulary-summary"></p><button class="button secondary small" id="open-vocabulary" type="button">Vocabulary</button></div>
+      <div class="vocabulary-overview"><div><p class="field-note" id="vocabulary-summary"></p><p class="field-note" id="vocabulary-known-summary"></p></div><button class="button secondary small" id="open-vocabulary" type="button">Vocabulary</button></div>
       <div id="books" class="book-grid"></div>
       <p class="field-note" id="archive-import-status" role="status" hidden></p>
       <div id="empty-library" class="empty-state" hidden>
@@ -379,11 +380,17 @@
   </dialog>
 
   <dialog class="modal" id="vocabulary-dialog" aria-labelledby="vocabulary-title">
-    <header class="modal-header"><h2 id="vocabulary-title">Seen vocabulary</h2><button class="icon-button" type="button" data-close aria-label="Close vocabulary"><i data-lucide="x"></i></button></header>
+    <header class="modal-header"><h2 id="vocabulary-title">Reading vocabulary</h2><button class="icon-button" type="button" data-close aria-label="Close vocabulary"><i data-lucide="x"></i></button></header>
     <div class="modal-body">
       <p class="field-note">Collected from text displayed while you read. These are exposure records, not a test of mastery. Mandarin characters and each language’s lemmas remain separate. Earlier reading is not guessed from saved progress.</p>
+      <form id="vocabulary-threshold-form" class="form-grid">
+        <label class="field">Exposures before likely known <input id="vocabulary-threshold" type="number" min="1" max="10000" step="1" value="20" required></label>
+        <button class="button secondary small" id="save-vocabulary-threshold" type="submit">Save threshold</button>
+      </form>
+      <p class="field-note">Each word occurrence counts once per reading session. Page redraws do not add exposures; reopening a book to reread it starts a new session. The default of 20 is adjustable and is not a validated mastery cutoff.</p>
+      <p id="vocabulary-known-detail" role="status"></p>
       <div class="form-grid"><label class="field">Language <select id="vocabulary-language"><option value="">All languages</option></select></label><label class="field">Find a lemma or character <input id="vocabulary-search" type="search" maxlength="100"></label></div>
-      <div class="table-scroll"><table class="vocabulary-table"><thead><tr><th>Lemma / character</th><th>Language</th><th>Unit</th><th>Last seen</th></tr></thead><tbody id="vocabulary-entries"></tbody></table></div>
+      <div class="table-scroll"><table class="vocabulary-table"><thead><tr><th>Lemma / character</th><th>Language</th><th>Unit</th><th>Exposures</th><th>Estimate</th><th>Last seen</th></tr></thead><tbody id="vocabulary-entries"></tbody></table></div>
       <p id="vocabulary-page" role="status"></p><p class="form-error" id="vocabulary-error" role="alert" hidden></p>
     </div>
     <footer class="modal-footer"><button class="button quiet" id="vocabulary-previous" type="button">Previous</button><button class="button secondary" id="vocabulary-next" type="button">Next</button><button class="button quiet" type="button" data-close>Close</button></footer>
@@ -400,6 +407,7 @@
       <p class="field-note">Recommendations come from your library and compare vocabulary within each language. They do not compare plots or genres.</p>
       <div id="similar-books" role="status"></div>
       <p id="learning-estimate"></p>
+      <button class="button quiet small" id="retry-reading-estimate" type="button">Retry reading estimate</button>
       <p class="field-note">Estimated reading demand uses sampled passages and broad ACTFL reading descriptors. This estimate describes the text and is provisional.</p>
       <p id="learning-reason"></p>
       <details id="learning-evidence" hidden><summary>Evidence from sampled text</summary><div id="learning-quotes"></div></details>

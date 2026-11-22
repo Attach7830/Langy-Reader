@@ -126,11 +126,13 @@ app.get('/api/library', async (req, res) => {
     progress: demo ? null : progressSync.snapshot(),
     storage: await library.storage(req.visitor),
     archive: { available: !demo, hasKey: archive.settings().hasKey, job: demo ? null : archive.latest() },
-    vocabulary: { byLanguage: reader.byLanguage },
+    vocabulary: { byLanguage: reader.byLanguage, likelyKnown: reader.knownByLanguage, threshold: reader.threshold },
     books: snapshot.books.map((book) => ({ ...book, learning: learning.info(library.getBook(book.id, req.visitor)), familiarity: learning.vocabulary.familiarity(book, reader) })),
   });
 });
 app.get('/api/vocabulary', (req, res) => res.json(learning.vocabulary.catalogue(req.visitor, req.query)));
+app.get('/api/vocabulary/settings', (req, res) => res.json(learning.vocabulary.preferences(req.visitor)));
+app.put('/api/vocabulary/settings', (req, res) => res.json(learning.vocabulary.savePreferences(req.body ?? {}, req.visitor)));
 app.get('/api/books/:id/vocabulary/sections/:key', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);
   learning.ensure(book);
@@ -168,6 +170,7 @@ app.patch('/api/books/:id', (req, res) => {
   learning.ensure(library.getBook(book.id, req.visitor));
   res.json(book);
 });
+app.patch('/api/books/:id/read-status', (req, res) => res.json(library.setReadStatus(req.params.id, req.body ?? {}, req.visitor)));
 app.delete('/api/books/:id', async (req, res) => {
   await library.removeBook(req.params.id, req.visitor);
   await learning.remove(req.params.id);
@@ -182,6 +185,13 @@ app.post('/api/books/:id/learning', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);
   learning.ensure(book, true);
   res.status(202).json(learning.info(book));
+});
+app.post('/api/books/:id/reading-estimate', ...demoGenerations, (req, res) => {
+  const book = library.getBook(req.params.id, req.visitor);
+  learning.ensure(book);
+  learning.estimates.queue(book);
+  void learning.estimates.pump();
+  res.status(202).json(learning.estimates.status(book));
 });
 app.get('/api/books/:id/chapters/:key', (req, res) => {
   res.json(learning.unit(library.getBook(req.params.id, req.visitor), req.params.key,

@@ -6,11 +6,12 @@ import { execFile } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { textWords } from '../shared/reading-text.js';
 import { RequestError } from './books.js';
-import { extractBook, readingSamples, languageChunks } from './book-text.js';
+import { extractBook, languageChunks } from './book-text.js';
 import { narrationOptions, sectionLanguages } from './language-voices.js';
 import { addVocabulary, vocabularySummary } from './vocabulary.js';
 import { selectedLanguages } from '../shared/language.js';
 import { readerVocabulary } from './reader-vocabulary.js';
+import { readingEstimates } from './reading-estimates.js';
 import { bookNarration } from './book-audio.js';
 import { hasUsableTimings, synchronizeChunk } from './audio-timing.js';
 import { uploadedAudio } from './uploaded-audio.js';
@@ -51,7 +52,6 @@ export async function openLearning(dir, library, demo, ai) {
     ) STRICT;
     UPDATE analyses SET state='queued', error=NULL WHERE state='running';
     UPDATE audio SET state='queued', error=NULL WHERE state IN ('generating', 'aligning');
-    UPDATE estimates SET state='queued' WHERE state='running';
   `);
   if (!db.prepare('PRAGMA table_info(chapters)').all().some(({ name }) => name === 'markers')) {
     db.exec("ALTER TABLE chapters ADD COLUMN markers TEXT NOT NULL DEFAULT '[]'; UPDATE analyses SET state='queued',error=NULL WHERE state='ready';");
@@ -68,6 +68,7 @@ export async function openLearning(dir, library, demo, ai) {
     db.exec("ALTER TABLE analyses ADD COLUMN languageSelection TEXT NOT NULL DEFAULT '[]'");
   }
   const vocabulary = readerVocabulary(db);
+  const estimates = readingEstimates({ db, ai });
   let config = {
     baseUrl: process.env.READER_KOKORO_URL || '', voice: process.env.READER_KOKORO_VOICE || 'ef_dora',
     model: 'kokoro', speed: 1, apiKey: process.env.READER_KOKORO_API_KEY || '', autoLanguageVoices: true, voicesByLanguage: {},
@@ -181,9 +182,8 @@ export async function openLearning(dir, library, demo, ai) {
         ON CONFLICT(book) DO UPDATE SET language=excluded.language,languageSelection=excluded.languageSelection,state='queued',error=NULL,
         metrics=NULL,lemmas=NULL,wordCount=NULL,method=NULL`)
         .run(book.id, book.owner || '', book.language, selection);
-      db.prepare('DELETE FROM estimates WHERE book=?').run(book.id);
+      estimates.invalidate(book.id);
     }
-    if (retry) db.prepare("UPDATE estimates SET state='queued',error=NULL WHERE book=? AND state='error'").run(book.id);
     void work();
   }
 
@@ -191,8 +191,8 @@ export async function openLearning(dir, library, demo, ai) {
     ensure(book);
     const row = db.prepare('SELECT state, lemmas, wordCount, method, error, metrics FROM analyses WHERE book=?').get(book.id);
     const count = row.lemmas ? JSON.parse(row.lemmas).length : null;
-    const estimate = db.prepare('SELECT * FROM estimates WHERE book=?').get(book.id);
-    const reading = estimate ? { state: estimate.state, error: estimate.error, ...JSON.parse(estimate.json || '{}') } : null;
+    if (row.state === 'ready' && !estimates.status(book)) estimates.queue(book);
+    const reading = estimates.status(book);
     return { state: row.state, lemmaCount: count, wordCount: row.wordCount, reading, method: row.method, error: row.error,
       vocabulary: row.metrics ? JSON.parse(row.metrics) : null };
   }
@@ -296,24 +296,7 @@ export async function openLearning(dir, library, demo, ai) {
     db.prepare("UPDATE analyses SET state='ready', lemmas=?, wordCount=?, method=?,metrics=? WHERE book=?")
       .run(JSON.stringify([...unique].sort()), wordCount, metrics.unit === 'characters' ? 'characters' : method, JSON.stringify(metrics), book.id);
     vocabulary.reindex(book);
-    db.prepare("INSERT INTO estimates(book,state) VALUES(?,'queued') ON CONFLICT(book) DO UPDATE SET state='queued',json=NULL,error=NULL").run(book.id);
-  }
-
-  async function estimate(row) {
-    db.prepare("UPDATE estimates SET state='running',error=NULL WHERE book=?").run(row.book);
-    const chapters = db.prepare('SELECT text FROM chapters WHERE book=? ORDER BY ordinal').all(row.book);
-    const sample = readingSamples(chapters);
-    const metrics = JSON.parse(db.prepare('SELECT metrics FROM analyses WHERE book=?').get(row.book)?.metrics || 'null');
-    if (metrics) sample.vocabulary = { unit: metrics.unit, count: metrics.count, languages: metrics.languages, byLanguage: metrics.byLanguage,
-      ...(metrics.unit === 'characters' ? { characterProfile: { ...metrics.characters, inventory: [...metrics.characters.inventory].slice(0, 3000).join('') } } : {}) };
-    if (sample.passages.join('').length < 80) {
-      db.prepare("UPDATE estimates SET state='ready',json=? WHERE book=?")
-        .run(JSON.stringify({ band: null, text: 'More text is needed to estimate reading demand.' }), row.book);
-      return;
-    }
-    const result = await ai.readingLevel(sample, new AbortController().signal);
-    if (!db.prepare("SELECT book FROM analyses WHERE book=? AND state='ready' AND metrics=?").get(row.book, JSON.stringify(metrics))) return;
-    db.prepare("UPDATE estimates SET state='ready',json=? WHERE book=?").run(JSON.stringify(result), row.book);
+    estimates.queue(book);
   }
 
   async function generate(job) {
@@ -378,6 +361,7 @@ export async function openLearning(dir, library, demo, ai) {
   }
 
   async function work() {
+    void estimates.pump();
     if (working) return;
     working = true;
     let job;
@@ -402,11 +386,6 @@ export async function openLearning(dir, library, demo, ai) {
               type = 'rescan';
               job = demo ? null : rescans.next();
               if (job) await rescans.process(job);
-              else {
-                type = 'estimate';
-                job = db.prepare("SELECT * FROM estimates WHERE state='queued' ORDER BY rowid LIMIT 1").get();
-                if (job) await estimate(job);
-              }
             }
           }
         }
@@ -416,8 +395,7 @@ export async function openLearning(dir, library, demo, ai) {
         : type === 'rescan' ? 'Audio rescan failed. Your existing alignment is unchanged. Check the language service and retry.'
           : type === 'recording' ? 'Recording synchronization failed. Check the language service and retry Sync with book.'
           : ['audio', 'book'].includes(type) ? 'Narration failed. Check Kokoro and the language service, then try again.'
-          : type === 'estimate' ? 'Reading estimate unavailable. Check the AI connection and try again.'
-            : 'This book could not be analyzed. Check the language service and try again.';
+          : 'This book could not be analyzed. Check the language service and try again.';
       if (job && type === 'book') completeAudio.fail(job, text);
       else if (job && type === 'rescan') rescans.fail(job, text);
       else if (job && type === 'recording') recordings.fail(job, text);
@@ -426,9 +404,7 @@ export async function openLearning(dir, library, demo, ai) {
           .run(text, job.book, job.language, job.languageSelection);
       }
       else if (job) {
-        const query = type === 'estimate' ? "UPDATE estimates SET state='error',error=? WHERE book=?"
-            : "UPDATE audio SET state='error', error=? WHERE id=?";
-        db.prepare(query).run(text, type === 'audio' ? job.id : job.book);
+        db.prepare("UPDATE audio SET state='error', error=? WHERE id=?").run(text, job.id);
       }
       console.error(type === 'rescan' ? 'Audio rescan failed' : type === 'recording' ? 'Recording synchronization failed' : type === 'audio' ? 'Narration job failed' : 'Book analysis failed', error.name);
     } finally {
@@ -439,6 +415,7 @@ export async function openLearning(dir, library, demo, ai) {
   timer.unref();
 
   async function remove(id) {
+    estimates.invalidate(id);
     ivoox?.cancel({ id });
     const sectionRecordings = db.prepare('SELECT id FROM audio WHERE book=?').all(id);
     const completeFiles = completeAudio.files(id);
@@ -478,6 +455,6 @@ export async function openLearning(dir, library, demo, ai) {
   return {
     settings, save, voices, info, ensure, unit, chapters, remove, audioFile, prune, cancel,
     narration, queueBook: completeAudio.queue,
-    recordings, rescans, ivoox, vocabulary,
+    recordings, rescans, ivoox, vocabulary, estimates,
   };
 }

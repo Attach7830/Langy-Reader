@@ -54,9 +54,12 @@ test('reading records only visible source ranges with audio disabled, queues fai
   assert.equal(posts[0].digest, 'source-digest');
   assert.deepEqual(JSON.parse(localStorage.getItem('langy-reading-exposures-v1')), []);
   vocabulary.refresh(); await delay(60); assert.equal(posts.length, 1, 'redisplaying a page does not send repeated exposure requests');
+  const session = posts[0].session;
+  vocabulary.stop(); vocabulary.refresh(); await until(() => posts.length === 2);
+  assert.notEqual(posts[1].session, session, 'reopening the same book starts a new reading session');
   let release; delayed = new Promise((resolve) => { release = resolve; });
   active = { ...active, id: 'other-book' }; vocabulary.refresh(); await delay(30); vocabulary.stop(); active = undefined; release();
-  await delay(30); assert.equal(posts.length, 1, 'leaving the book cancels a late capture');
+  await delay(30); assert.equal(posts.length, 2, 'leaving the book cancels a late capture');
 });
 
 test('the vocabulary view keeps language totals separate, filters and paginates entries, and renders book text safely', async (t) => {
@@ -64,10 +67,16 @@ test('the vocabulary view keeps language totals separate, filters and paginates 
   const dom = new JSDOM(html, { url: 'https://langy.test' }); globals(t, dom);
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   const previous = globalThis.fetch, queries = [];
+  let threshold = 20, saves = 0;
   t.after(() => { globalThis.fetch = previous; });
-  globalThis.fetch = async (path) => {
+  globalThis.fetch = async (path, options) => {
+    if (path === '/api/vocabulary/settings') {
+      assert.equal(options.method, 'PUT'); threshold = JSON.parse(options.body).threshold; saves++;
+      return Response.json({ threshold });
+    }
     const query = new URL(path, 'https://langy.test').searchParams; queries.push(Object.fromEntries(query));
-    return Response.json({ entries: [{ term: '<img src=x>', language: 'es', unit: 'lemmas', lastSeen: 1000 }], total: 101, offset: Number(query.get('offset')), more: query.get('offset') === '0' });
+    return Response.json({ threshold, likelyKnown: [{ language: 'es', unit: 'lemmas', count: threshold <= 3 ? 1 : 0 }],
+      entries: [{ term: '<img src=x>', language: 'es', unit: 'lemmas', exposures: 3, likelyKnown: threshold <= 3, lastSeen: 1000 }], total: 101, offset: Number(query.get('offset')), more: query.get('offset') === '0' });
   };
   const ui = vocabularyLibrary();
   ui.update({ byLanguage: [{ language: 'es', unit: 'lemmas', count: 2 }, { language: 'zh', unit: 'characters', count: 3 }] });
@@ -80,6 +89,10 @@ test('the vocabulary view keeps language totals separate, filters and paginates 
   assert.equal(queries[1].offset, '100');
   const language = document.querySelector('#vocabulary-language'); language.value = 'es'; language.dispatchEvent(new dom.window.Event('change'));
   await until(() => queries.length === 3); assert.equal(queries[2].language, 'es'); assert.equal(queries[2].offset, '0');
+  const input = document.querySelector('#vocabulary-threshold'); input.value = '3'; input.dispatchEvent(new dom.window.Event('input'));
+  document.querySelector('#vocabulary-threshold-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await until(() => document.querySelector('#vocabulary-entries').textContent.includes('Likely known'));
+  assert.equal(saves, 1); assert.ok(document.querySelector('#vocabulary-known-detail').textContent.includes('1 Spanish lemmas'));
   let closed = false;
   const [row] = recommendationRows([{ id: 'book-id', title: 'A <book>', byLanguage: [{ language: 'es', unit: 'lemmas', shared: 20 }], familiarity: { byLanguage: [{ language: 'es', unit: 'lemmas', unfamiliar: 5 }] } }], () => { closed = true; });
   assert.ok(row.textContent.includes('20 shared Spanish lemmas') && row.textContent.includes('5 Spanish lemmas'));

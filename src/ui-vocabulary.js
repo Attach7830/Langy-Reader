@@ -4,18 +4,21 @@ import { languageName } from './settings.js';
 const language = (code) => code === 'zh' ? 'Mandarin' : languageName(code);
 export const unfamiliarLabel = (value) => value?.byLanguage?.map((item) => `${item.unfamiliar.toLocaleString()} ${language(item.language)} ${item.unit}`).join(' · ') || '';
 
-export function vocabularyLibrary() {
+export function vocabularyLibrary({ changed = () => {} } = {}) {
   const dialog = $('#vocabulary-dialog');
-  let offset = 0, epoch = 0, timer;
+  let offset = 0, epoch = 0, timer, thresholdEdited = false;
+  const thresholdInput = $('#vocabulary-threshold');
   async function load() {
     const version = ++epoch;
     try {
       const query = new URLSearchParams({ language: $('#vocabulary-language').value, search: $('#vocabulary-search').value, offset: String(offset) });
       const result = await api('/api/vocabulary?' + query);
       if (version !== epoch || !dialog.open) return;
+      if (!thresholdEdited) thresholdInput.value = result.threshold ?? 20;
+      showKnown(result);
       $('#vocabulary-entries').replaceChildren(...result.entries.map((item) => {
         const row = element('tr');
-        for (const text of [item.term, language(item.language), item.unit, new Date(item.lastSeen).toLocaleDateString()]) row.append(element('td', '', text));
+        for (const text of [item.term, language(item.language), item.unit, (item.exposures ?? 1).toLocaleString(), item.likelyKnown ? 'Likely known' : 'Below threshold', new Date(item.lastSeen).toLocaleDateString()]) row.append(element('td', '', text));
         return row;
       }));
       $('#vocabulary-page').textContent = result.total ? `${offset + 1}–${offset + result.entries.length} of ${result.total} entries` : 'No matching vocabulary recorded yet.';
@@ -24,7 +27,25 @@ export function vocabularyLibrary() {
       message('#vocabulary-error');
     } catch (error) { if (version === epoch) message('#vocabulary-error', error.message); }
   }
-  $('#open-vocabulary').addEventListener('click', () => { offset = 0; dialog.showModal(); void load(); });
+  function showKnown(summary) {
+    const rows = summary?.likelyKnown || [];
+    const text = rows.length ? rows.map((item) => `${item.count.toLocaleString()} ${language(item.language)} ${item.unit}`).join(' · ') : 'No recorded vocabulary yet';
+    $('#vocabulary-known-summary').textContent = `Likely known (${summary?.threshold ?? 20}+ exposures): ${text}`;
+    $('#vocabulary-known-detail').textContent = `Likely known: ${text}`;
+  }
+  $('#open-vocabulary').addEventListener('click', () => { offset = 0; thresholdEdited = false; dialog.showModal(); void load(); });
+  thresholdInput.addEventListener('input', () => { thresholdEdited = true; });
+  $('#vocabulary-threshold-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const threshold = Number(thresholdInput.value), button = $('#save-vocabulary-threshold');
+    if (!Number.isInteger(threshold) || threshold < 1 || threshold > 10000) return message('#vocabulary-error', 'Choose an exposure threshold from 1 to 10,000.');
+    button.disabled = true;
+    try {
+      await api('/api/vocabulary/settings', { method: 'PUT', body: { threshold } });
+      thresholdEdited = false; await load(); await changed();
+    } catch (error) { message('#vocabulary-error', error.message); }
+    finally { button.disabled = false; }
+  });
   $('#vocabulary-search').addEventListener('input', () => { clearTimeout(timer); offset = 0; timer = setTimeout(() => void load(), 200); });
   $('#vocabulary-language').addEventListener('change', () => { offset = 0; void load(); });
   $('#vocabulary-previous').addEventListener('click', () => { offset = Math.max(0, offset - 100); void load(); });
@@ -33,6 +54,7 @@ export function vocabularyLibrary() {
     update(summary) {
       const rows = summary?.byLanguage || [];
       $('#vocabulary-summary').textContent = rows.length ? 'Seen: ' + rows.map((item) => `${item.count.toLocaleString()} ${language(item.language)} ${item.unit}`).join(' · ') : 'Your vocabulary catalogue grows from the pages you read.';
+      showKnown(summary);
       const select = $('#vocabulary-language'), value = select.value;
       select.replaceChildren(new Option('All languages', ''), ...[...new Set(rows.map((item) => item.language))].map((code) => new Option(language(code), code)));
       if ([...select.options].some((option) => option.value === value)) select.value = value;

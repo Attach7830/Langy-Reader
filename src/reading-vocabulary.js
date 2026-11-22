@@ -18,7 +18,7 @@ export function readingVocabulary({ book, renderer, request, dwell = 1500 }) {
   if (!Array.isArray(pending)) pending = [];
   pending = pending.filter((entry) => typeof entry?.id === 'string' && entry.body && Array.isArray(entry.body.ranges)).slice(-200);
   const chapters = new Map(), recorded = new Set();
-  let epoch = 0, timer, retry, flushing = false;
+  let epoch = 0, timer, retry, flushing = false, session, sessionBook;
   const persist = () => { try { localStorage.setItem(storageKey, JSON.stringify(pending)); } catch { /* Reading stays available if browser storage is full. */ } };
   async function flush() {
     if (flushing || !pending.length) return;
@@ -39,6 +39,10 @@ export function readingVocabulary({ book, renderer, request, dwell = 1500 }) {
   async function capture(version) {
     const current = book(), currentRenderer = renderer();
     if (version !== epoch || !current || document.hidden) return;
+    if (sessionBook !== current.id) {
+      sessionBook = current.id;
+      session = globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    }
     const pages = currentRenderer?.vocabularyPages?.() || [currentRenderer?.audioUnit?.()].filter(Boolean);
     for (const page of pages) {
       const key = JSON.stringify([current.id, page.key, current.language, current.languages]);
@@ -51,7 +55,7 @@ export function readingVocabulary({ book, renderer, request, dwell = 1500 }) {
         if (chapters.size > 8) chapters.delete(chapters.keys().next().value);
         const ranges = displayedRanges(page.track(), source.text, current.language);
         if (!ranges.length) continue;
-        const body = { key: page.key, digest: source.textHash, ranges };
+        const body = { key: page.key, digest: source.textHash, ranges, session };
         const signature = JSON.stringify([current.id, body]);
         if (recorded.has(signature)) continue;
         pending.push({ id: current.id, body }); pending = pending.slice(-200); persist();
@@ -61,10 +65,11 @@ export function readingVocabulary({ book, renderer, request, dwell = 1500 }) {
     }
     void flush();
   }
-  function stop() { epoch++; clearTimeout(timer); clearTimeout(retry); }
-  function refresh() { stop(); if (book()) { const version = epoch; timer = setTimeout(() => void capture(version), dwell); } }
+  function cancel() { epoch++; clearTimeout(timer); clearTimeout(retry); }
+  function stop() { cancel(); sessionBook = session = undefined; }
+  function refresh() { cancel(); if (book()) { const version = epoch; timer = setTimeout(() => void capture(version), dwell); } }
   window.addEventListener('online', () => { void flush(); refresh(); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); else { void flush(); refresh(); } });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) cancel(); else { void flush(); refresh(); } });
   const interval = setInterval(() => { void flush(); }, 30000);
   void flush();
   return { refresh, stop, flush, destroy() { stop(); clearInterval(interval); } };

@@ -14,7 +14,7 @@ export function libraryScreen({ progress, onRemove }) {
   const bookDialog = $('#book-dialog');
   const bookForm = $('#book-form');
   const languagePicker = bookLanguagePicker(bookForm);
-  const vocabularyUI = vocabularyLibrary();
+  const vocabularyUI = vocabularyLibrary({ changed: refresh });
   const categoryDialog = $('#category-dialog');
   const categoryForm = $('#category-form');
   const learningDialog = $('#learning-dialog');
@@ -22,6 +22,7 @@ export function libraryScreen({ progress, onRemove }) {
   let snapshot = { categories: [], books: [], maxUpload: 120 * 1024 ** 2, demo: false };
   let category = 'all', editingBook, editingCategory, selectedFile;
   let bookPending = false, categoryPending = false;
+  const pendingReadStatus = new Set();
   let audioUploading = false;
   const audioUI = audioTools({ book: () => learningBook, refresh: learningStatus });
   $('#refresh-storage').addEventListener('click', () => void refreshStorage());
@@ -80,6 +81,11 @@ export function libraryScreen({ progress, onRemove }) {
     const info = element('div', 'book-info');
     const meta = [book.author, languageName(book.language)].filter(Boolean).join(' · ');
     info.append(element('span', 'book-title', book.title), element('span', 'book-meta', meta));
+    if (book.readAt) {
+      const badge = element('span', 'book-read-badge', 'Read');
+      badge.title = `Marked as read on ${new Date(book.readAt).toLocaleDateString()}`;
+      info.append(badge);
+    }
     link.append(cover, info);
     if (saved) {
       const track = element('span', 'progress-track');
@@ -102,6 +108,24 @@ export function libraryScreen({ progress, onRemove }) {
     tools.setAttribute('aria-label', `Analysis and audio for ${book.title}`);
     tools.addEventListener('click', () => void showLearning(book));
     detail.append(tools);
+    const readToggle = element('button', 'button quiet small book-read-toggle', book.readAt ? 'Mark as unread' : 'Mark as read');
+    readToggle.type = 'button';
+    readToggle.setAttribute('aria-label', `Mark ${book.title} as ${book.readAt ? 'unread' : 'read'}`);
+    readToggle.setAttribute('aria-pressed', String(Boolean(book.readAt)));
+    readToggle.disabled = pendingReadStatus.has(book.id);
+    readToggle.addEventListener('click', async () => {
+      if (pendingReadStatus.has(book.id)) return;
+      pendingReadStatus.add(book.id); readToggle.disabled = true;
+      try {
+        const result = await api(`/api/books/${encodeURIComponent(book.id)}/read-status`, { method: 'PATCH', body: { read: !book.readAt } });
+        const current = snapshot.books.find((item) => item.id === book.id);
+        if (current) current.readAt = result.readAt;
+        toast(result.readAt ? 'Book marked as read' : 'Book marked as unread');
+        await refresh();
+      } catch (error) { message('#library-error', error.message); }
+      finally { pendingReadStatus.delete(book.id); render(); }
+    });
+    detail.append(readToggle);
     card.append(detail);
     if (!snapshot.demo || book.id !== 'sample') card.append(editButton(`Edit ${book.title}`, () => showBook(book), 'book-edit'));
     return card;
@@ -129,13 +153,18 @@ export function libraryScreen({ progress, onRemove }) {
     const visible = snapshot.books.filter((book) =>
       (category === 'all' || (book.categoryId ?? 'uncategorized') === category) &&
       (!$('#reading-filter').value || book.learning?.reading?.band === $('#reading-filter').value) &&
+      (!$('#book-status-filter').value || Boolean(book.readAt) === ($('#book-status-filter').value === 'read')) &&
       (!filter || `${book.title} ${book.author}`.toLocaleLowerCase().includes(filter)));
     $('#book-count').textContent = `${visible.length} ${visible.length === 1 ? 'book' : 'books'}`;
-    if ($('#book-sort').value === 'familiar') visible.sort((a, b) => (b.familiarity?.score ?? -1) - (a.familiarity?.score ?? -1) || b.addedAt - a.addedAt);
+    if (['familiar', 'known'].includes($('#book-sort').value)) {
+      const score = $('#book-sort').value === 'known' ? 'knownScore' : 'score';
+      visible.sort((a, b) => (b.familiarity?.[score] ?? -1) - (a.familiarity?.[score] ?? -1) || b.addedAt - a.addedAt);
+    }
     books.replaceChildren(...visible.map(bookCard));
     $('#empty-library').hidden = visible.length > 0;
-    $('#empty-title').textContent = filter ? 'No matching books' : 'No books here yet';
-    $('#empty-detail').textContent = filter ? 'Try a different title or author.' : 'Import an EPUB or PDF to get started.';
+    const filtering = filter || $('#reading-filter').value || $('#book-status-filter').value;
+    $('#empty-title').textContent = filtering ? 'No matching books' : 'No books here yet';
+    $('#empty-detail').textContent = filtering ? 'Try a different search or filter.' : 'Import an EPUB or PDF to get started.';
     drawIcons();
     message('#archive-import-status', importProgress(snapshot.archive?.job));
   }
@@ -215,12 +244,12 @@ export function libraryScreen({ progress, onRemove }) {
       if (vocabulary?.byLanguage?.length) {
         const table = element('table', 'vocabulary-table');
         const header = element('tr');
-        for (const label of ['Language', 'Unit', 'Unique', 'Text total', 'Seen', 'Not yet seen']) header.append(element('th', '', label));
+        for (const label of ['Language', 'Unit', 'Unique', 'Text total', 'Seen', 'Likely known', 'Not yet seen']) header.append(element('th', '', label));
         table.append(header);
         for (const item of vocabulary.byLanguage) {
           const row = element('tr');
           const familiarity = result.familiarity?.byLanguage?.find((entry) => entry.language === item.language && entry.unit === item.unit);
-          for (const text of [item.language === 'zh' ? 'Mandarin' : languageName(item.language), item.unit === 'characters' ? 'Han characters' : item.unit, item.count.toLocaleString(), `${item.total.toLocaleString()} ${item.unit === 'characters' ? 'characters' : 'word tokens'}`, familiarity?.seen?.toLocaleString() ?? '—', familiarity?.unfamiliar?.toLocaleString() ?? '—']) row.append(element('td', '', text));
+          for (const text of [item.language === 'zh' ? 'Mandarin' : languageName(item.language), item.unit === 'characters' ? 'Han characters' : item.unit, item.count.toLocaleString(), `${item.total.toLocaleString()} ${item.unit === 'characters' ? 'characters' : 'word tokens'}`, familiarity?.seen?.toLocaleString() ?? '—', familiarity?.likelyKnown?.toLocaleString() ?? '—', familiarity?.unfamiliar?.toLocaleString() ?? '—']) row.append(element('td', '', text));
           table.append(row);
         }
         breakdown.append(table);
@@ -228,8 +257,13 @@ export function libraryScreen({ progress, onRemove }) {
       $('#learning-estimate').textContent = analysis.reading?.band
         ? `Estimated ACTFL reading demand · ${analysis.reading.band}`
         : analysis.reading?.state === 'error' ? 'Reading estimate unavailable.'
-          : analysis.reading?.state === 'ready' ? 'Reading estimate unavailable for this text.' : 'Estimating reading demand…';
-      $('#learning-reason').textContent = analysis.reading?.text || '';
+          : analysis.reading?.state === 'ready' ? 'Reading estimate unavailable for this text.'
+            : analysis.reading?.state === 'queued' ? 'Reading demand queued for AI…'
+              : analysis.reading?.state === 'running' ? `Estimating reading demand · ${Math.max(0, Math.floor((Date.now() - (analysis.reading.startedAt || Date.now())) / 1000))}s elapsed…`
+                : 'Reading estimate awaits vocabulary analysis.';
+      $('#learning-reason').textContent = analysis.reading?.error || analysis.reading?.text || '';
+      $('#retry-reading-estimate').disabled = analysis.state !== 'ready';
+      $('#retry-reading-estimate').textContent = ['queued', 'running'].includes(analysis.reading?.state) ? 'Restart reading estimate' : 'Retry reading estimate';
       const evidence = analysis.reading?.evidence ?? [];
       $('#learning-evidence').hidden = !evidence.length;
       $('#learning-quotes').replaceChildren(
@@ -279,6 +313,7 @@ export function libraryScreen({ progress, onRemove }) {
     $('#learning-title').textContent = book.title;
     $('#learning-stats').textContent = 'Loading analysis…';
     $('#learning-estimate').textContent = '';
+    $('#retry-reading-estimate').disabled = true;
     $('#learning-reason').textContent = '';
     $('#learning-chapters').replaceChildren();
     $('#replace-book-audio').checked = false;
@@ -293,6 +328,14 @@ export function libraryScreen({ progress, onRemove }) {
       await api(`/api/books/${learningBook.id}/learning`, { method: 'POST', body: {} });
       void learningStatus();
     } catch (error) { message('#learning-error', error.message); }
+  });
+  $('#retry-reading-estimate').addEventListener('click', async (event) => {
+    if (!learningBook) return;
+    event.currentTarget.disabled = true;
+    try {
+      await api(`/api/books/${encodeURIComponent(learningBook.id)}/reading-estimate`, { method: 'POST', body: {} });
+      await learningStatus();
+    } catch (error) { message('#learning-error', error.message); $('#retry-reading-estimate').disabled = false; }
   });
   $('#edit-book-languages').addEventListener('click', () => {
     const book = learningBook;
@@ -429,6 +472,7 @@ export function libraryScreen({ progress, onRemove }) {
   search.addEventListener('input', render);
   $('#reading-filter').addEventListener('change', render);
   $('#book-sort').addEventListener('change', render);
+  $('#book-status-filter').addEventListener('change', render);
   $('#book-file').addEventListener('change', (event) => stageFile(event.target.files[0]));
   $('#file-field').addEventListener('dragover', (event) => {
     event.preventDefault();
