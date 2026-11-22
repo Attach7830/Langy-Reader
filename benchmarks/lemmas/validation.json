@@ -1,0 +1,584 @@
+{
+  "version": 1,
+  "run_id": "20261122T172020Z-5d08e2",
+  "key_sha256": "a5a7602a994cea4294b2673dec660a142996eac0d17bec36c2661d423d2048c4",
+  "threads": 4,
+  "summaries": [
+    {
+      "engine": "langy",
+      "language": "es",
+      "suite": "challenge",
+      "split": "test",
+      "cases": 33,
+      "source_words": 86,
+      "correct": 78,
+      "accuracy": 0.9069767441860465,
+      "inventory_precision": null,
+      "inventory_recall": null,
+      "inventory_f1": null,
+      "false_entries": null,
+      "missed_entries": null,
+      "unaligned_spans": 0,
+      "false_name_exclusions": 5,
+      "missed_names": 0,
+      "milliseconds": 113.08467500020924,
+      "potential_merges": {
+        "haz": [
+          "hacer",
+          "haz"
+        ],
+        "ser": [
+          "ir",
+          "ser"
+        ]
+      },
+      "peak_worker_rss_mib": 318.49609375
+    },
+    {
+      "engine": "langy",
+      "language": "es",
+      "suite": "ud",
+      "split": "test",
+      "cases": 31,
+      "source_words": 787,
+      "correct": 784,
+      "accuracy": 0.9961880559085133,
+      "inventory_precision": 0.9912280701754386,
+      "inventory_recall": 0.9912280701754386,
+      "inventory_f1": 0.9912280701754386,
+      "false_entries": 3,
+      "missed_entries": 7,
+      "unaligned_spans": 0,
+      "false_name_exclusions": 10,
+      "missed_names": 1,
+      "milliseconds": 162.84974500104,
+      "potential_merges": {},
+      "peak_worker_rss_mib": 318.49609375
+    },
+    {
+      "engine": "langy",
+      "language": "pt",
+      "suite": "challenge",
+      "split": "test",
+      "cases": 26,
+      "source_words": 73,
+      "correct": 60,
+      "accuracy": 0.821917808219178,
+      "inventory_precision": null,
+      "inventory_recall": null,
+      "inventory_f1": null,
+      "false_entries": null,
+      "missed_entries": null,
+      "unaligned_spans": 0,
+      "false_name_exclusions": 0,
+      "missed_names": 0,
+      "milliseconds": 127.20449999869743,
+      "potential_merges": {
+        "canto": [
+          "cantar",
+          "canto"
+        ],
+        "conto": [
+          "contar",
+          "conto"
+        ],
+        "ser": [
+          "ir",
+          "ser"
+        ]
+      },
+      "peak_worker_rss_mib": 313.62109375
+    },
+    {
+      "engine": "langy",
+      "language": "pt",
+      "suite": "ud",
+      "split": "test",
+      "cases": 37,
+      "source_words": 740,
+      "correct": 720,
+      "accuracy": 0.972972972972973,
+      "inventory_precision": 0.9534883720930233,
+      "inventory_recall": 0.9479768786127167,
+      "inventory_f1": 0.9507246376811594,
+      "false_entries": 17,
+      "missed_entries": 23,
+      "unaligned_spans": 0,
+      "false_name_exclusions": 8,
+      "missed_names": 0,
+      "milliseconds": 207.3257509996438,
+      "potential_merges": {
+        "o": [
+          "a",
+          "o"
+        ]
+      },
+      "peak_worker_rss_mib": 313.62109375
+    },
+    {
+      "engine": "langy",
+      "language": "en",
+      "suite": "challenge",
+      "split": "test",
+      "cases": 23,
+      "source_words": 55,
+      "correct": 50,
+      "accuracy": 0.9090909090909091,
+      "inventory_precision": null,
+      "inventory_recall": null,
+      "inventory_f1": null,
+      "false_entries": null,
+      "missed_entries": null,
+      "unaligned_spans": 0,
+      "false_name_exclusions": 0,
+      "missed_names": 0,
+      "milliseconds": 88.85853899846552,
+      "potential_merges": {
+        "see": [
+          "saw",
+          "see"
+        ]
+      },
+      "peak_worker_rss_mib": 310.203125
+    },
+    {
+      "engine": "langy",
+      "language": "en",
+      "suite": "ud",
+      "split": "test",
+      "cases": 89,
+      "source_words": 811,
+      "correct": 783,
+      "accuracy": 0.9654747225647349,
+      "inventory_precision": 0.9454022988505747,
+      "inventory_recall": 0.9138888888888889,
+      "inventory_f1": 0.9293785310734464,
+      "false_entries": 29,
+      "missed_entries": 44,
+      "unaligned_spans": 4,
+      "false_name_exclusions": 26,
+      "missed_names": 9,
+      "milliseconds": 310.78731899833656,
+      "potential_merges": {
+        "do": [
+          "do",
+          "so"
+        ]
+      },
+      "peak_worker_rss_mib": 310.203125
+    },
+    {
+      "engine": "langy",
+      "language": "zh",
+      "suite": "characters",
+      "split": "test",
+      "cases": 4,
+      "source_words": 27,
+      "correct": 27,
+      "accuracy": 1.0,
+      "inventory_precision": 1.0,
+      "inventory_recall": 1.0,
+      "inventory_f1": 1.0,
+      "false_entries": 0,
+      "missed_entries": 0,
+      "unaligned_spans": 0,
+      "false_name_exclusions": 0,
+      "missed_names": 0,
+      "milliseconds": 0.09741400072016404,
+      "potential_merges": {},
+      "peak_worker_rss_mib": 49.984375
+    },
+    {
+      "engine": "stanza",
+      "language": "es",
+      "suite": "challenge",
+      "split": "test",
+      "cases": 33,
+      "source_words": 86,
+      "correct": 83,
+      "accuracy": 0.9651162790697675,
+      "inventory_precision": null,
+      "inventory_recall": null,
+      "inventory_f1": null,
+      "false_entries": null,
+      "missed_entries": null,
+      "unaligned_spans": 0,
+      "false_name_exclusions": 0,
+      "missed_names": 0,
+      "milliseconds": 1902.4460849987008,
+      "potential_merges": {
+        "hacer": [
+          "hacer",
+          "haz"
+        ],
+        "ser": [
+          "ir",
+          "ser"
+        ]
+      },
+      "peak_worker_rss_mib": 697.3671875
+    },
+    {
+      "engine": "stanza",
+      "language": "es",
+      "suite": "ud",
+      "split": "test",
+      "cases": 31,
+      "source_words": 787,
+      "correct": 778,
+      "accuracy": 0.98856416772554,
+      "inventory_precision": 0.9767441860465116,
+      "inventory_recall": 0.9824561403508771,
+      "inventory_f1": 0.9795918367346939,
+      "false_entries": 8,
+      "missed_entries": 6,
+      "unaligned_spans": 0,
+      "false_name_exclusions": 0,
+      "missed_names": 2,
+      "milliseconds": 5648.121342999275,
+      "potential_merges": {},
+      "peak_worker_rss_mib": 697.3671875
+    },
+    {
+      "engine": "stanza",
+      "language": "pt",
+      "suite": "challenge",
+      "split": "test",
+      "cases": 26,
+      "source_words": 73,
+      "correct": 67,
+      "accuracy": 0.9178082191780822,
+      "inventory_precision": null,
+      "inventory_recall": null,
+      "inventory_f1": null,
+      "false_entries": null,
+      "missed_entries": null,
+      "unaligned_spans": 0,
+      "false_name_exclusions": 0,
+      "missed_names": 0,
+      "milliseconds": 1809.0926060003767,
+      "potential_merges": {
+        "canto": [
+          "cantar",
+          "canto"
+        ],
+        "ser": [
+          "ir",
+          "ser"
+        ]
+      },
+      "peak_worker_rss_mib": 582.23828125
+    },
+    {
+      "engine": "stanza",
+      "language": "pt",
+      "suite": "ud",
+      "split": "test",
+      "cases": 37,
+      "source_words": 740,
+      "correct": 729,
+      "accuracy": 0.9851351351351352,
+      "inventory_precision": 0.9769452449567724,
+      "inventory_recall": 0.9797687861271677,
+      "inventory_f1": 0.9783549783549783,
+      "false_entries": 9,
+      "missed_entries": 13,
+      "unaligned_spans": 0,
+      "false_name_exclusions": 2,
+      "missed_names": 1,
+      "milliseconds": 4538.374472000669,
+      "potential_merges": {
+        "o": [
+          "a",
+          "eles",
+          "o"
+        ],
+        "um": [
+          "um",
+          "uma"
+        ]
+      },
+      "peak_worker_rss_mib": 582.23828125
+    },
+    {
+      "engine": "stanza",
+      "language": "en",
+      "suite": "challenge",
+      "split": "test",
+      "cases": 23,
+      "source_words": 55,
+      "correct": 51,
+      "accuracy": 0.9272727272727272,
+      "inventory_precision": null,
+      "inventory_recall": null,
+      "inventory_f1": null,
+      "false_entries": null,
+      "missed_entries": null,
+      "unaligned_spans": 0,
+      "false_name_exclusions": 0,
+      "missed_names": 0,
+      "milliseconds": 1234.6678689996224,
+      "potential_merges": {},
+      "peak_worker_rss_mib": 666.06640625
+    },
+    {
+      "engine": "stanza",
+      "language": "en",
+      "suite": "ud",
+      "split": "test",
+      "cases": 89,
+      "source_words": 811,
+      "correct": 797,
+      "accuracy": 0.9827373612823674,
+      "inventory_precision": 0.98,
+      "inventory_recall": 0.9527777777777777,
+      "inventory_f1": 0.9661971830985916,
+      "false_entries": 10,
+      "missed_entries": 23,
+      "unaligned_spans": 3,
+      "false_name_exclusions": 12,
+      "missed_names": 1,
+      "milliseconds": 7017.9979799995635,
+      "potential_merges": {
+        "do": [
+          "do",
+          "so"
+        ],
+        "her": [
+          "her",
+          "she"
+        ]
+      },
+      "peak_worker_rss_mib": 666.06640625
+    }
+  ],
+  "models": [
+    {
+      "engine": "langy",
+      "language": "es",
+      "metadata": {
+        "source_sha256": "8292533f0a0698a5a4a8898b7309235625b3578f8fc8dbd94c6879b33d606ac4",
+        "name_filter": "Unmodified Langy PROPN/PER/PERSON/LOC/GPE exclusion",
+        "model": "es_core_news_sm",
+        "model_version": "3.8.0",
+        "method": "contextual",
+        "packages": {
+          "spacy": "3.8.11",
+          "stanza": "1.15.1",
+          "torch": "2.9.1+cpu",
+          "numpy": "2.3.5",
+          "spacy-lookups-data": "1.0.5",
+          "fastapi": "0.141.1"
+        },
+        "load_seconds": 2.4765599239999574,
+        "peak_worker_rss_mib": 318.49609375,
+        "threads": 4
+      }
+    },
+    {
+      "engine": "langy",
+      "language": "pt",
+      "metadata": {
+        "source_sha256": "8292533f0a0698a5a4a8898b7309235625b3578f8fc8dbd94c6879b33d606ac4",
+        "name_filter": "Unmodified Langy PROPN/PER/PERSON/LOC/GPE exclusion",
+        "model": "pt_core_news_sm",
+        "model_version": "3.8.0",
+        "method": "contextual",
+        "packages": {
+          "spacy": "3.8.11",
+          "stanza": "1.15.1",
+          "torch": "2.9.1+cpu",
+          "numpy": "2.3.5",
+          "spacy-lookups-data": "1.0.5",
+          "fastapi": "0.141.1"
+        },
+        "load_seconds": 2.6386934610000026,
+        "peak_worker_rss_mib": 313.62109375,
+        "threads": 4
+      }
+    },
+    {
+      "engine": "langy",
+      "language": "en",
+      "metadata": {
+        "source_sha256": "8292533f0a0698a5a4a8898b7309235625b3578f8fc8dbd94c6879b33d606ac4",
+        "name_filter": "Unmodified Langy PROPN/PER/PERSON/LOC/GPE exclusion",
+        "model": "en_core_web_sm",
+        "model_version": "3.8.0",
+        "method": "contextual",
+        "packages": {
+          "spacy": "3.8.11",
+          "stanza": "1.15.1",
+          "torch": "2.9.1+cpu",
+          "numpy": "2.3.5",
+          "spacy-lookups-data": "1.0.5",
+          "fastapi": "0.141.1"
+        },
+        "load_seconds": 2.501138009999977,
+        "peak_worker_rss_mib": 310.203125,
+        "threads": 4
+      }
+    },
+    {
+      "engine": "langy",
+      "language": "zh",
+      "metadata": {
+        "source_sha256": "8292533f0a0698a5a4a8898b7309235625b3578f8fc8dbd94c6879b33d606ac4",
+        "name_filter": "Unmodified Langy PROPN/PER/PERSON/LOC/GPE exclusion",
+        "model": "Han character scan",
+        "packages": {
+          "spacy": "3.8.11",
+          "stanza": "1.15.1",
+          "torch": "2.9.1+cpu",
+          "numpy": "2.3.5",
+          "spacy-lookups-data": "1.0.5",
+          "fastapi": "0.141.1"
+        },
+        "load_seconds": 0.28088963900017916,
+        "peak_worker_rss_mib": 49.984375,
+        "threads": 4
+      }
+    },
+    {
+      "engine": "stanza",
+      "language": "es",
+      "metadata": {
+        "model": {
+          "tokenize": "combined_nocharlm",
+          "mwt": "combined",
+          "pos": "combined_charlm",
+          "lemma": "combined_nocharlm"
+        },
+        "resources_version": "1.15.0",
+        "name_filter": "Stanza UPOS=PROPN; NER is not included",
+        "device": "cpu",
+        "packages": {
+          "spacy": "3.8.11",
+          "stanza": "1.15.1",
+          "torch": "2.9.1+cpu",
+          "numpy": "2.3.5",
+          "spacy-lookups-data": "1.0.5",
+          "fastapi": "0.141.1"
+        },
+        "load_seconds": 4.1563756810001,
+        "peak_worker_rss_mib": 697.3671875,
+        "threads": 4
+      }
+    },
+    {
+      "engine": "stanza",
+      "language": "pt",
+      "metadata": {
+        "model": {
+          "tokenize": "bosque_nocharlm",
+          "mwt": "bosque",
+          "pos": "bosque_charlm",
+          "lemma": "bosque_nocharlm"
+        },
+        "resources_version": "1.15.0",
+        "name_filter": "Stanza UPOS=PROPN; NER is not included",
+        "device": "cpu",
+        "packages": {
+          "spacy": "3.8.11",
+          "stanza": "1.15.1",
+          "torch": "2.9.1+cpu",
+          "numpy": "2.3.5",
+          "spacy-lookups-data": "1.0.5",
+          "fastapi": "0.141.1"
+        },
+        "load_seconds": 3.535081255000023,
+        "peak_worker_rss_mib": 582.23828125,
+        "threads": 4
+      }
+    },
+    {
+      "engine": "stanza",
+      "language": "en",
+      "metadata": {
+        "model": {
+          "tokenize": "combined_nocharlm",
+          "mwt": "combined",
+          "pos": "combined_charlm",
+          "lemma": "combined_nocharlm"
+        },
+        "resources_version": "1.15.0",
+        "name_filter": "Stanza UPOS=PROPN; NER is not included",
+        "device": "cpu",
+        "packages": {
+          "spacy": "3.8.11",
+          "stanza": "1.15.1",
+          "torch": "2.9.1+cpu",
+          "numpy": "2.3.5",
+          "spacy-lookups-data": "1.0.5",
+          "fastapi": "0.141.1"
+        },
+        "load_seconds": 3.767785945000014,
+        "peak_worker_rss_mib": 666.06640625,
+        "threads": 4
+      }
+    }
+  ],
+  "stanza_model_hashes": {
+    "configuration": {
+      "stanza_resources_version": "1.15.0",
+      "stanza_resources_sha256": "a09dd4834c631e10dd5a91d68c8c7d3112a7cd5d43a7b656a557545feb07801b",
+      "processors": {
+        "es": {
+          "tokenize": "combined_nocharlm",
+          "mwt": "combined",
+          "pos": "combined_charlm",
+          "lemma": "combined_nocharlm"
+        },
+        "pt": {
+          "tokenize": "bosque_nocharlm",
+          "mwt": "bosque",
+          "pos": "bosque_charlm",
+          "lemma": "bosque_nocharlm"
+        },
+        "en": {
+          "tokenize": "combined_nocharlm",
+          "mwt": "combined",
+          "pos": "combined_charlm",
+          "lemma": "combined_nocharlm"
+        }
+      },
+      "spacy_models": {
+        "es": {
+          "package": "es_core_news_sm",
+          "version": "3.8.0"
+        },
+        "pt": {
+          "package": "pt_core_news_sm",
+          "version": "3.8.0"
+        },
+        "en": {
+          "package": "en_core_web_sm",
+          "version": "3.8.0"
+        }
+      }
+    },
+    "model_files": {
+      "en/backward_charlm/1billion.pt": "5d8cb2306650e4fc2b4f7517cc0fb33b38269e05bbf8d05e712e481471052225",
+      "en/forward_charlm/1billion.pt": "8a32ac2226dda8ea5d30f2a15fe3f835639977f299cfda315ce1b8a656596fd2",
+      "en/lemma/combined_nocharlm.pt": "02cd531592ff0ebca2d3334d935ae792d4d4ea7d1ba2699b6d2a1ab76ae10279",
+      "en/mwt/combined.pt": "daa12616ba687534ce00cca11835b0fb9c3e15a2d2d48586a50d8de14e02a997",
+      "en/pos/combined_charlm.pt": "5e05528957de2470e36bcaa8250312970fb9ce069f368a13aca0a2dc5b829c66",
+      "en/pretrain/conll17.pt": "edde4c195f91ba45aab3f3a6254202011f284559da8a5ead5e62ce522f819c5e",
+      "en/tokenize/combined_nocharlm.pt": "becae178f59cd8adba655a9dc8b3cac68311e1706da0a331706c7804f0d0c42d",
+      "es/backward_charlm/newswiki.pt": "bc1892d2d044c13668f449621cd85fac14e698aed107f9eea8fcae8f16fb595e",
+      "es/forward_charlm/newswiki.pt": "a8edffc309f86e8e31212eb15f90f188af2f93132d55a4dff17680d06308d2ea",
+      "es/lemma/combined_nocharlm.pt": "acc745b47c4878d423a00bcb3b5d819cf3cbd043e7105981c690cf8079526b2e",
+      "es/mwt/combined.pt": "940f87ac09794f4dc3c9f0ede9916642df8f43067bf8202b766936ac360fe3eb",
+      "es/pos/combined_charlm.pt": "8f720495414dc0edc28a4167826341e4165c0638335676e07251fdc4ceba37f4",
+      "es/pretrain/conll17.pt": "d0c4fbb5a061f5fcca8855efbae04358313a1f00526e1a744986f5180c80846b",
+      "es/tokenize/combined_nocharlm.pt": "ed4a59d0dc061e1e358480c78ef70a43c37322a7e36ac5b99c834800d48fd112",
+      "pt/backward_charlm/oscar2023.pt": "2cc9813c218cc1a27a45c8f0ca4d26774fd9b2b8f24d1d5b82a76e45ab89f977",
+      "pt/forward_charlm/oscar2023.pt": "13c95ad2eff08f8b517129fd2d943cbfd46f4893091ef8462de0d0c4805fea21",
+      "pt/lemma/bosque_nocharlm.pt": "541dd1b3aad5d67aa98976cd351061c4a31c248c75cc7ff82585bbca7f3121a6",
+      "pt/mwt/bosque.pt": "9b4cbe88e03caee6b1212fb12dd9fa037e900f5e569078875886296253086469",
+      "pt/pos/bosque_charlm.pt": "1d3539ddd6a4970eff23b6d8a673fc97439388a89f4a9452fe218236636c53cc",
+      "pt/pretrain/conll17.pt": "7f501defabdded872ba435d354172923bdb073cbd9403f4ebc12ce821527a830",
+      "pt/tokenize/bosque_nocharlm.pt": "5f236b67e3b1f7b089658e67c55eb8bae2fc06fbc6b420286ed515a61522fda0"
+    }
+  }
+}

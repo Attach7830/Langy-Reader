@@ -1,0 +1,12 @@
+name: langy-benchmark
+services:
+  benchmark:
+    build:
+      context: .
+      dockerfile: benchmarks/lemmas/Dockerfile
+    init: true
+    network_mode: none
+    volumes:
+      - ./benchmark-results:/results
+    environment:
+      BENCHMARK_OUTPUT: /results

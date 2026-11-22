@@ -1,0 +1,6 @@
+spacy==3.8.11
+spacy-lookups-data==1.0.5
+stanza==1.15.1
+socksio==1.0.0
+fastapi>=0.115,<1
+numpy>=1.26,<3

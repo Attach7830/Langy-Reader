@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "language": "es",
+      "repository": "UniversalDependencies/UD_Spanish-AnCora",
+      "release": "r2.15",
+      "commit": "42b0cec031d661d411bb905cbaf3e508b0dfbf5b",
+      "prefix": "es_ancora",
+      "files": [
+        {
+          "path": "es_ancora-ud-test.conllu",
+          "sha256": "2a24316503a56e171f07b38cf2ec13c22e3b62a337c6dbf2d9d1a54ada2b012b"
+        },
+        {
+          "path": "es_ancora-ud-dev.conllu",
+          "sha256": "e257745f4c339be53d5158867a28a2bfbcb98d890db86faa324e5f45f0284afc"
+        },
+        {
+          "path": "README.md",
+          "sha256": "94041e7d42b86a189fc7866799e1119eea1d32ce02444c26b251d518548a7c1c"
+        },
+        {
+          "path": "LICENSE.txt",
+          "sha256": "653702c7fdee69f7d7a439c9ba4c178c26e745479f6e6d2943bed1a9b9c7bf67"
+        }
+      ]
+    },
+    {
+      "language": "pt",
+      "repository": "UniversalDependencies/UD_Portuguese-Bosque",
+      "release": "r2.15",
+      "commit": "4f136acb02344e4f2f5e3d3e9ecc70aab61db62d",
+      "prefix": "pt_bosque",
+      "files": [
+        {
+          "path": "pt_bosque-ud-test.conllu",
+          "sha256": "9a824650b7a02cf411f6e09b39e8fb423c85e1a5fb3a55b87e7f4c0c2ea5b3bb"
+        },
+        {
+          "path": "pt_bosque-ud-dev.conllu",
+          "sha256": "f8a67abae12fbab85a3995204a6459d1958c11065062d4ea5349d6b914e78f81"
+        },
+        {
+          "path": "README.md",
+          "sha256": "74951559e8aa9be4224c893c76ffeb1bcaea603f6ab0186115c360b0960d7d22"
+        },
+        {
+          "path": "LICENSE.txt",
+          "sha256": "ab3a36080055dd29ad2b59162e43d1368c7f15643666bea982d4e103f546e025"
+        }
+      ]
+    },
+    {
+      "language": "en",
+      "repository": "UniversalDependencies/UD_English-EWT",
+      "release": "r2.15",
+      "commit": "4dc8e10cf32352e11ab2c46e024b19853b91546e",
+      "prefix": "en_ewt",
+      "files": [
+        {
+          "path": "en_ewt-ud-test.conllu",
+          "sha256": "0612e45914359e4b36d187ef2bfeaf66fc8933210925be985c5fbf6a9e311036"
+        },
+        {
+          "path": "en_ewt-ud-dev.conllu",
+          "sha256": "14a82ce2c4c4648c3e7c4efc76872c85c5f4c39643fcb7f9c91a45a58157a270"
+        },
+        {
+          "path": "README.md",
+          "sha256": "fc0c5d1344f56442af1501c8c2c850c002924ab6fe20f7de6f8667c1ebc46a79"
+        },
+        {
+          "path": "LICENSE.txt",
+          "sha256": "b3d1b0f4c6ae151f7eb78738f46ebd5ee140f8a7f76501ba26af123140d35ae7"
+        }
+      ]
+    }
+  ]
+}

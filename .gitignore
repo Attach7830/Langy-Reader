@@ -9,3 +9,5 @@ data/
 .secrets/
 archive-settings.json
 language/__pycache__/
+benchmarks/lemmas/__pycache__/
+benchmark-results/

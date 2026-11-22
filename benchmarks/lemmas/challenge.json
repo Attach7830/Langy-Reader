@@ -1,0 +1,3680 @@
+{
+  "version": 1,
+  "title": "Langy original lemma challenge key",
+  "provenance": "Original sentences and explicit target annotations authored and reviewed by the OpenAI assistant for Langy. Not independently human-adjudicated; report separately from the published UD reference sets.",
+  "license": "CC0-1.0",
+  "conventions": [
+    "Only the listed targets are scored; unannotated context is not an error.",
+    "NFC and casefold normalization preserve stress accents and ñ.",
+    "Attached pronouns and contractions expand into multiple lemmas at one source span.",
+    "Spanish pronoun targets follow the AnCora singular-person convention: me -> yo; se/lo -> él.",
+    "Lexical noun gender remains distinct; adjective inflections use their citation form.",
+    "Mandarin cases check individual Han characters, not word lemmas."
+  ],
+  "references": [
+    "https://universaldependencies.org/format.html",
+    "https://dle.rae.es/tiliche",
+    "https://dle.rae.es/saponaria",
+    "https://dle.rae.es/haz",
+    "https://dicionario.priberam.org/pão",
+    "https://dictionary.cambridge.org/dictionary/english/wind"
+  ],
+  "cases": [
+    {
+      "id": "es-vino",
+      "language": "es",
+      "split": "test",
+      "text": "Ayer vino una amiga y bebió vino.",
+      "answers": [
+        [
+          "vino",
+          [
+            [
+              "venir",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "vino",
+          [
+            [
+              "vino",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-fui-ir",
+      "language": "es",
+      "split": "test",
+      "text": "Ayer fui al mercado antes del amanecer.",
+      "answers": [
+        [
+          "fui",
+          [
+            [
+              "ir",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "al",
+          [
+            [
+              "a",
+              "ADP"
+            ],
+            [
+              "el",
+              "DET"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-fui-ser",
+      "language": "es",
+      "split": "dev",
+      "text": "Durante diez años fui maestro de música.",
+      "answers": [
+        [
+          "años",
+          [
+            [
+              "año",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "fui",
+          [
+            [
+              "ser",
+              "AUX"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-fueron-ir",
+      "language": "es",
+      "split": "test",
+      "text": "Los vecinos fueron hasta la estación caminando.",
+      "answers": [
+        [
+          "vecinos",
+          [
+            [
+              "vecino",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "fueron",
+          [
+            [
+              "ir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-fueron-ser",
+      "language": "es",
+      "split": "test",
+      "text": "Aquellas noches fueron frías y silenciosas.",
+      "answers": [
+        [
+          "noches",
+          [
+            [
+              "noche",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "fueron",
+          [
+            [
+              "ser",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "frías",
+          [
+            [
+              "frío",
+              "ADJ"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-haz-verbo",
+      "language": "es",
+      "split": "test",
+      "text": "Haz la tarea antes de salir.",
+      "answers": [
+        [
+          "Haz",
+          [
+            [
+              "hacer",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-haces-verbo",
+      "language": "es",
+      "split": "test",
+      "text": "Si haces ruido, despertarás al niño.",
+      "answers": [
+        [
+          "haces",
+          [
+            [
+              "hacer",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "despertarás",
+          [
+            [
+              "despertar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-haces-nombre",
+      "language": "es",
+      "split": "test",
+      "text": "Los haces de luz atravesaron la ventana.",
+      "answers": [
+        [
+          "haces",
+          [
+            [
+              "haz",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "atravesaron",
+          [
+            [
+              "atravesar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-hago",
+      "language": "es",
+      "split": "test",
+      "text": "Cada mañana hago pan para mis vecinos.",
+      "answers": [
+        [
+          "hago",
+          [
+            [
+              "hacer",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "vecinos",
+          [
+            [
+              "vecino",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-hizo",
+      "language": "es",
+      "split": "test",
+      "text": "La lluvia hizo crecer las plantas del patio.",
+      "answers": [
+        [
+          "hizo",
+          [
+            [
+              "hacer",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "plantas",
+          [
+            [
+              "planta",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "del",
+          [
+            [
+              "de",
+              "ADP"
+            ],
+            [
+              "el",
+              "DET"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-trajeron",
+      "language": "es",
+      "split": "dev",
+      "text": "Los niños trajeron libros y flores.",
+      "answers": [
+        [
+          "niños",
+          [
+            [
+              "niño",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "trajeron",
+          [
+            [
+              "traer",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "libros",
+          [
+            [
+              "libro",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "flores",
+          [
+            [
+              "flor",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-tuvieran",
+      "language": "es",
+      "split": "test",
+      "text": "Deseaba que sus hijos tuvieran una vida tranquila.",
+      "answers": [
+        [
+          "Deseaba",
+          [
+            [
+              "desear",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "hijos",
+          [
+            [
+              "hijo",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "tuvieran",
+          [
+            [
+              "tener",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-supiera",
+      "language": "es",
+      "split": "test",
+      "text": "Nadie parecía saber que ella supiera leer.",
+      "answers": [
+        [
+          "parecía",
+          [
+            [
+              "parecer",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "supiera",
+          [
+            [
+              "saber",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-anduvieron",
+      "language": "es",
+      "split": "test",
+      "text": "Anduvieron toda la noche buscando el camino.",
+      "answers": [
+        [
+          "Anduvieron",
+          [
+            [
+              "andar",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "buscando",
+          [
+            [
+              "buscar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-durmieron",
+      "language": "es",
+      "split": "test",
+      "text": "Los viajeros durmieron junto al río.",
+      "answers": [
+        [
+          "viajeros",
+          [
+            [
+              "viajero",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "durmieron",
+          [
+            [
+              "dormir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-oyeron",
+      "language": "es",
+      "split": "test",
+      "text": "Los vecinos oyeron voces detrás de la puerta.",
+      "answers": [
+        [
+          "oyeron",
+          [
+            [
+              "oír",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "voces",
+          [
+            [
+              "voz",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-leyeron",
+      "language": "es",
+      "split": "test",
+      "text": "Las muchachas leyeron las cartas en silencio.",
+      "answers": [
+        [
+          "muchachas",
+          [
+            [
+              "muchacha",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "leyeron",
+          [
+            [
+              "leer",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "cartas",
+          [
+            [
+              "carta",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-deshizo",
+      "language": "es",
+      "split": "test",
+      "text": "La tormenta deshizo el sendero que habíamos construido.",
+      "answers": [
+        [
+          "deshizo",
+          [
+            [
+              "deshacer",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "habíamos",
+          [
+            [
+              "haber",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "construido",
+          [
+            [
+              "construir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-envenenado",
+      "language": "es",
+      "split": "dev",
+      "text": "Alguien había envenenado el agua del pozo.",
+      "answers": [
+        [
+          "había",
+          [
+            [
+              "haber",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "envenenado",
+          [
+            [
+              "envenenar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-saponarias",
+      "language": "es",
+      "split": "test",
+      "text": "Las saponarias crecían junto a las paredes blancas.",
+      "answers": [
+        [
+          "saponarias",
+          [
+            [
+              "saponaria",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "crecían",
+          [
+            [
+              "crecer",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "paredes",
+          [
+            [
+              "pared",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "blancas",
+          [
+            [
+              "blanco",
+              "ADJ"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-tiliches",
+      "language": "es",
+      "split": "dev",
+      "text": "Guardaron los tiliches en varias cajas viejas.",
+      "answers": [
+        [
+          "Guardaron",
+          [
+            [
+              "guardar",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "tiliches",
+          [
+            [
+              "tiliche",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "cajas",
+          [
+            [
+              "caja",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "viejas",
+          [
+            [
+              "viejo",
+              "ADJ"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-dientes",
+      "language": "es",
+      "split": "dev",
+      "text": "Los dientes del peine estaban rotos.",
+      "answers": [
+        [
+          "dientes",
+          [
+            [
+              "diente",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "estaban",
+          [
+            [
+              "estar",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "rotos",
+          [
+            [
+              "roto",
+              "ADJ"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-luces",
+      "language": "es",
+      "split": "test",
+      "text": "Las luces pequeñas seguían encendidas.",
+      "answers": [
+        [
+          "luces",
+          [
+            [
+              "luz",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "pequeñas",
+          [
+            [
+              "pequeño",
+              "ADJ"
+            ]
+          ]
+        ],
+        [
+          "seguían",
+          [
+            [
+              "seguir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-jovenes",
+      "language": "es",
+      "split": "test",
+      "text": "Los jóvenes llevaban lápices azules.",
+      "answers": [
+        [
+          "jóvenes",
+          [
+            [
+              "joven",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "llevaban",
+          [
+            [
+              "llevar",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "lápices",
+          [
+            [
+              "lápiz",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "azules",
+          [
+            [
+              "azul",
+              "ADJ"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-rosa",
+      "language": "es",
+      "split": "test",
+      "text": "Rosa cortó las rosas antes de entrar.",
+      "answers": [
+        [
+          "Rosa",
+          [
+            [
+              "rosa",
+              "PROPN"
+            ]
+          ]
+        ],
+        [
+          "cortó",
+          [
+            [
+              "cortar",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "rosas",
+          [
+            [
+              "rosa",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-mercedes",
+      "language": "es",
+      "split": "test",
+      "text": "Mercedes llegó temprano con sus amigas.",
+      "answers": [
+        [
+          "Mercedes",
+          [
+            [
+              "mercedes",
+              "PROPN"
+            ]
+          ]
+        ],
+        [
+          "llegó",
+          [
+            [
+              "llegar",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "amigas",
+          [
+            [
+              "amiga",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-damerlo",
+      "language": "es",
+      "split": "dev",
+      "text": "Dámelo antes de que se haga de noche.",
+      "answers": [
+        [
+          "Dámelo",
+          [
+            [
+              "dar",
+              "VERB"
+            ],
+            [
+              "yo",
+              "PRON"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ],
+        [
+          "haga",
+          [
+            [
+              "hacer",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-diciendome",
+      "language": "es",
+      "split": "test",
+      "text": "Estaba diciéndome que volvería pronto.",
+      "answers": [
+        [
+          "diciéndome",
+          [
+            [
+              "decir",
+              "VERB"
+            ],
+            [
+              "yo",
+              "PRON"
+            ]
+          ]
+        ],
+        [
+          "volvería",
+          [
+            [
+              "volver",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-levantarse",
+      "language": "es",
+      "split": "test",
+      "text": "Decidió levantarse antes del amanecer.",
+      "answers": [
+        [
+          "Decidió",
+          [
+            [
+              "decidir",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "levantarse",
+          [
+            [
+              "levantar",
+              "VERB"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-contarselo",
+      "language": "es",
+      "split": "test",
+      "text": "Prometió contárselo cuando llegara el momento.",
+      "answers": [
+        [
+          "Prometió",
+          [
+            [
+              "prometer",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "contárselo",
+          [
+            [
+              "contar",
+              "VERB"
+            ],
+            [
+              "él",
+              "PRON"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ],
+        [
+          "llegara",
+          [
+            [
+              "llegar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-dije",
+      "language": "es",
+      "split": "test",
+      "text": "Le dije que trajera las llaves.",
+      "answers": [
+        [
+          "dije",
+          [
+            [
+              "decir",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "trajera",
+          [
+            [
+              "traer",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "llaves",
+          [
+            [
+              "llave",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-comia",
+      "language": "es",
+      "split": "test",
+      "text": "Mientras comía, escuchaba los pasos del vecino.",
+      "answers": [
+        [
+          "comía",
+          [
+            [
+              "comer",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "escuchaba",
+          [
+            [
+              "escuchar",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "pasos",
+          [
+            [
+              "paso",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-puso",
+      "language": "es",
+      "split": "test",
+      "text": "Puso los vasos sobre una mesa redonda.",
+      "answers": [
+        [
+          "Puso",
+          [
+            [
+              "poner",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "vasos",
+          [
+            [
+              "vaso",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "redonda",
+          [
+            [
+              "redondo",
+              "ADJ"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-puesto",
+      "language": "es",
+      "split": "test",
+      "text": "Habían puesto mantas sobre las sillas.",
+      "answers": [
+        [
+          "Habían",
+          [
+            [
+              "haber",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "puesto",
+          [
+            [
+              "poner",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "mantas",
+          [
+            [
+              "manta",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "sillas",
+          [
+            [
+              "silla",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-sintio",
+      "language": "es",
+      "split": "test",
+      "text": "La mujer sintió frío al abrir la ventana.",
+      "answers": [
+        [
+          "sintió",
+          [
+            [
+              "sentir",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "al",
+          [
+            [
+              "a",
+              "ADP"
+            ],
+            [
+              "el",
+              "DET"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-sento",
+      "language": "es",
+      "split": "test",
+      "text": "La mujer sentó al niño junto a la lumbre.",
+      "answers": [
+        [
+          "sentó",
+          [
+            [
+              "sentar",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "al",
+          [
+            [
+              "a",
+              "ADP"
+            ],
+            [
+              "el",
+              "DET"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-podria",
+      "language": "es",
+      "split": "test",
+      "text": "Podría regresar si encontrara las monedas.",
+      "answers": [
+        [
+          "Podría",
+          [
+            [
+              "poder",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "encontrara",
+          [
+            [
+              "encontrar",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "monedas",
+          [
+            [
+              "moneda",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-hubiese",
+      "language": "es",
+      "split": "dev",
+      "text": "Si hubiese sabido la verdad, habría vuelto.",
+      "answers": [
+        [
+          "hubiese",
+          [
+            [
+              "haber",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "sabido",
+          [
+            [
+              "saber",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "habría",
+          [
+            [
+              "haber",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "vuelto",
+          [
+            [
+              "volver",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-ano-ano",
+      "language": "es",
+      "split": "test",
+      "text": "Durante un año estudió la anatomía del ano.",
+      "answers": [
+        [
+          "año",
+          [
+            [
+              "año",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "estudió",
+          [
+            [
+              "estudiar",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "ano",
+          [
+            [
+              "ano",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-saltos",
+      "language": "es",
+      "split": "test",
+      "text": "Los caballos saltaban sobre las piedras.",
+      "answers": [
+        [
+          "caballos",
+          [
+            [
+              "caballo",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "saltaban",
+          [
+            [
+              "saltar",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "piedras",
+          [
+            [
+              "piedra",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-fui-ir",
+      "language": "pt",
+      "split": "test",
+      "text": "Ontem fui à biblioteca buscar alguns livros.",
+      "answers": [
+        [
+          "fui",
+          [
+            [
+              "ir",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "à",
+          [
+            [
+              "a",
+              "ADP"
+            ],
+            [
+              "o",
+              "DET"
+            ]
+          ]
+        ],
+        [
+          "livros",
+          [
+            [
+              "livro",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-fui-ser",
+      "language": "pt",
+      "split": "dev",
+      "text": "Durante muitos anos fui professor de música.",
+      "answers": [
+        [
+          "anos",
+          [
+            [
+              "ano",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "fui",
+          [
+            [
+              "ser",
+              "AUX"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-foram-ir",
+      "language": "pt",
+      "split": "test",
+      "text": "Os viajantes foram até a estação.",
+      "answers": [
+        [
+          "viajantes",
+          [
+            [
+              "viajante",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "foram",
+          [
+            [
+              "ir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-foram-ser",
+      "language": "pt",
+      "split": "test",
+      "text": "Aquelas noites foram longas e frias.",
+      "answers": [
+        [
+          "noites",
+          [
+            [
+              "noite",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "foram",
+          [
+            [
+              "ser",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "longas",
+          [
+            [
+              "longo",
+              "ADJ"
+            ]
+          ]
+        ],
+        [
+          "frias",
+          [
+            [
+              "frio",
+              "ADJ"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-canto-verbo",
+      "language": "pt",
+      "split": "test",
+      "text": "Todas as manhãs eu canto perto da janela.",
+      "answers": [
+        [
+          "manhãs",
+          [
+            [
+              "manhã",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "canto",
+          [
+            [
+              "cantar",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "da",
+          [
+            [
+              "de",
+              "ADP"
+            ],
+            [
+              "o",
+              "DET"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-canto-nome",
+      "language": "pt",
+      "split": "test",
+      "text": "Uma cadeira antiga ocupava o canto da sala.",
+      "answers": [
+        [
+          "antiga",
+          [
+            [
+              "antigo",
+              "ADJ"
+            ]
+          ]
+        ],
+        [
+          "ocupava",
+          [
+            [
+              "ocupar",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "canto",
+          [
+            [
+              "canto",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-conto-verbo",
+      "language": "pt",
+      "split": "test",
+      "text": "Eu conto as moedas antes de sair.",
+      "answers": [
+        [
+          "conto",
+          [
+            [
+              "contar",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "moedas",
+          [
+            [
+              "moeda",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-conto-nome",
+      "language": "pt",
+      "split": "test",
+      "text": "A criança leu um conto sobre o mar.",
+      "answers": [
+        [
+          "leu",
+          [
+            [
+              "ler",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "conto",
+          [
+            [
+              "conto",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-pelo-nome",
+      "language": "pt",
+      "split": "test",
+      "text": "O pelo do cachorro estava molhado.",
+      "answers": [
+        [
+          "pelo",
+          [
+            [
+              "pelo",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "do",
+          [
+            [
+              "de",
+              "ADP"
+            ],
+            [
+              "o",
+              "DET"
+            ]
+          ]
+        ],
+        [
+          "molhado",
+          [
+            [
+              "molhado",
+              "ADJ"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-pelo-contracao",
+      "language": "pt",
+      "split": "test",
+      "text": "Passamos pelo mercado antes do almoço.",
+      "answers": [
+        [
+          "Passamos",
+          [
+            [
+              "passar",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "pelo",
+          [
+            [
+              "por",
+              "ADP"
+            ],
+            [
+              "o",
+              "DET"
+            ]
+          ]
+        ],
+        [
+          "do",
+          [
+            [
+              "de",
+              "ADP"
+            ],
+            [
+              "o",
+              "DET"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-por",
+      "language": "pt",
+      "split": "test",
+      "text": "Ela vai pôr os pratos na mesa.",
+      "answers": [
+        [
+          "pôr",
+          [
+            [
+              "pôr",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "pratos",
+          [
+            [
+              "prato",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "na",
+          [
+            [
+              "em",
+              "ADP"
+            ],
+            [
+              "o",
+              "DET"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-pode",
+      "language": "pt",
+      "split": "test",
+      "text": "Ontem ela pôde sair mais cedo.",
+      "answers": [
+        [
+          "pôde",
+          [
+            [
+              "poder",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-trouxe",
+      "language": "pt",
+      "split": "dev",
+      "text": "Ele trouxe flores para os vizinhos.",
+      "answers": [
+        [
+          "trouxe",
+          [
+            [
+              "trazer",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "flores",
+          [
+            [
+              "flor",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "vizinhos",
+          [
+            [
+              "vizinho",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-fizeram",
+      "language": "pt",
+      "split": "test",
+      "text": "As crianças fizeram desenhos coloridos.",
+      "answers": [
+        [
+          "crianças",
+          [
+            [
+              "criança",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "fizeram",
+          [
+            [
+              "fazer",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "desenhos",
+          [
+            [
+              "desenho",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "coloridos",
+          [
+            [
+              "colorido",
+              "ADJ"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-mantem",
+      "language": "pt",
+      "split": "test",
+      "text": "Ela mantém os documentos numa gaveta.",
+      "answers": [
+        [
+          "mantém",
+          [
+            [
+              "manter",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "documentos",
+          [
+            [
+              "documento",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "numa",
+          [
+            [
+              "em",
+              "ADP"
+            ],
+            [
+              "um",
+              "DET"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-intervieram",
+      "language": "pt",
+      "split": "test",
+      "text": "Os vizinhos intervieram para evitar a discussão.",
+      "answers": [
+        [
+          "intervieram",
+          [
+            [
+              "intervir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-disseram",
+      "language": "pt",
+      "split": "test",
+      "text": "Os trabalhadores disseram que voltariam amanhã.",
+      "answers": [
+        [
+          "trabalhadores",
+          [
+            [
+              "trabalhador",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "disseram",
+          [
+            [
+              "dizer",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "voltariam",
+          [
+            [
+              "voltar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-viesse",
+      "language": "pt",
+      "split": "dev",
+      "text": "Esperava que ela viesse antes da chuva.",
+      "answers": [
+        [
+          "Esperava",
+          [
+            [
+              "esperar",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "viesse",
+          [
+            [
+              "vir",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-houvesse",
+      "language": "pt",
+      "split": "test",
+      "text": "Se houvesse tempo, teríamos terminado o trabalho.",
+      "answers": [
+        [
+          "houvesse",
+          [
+            [
+              "haver",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "teríamos",
+          [
+            [
+              "ter",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "terminado",
+          [
+            [
+              "terminar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-paes",
+      "language": "pt",
+      "split": "test",
+      "text": "Os pães estavam perto das mãos do padeiro.",
+      "answers": [
+        [
+          "pães",
+          [
+            [
+              "pão",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "mãos",
+          [
+            [
+              "mão",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-caes",
+      "language": "pt",
+      "split": "test",
+      "text": "Os cães seguiram os capitães pela estrada.",
+      "answers": [
+        [
+          "cães",
+          [
+            [
+              "cão",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "seguiram",
+          [
+            [
+              "seguir",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "capitães",
+          [
+            [
+              "capitão",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "pela",
+          [
+            [
+              "por",
+              "ADP"
+            ],
+            [
+              "o",
+              "DET"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-dificeis",
+      "language": "pt",
+      "split": "test",
+      "text": "Aqueles problemas difíceis pareciam impossíveis.",
+      "answers": [
+        [
+          "problemas",
+          [
+            [
+              "problema",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "difíceis",
+          [
+            [
+              "difícil",
+              "ADJ"
+            ]
+          ]
+        ],
+        [
+          "pareciam",
+          [
+            [
+              "parecer",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "impossíveis",
+          [
+            [
+              "impossível",
+              "ADJ"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-felizes",
+      "language": "pt",
+      "split": "test",
+      "text": "As pessoas felizes caminhavam pela praça.",
+      "answers": [
+        [
+          "pessoas",
+          [
+            [
+              "pessoa",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "felizes",
+          [
+            [
+              "feliz",
+              "ADJ"
+            ]
+          ]
+        ],
+        [
+          "caminhavam",
+          [
+            [
+              "caminhar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-deu-me",
+      "language": "pt",
+      "split": "test",
+      "text": "Ela deu-me um livro antes de partir.",
+      "answers": [
+        [
+          "deu-me",
+          [
+            [
+              "dar",
+              "VERB"
+            ],
+            [
+              "eu",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-disse-lhe",
+      "language": "pt",
+      "split": "test",
+      "text": "Ele disse-lhe que esperasse um pouco.",
+      "answers": [
+        [
+          "disse-lhe",
+          [
+            [
+              "dizer",
+              "VERB"
+            ],
+            [
+              "ele",
+              "PRON"
+            ]
+          ]
+        ],
+        [
+          "esperasse",
+          [
+            [
+              "esperar",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-dizer-lhe",
+      "language": "pt",
+      "split": "dev",
+      "text": "Preciso dizer-lhe a verdade amanhã.",
+      "answers": [
+        [
+          "dizer-lhe",
+          [
+            [
+              "dizer",
+              "VERB"
+            ],
+            [
+              "ele",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-ana",
+      "language": "pt",
+      "split": "test",
+      "text": "Ana encontrou rosas perto do portão.",
+      "answers": [
+        [
+          "Ana",
+          [
+            [
+              "ana",
+              "PROPN"
+            ]
+          ]
+        ],
+        [
+          "encontrou",
+          [
+            [
+              "encontrar",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "rosas",
+          [
+            [
+              "rosa",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-caixa",
+      "language": "pt",
+      "split": "test",
+      "text": "As caixas pequenas continham cartas antigas.",
+      "answers": [
+        [
+          "caixas",
+          [
+            [
+              "caixa",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "pequenas",
+          [
+            [
+              "pequeno",
+              "ADJ"
+            ]
+          ]
+        ],
+        [
+          "continham",
+          [
+            [
+              "conter",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "cartas",
+          [
+            [
+              "carta",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "antigas",
+          [
+            [
+              "antigo",
+              "ADJ"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-leio",
+      "language": "pt",
+      "split": "test",
+      "text": "Eu leio todos os dias e eles liam à noite.",
+      "answers": [
+        [
+          "leio",
+          [
+            [
+              "ler",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "liam",
+          [
+            [
+              "ler",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "à",
+          [
+            [
+              "a",
+              "ADP"
+            ],
+            [
+              "o",
+              "DET"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pt-fez",
+      "language": "pt",
+      "split": "test",
+      "text": "A chuva fez cair as folhas das árvores.",
+      "answers": [
+        [
+          "fez",
+          [
+            [
+              "fazer",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "folhas",
+          [
+            [
+              "folha",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "árvores",
+          [
+            [
+              "árvore",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-saw-verb",
+      "language": "en",
+      "split": "test",
+      "text": "Yesterday she saw the boats from the bridge.",
+      "answers": [
+        [
+          "saw",
+          [
+            [
+              "see",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "boats",
+          [
+            [
+              "boat",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-saw-noun",
+      "language": "en",
+      "split": "test",
+      "text": "The rusty saw lay beside the broken chair.",
+      "answers": [
+        [
+          "saw",
+          [
+            [
+              "saw",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "lay",
+          [
+            [
+              "lie",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-wound-verb",
+      "language": "en",
+      "split": "test",
+      "text": "He wound the old clock before dawn.",
+      "answers": [
+        [
+          "wound",
+          [
+            [
+              "wind",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-wound-noun",
+      "language": "en",
+      "split": "test",
+      "text": "The wound healed slowly during the winter.",
+      "answers": [
+        [
+          "wound",
+          [
+            [
+              "wound",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "healed",
+          [
+            [
+              "heal",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-found-find",
+      "language": "en",
+      "split": "dev",
+      "text": "The children found their missing shoes.",
+      "answers": [
+        [
+          "children",
+          [
+            [
+              "child",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "found",
+          [
+            [
+              "find",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "shoes",
+          [
+            [
+              "shoe",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-founded",
+      "language": "en",
+      "split": "test",
+      "text": "The villagers founded a school near the river.",
+      "answers": [
+        [
+          "villagers",
+          [
+            [
+              "villager",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "founded",
+          [
+            [
+              "found",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-bound",
+      "language": "en",
+      "split": "dev",
+      "text": "The workers bound the books in leather.",
+      "answers": [
+        [
+          "workers",
+          [
+            [
+              "worker",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "bound",
+          [
+            [
+              "bind",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "books",
+          [
+            [
+              "book",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-lay",
+      "language": "en",
+      "split": "test",
+      "text": "Yesterday I lay on the floor until noon.",
+      "answers": [
+        [
+          "lay",
+          [
+            [
+              "lie",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-laid",
+      "language": "en",
+      "split": "dev",
+      "text": "She laid the blankets beside the door.",
+      "answers": [
+        [
+          "laid",
+          [
+            [
+              "lay",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "blankets",
+          [
+            [
+              "blanket",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-lying",
+      "language": "en",
+      "split": "test",
+      "text": "The tired travelers were lying beside the fire.",
+      "answers": [
+        [
+          "travelers",
+          [
+            [
+              "traveler",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "were",
+          [
+            [
+              "be",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "lying",
+          [
+            [
+              "lie",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-lying-lie",
+      "language": "en",
+      "split": "test",
+      "text": "He was lying about the missing money.",
+      "answers": [
+        [
+          "was",
+          [
+            [
+              "be",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "lying",
+          [
+            [
+              "lie",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-went",
+      "language": "en",
+      "split": "dev",
+      "text": "They went home after the children had eaten.",
+      "answers": [
+        [
+          "went",
+          [
+            [
+              "go",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "children",
+          [
+            [
+              "child",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "had",
+          [
+            [
+              "have",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "eaten",
+          [
+            [
+              "eat",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-brought",
+      "language": "en",
+      "split": "test",
+      "text": "The women brought loaves and knives.",
+      "answers": [
+        [
+          "women",
+          [
+            [
+              "woman",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "brought",
+          [
+            [
+              "bring",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "loaves",
+          [
+            [
+              "loaf",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "knives",
+          [
+            [
+              "knife",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-mice",
+      "language": "en",
+      "split": "test",
+      "text": "The mice hid beneath the shelves.",
+      "answers": [
+        [
+          "mice",
+          [
+            [
+              "mouse",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "hid",
+          [
+            [
+              "hide",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "shelves",
+          [
+            [
+              "shelf",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-geese",
+      "language": "en",
+      "split": "test",
+      "text": "The geese stood beside the sleeping oxen.",
+      "answers": [
+        [
+          "geese",
+          [
+            [
+              "goose",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "stood",
+          [
+            [
+              "stand",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "oxen",
+          [
+            [
+              "ox",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-feet",
+      "language": "en",
+      "split": "test",
+      "text": "His feet and teeth hurt after the journey.",
+      "answers": [
+        [
+          "feet",
+          [
+            [
+              "foot",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "teeth",
+          [
+            [
+              "tooth",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "hurt",
+          [
+            [
+              "hurt",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-better",
+      "language": "en",
+      "split": "test",
+      "text": "This road is better than the old one.",
+      "answers": [
+        [
+          "better",
+          [
+            [
+              "good",
+              "ADJ"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-worse",
+      "language": "en",
+      "split": "test",
+      "text": "The weather grew worse before evening.",
+      "answers": [
+        [
+          "grew",
+          [
+            [
+              "grow",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "worse",
+          [
+            [
+              "bad",
+              "ADJ"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-best",
+      "language": "en",
+      "split": "dev",
+      "text": "She chose the best apples in the basket.",
+      "answers": [
+        [
+          "chose",
+          [
+            [
+              "choose",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "best",
+          [
+            [
+              "good",
+              "ADJ"
+            ]
+          ]
+        ],
+        [
+          "apples",
+          [
+            [
+              "apple",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-dont",
+      "language": "en",
+      "split": "test",
+      "text": "I don't know where the keys are.",
+      "answers": [
+        [
+          "don't",
+          [
+            [
+              "do",
+              "AUX"
+            ],
+            [
+              "not",
+              "PART"
+            ]
+          ]
+        ],
+        [
+          "keys",
+          [
+            [
+              "key",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "are",
+          [
+            [
+              "be",
+              "AUX"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-didnt",
+      "language": "en",
+      "split": "dev",
+      "text": "They didn't bring the letters yesterday.",
+      "answers": [
+        [
+          "didn't",
+          [
+            [
+              "do",
+              "AUX"
+            ],
+            [
+              "not",
+              "PART"
+            ]
+          ]
+        ],
+        [
+          "letters",
+          [
+            [
+              "letter",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-cannot",
+      "language": "en",
+      "split": "test",
+      "text": "They cannot open the heavy doors.",
+      "answers": [
+        [
+          "cannot",
+          [
+            [
+              "can",
+              "AUX"
+            ],
+            [
+              "not",
+              "PART"
+            ]
+          ]
+        ],
+        [
+          "doors",
+          [
+            [
+              "door",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-shes-is",
+      "language": "en",
+      "split": "dev",
+      "text": "She's reading a book beside the window.",
+      "answers": [
+        [
+          "She's",
+          [
+            [
+              "she",
+              "PRON"
+            ],
+            [
+              "be",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "reading",
+          [
+            [
+              "read",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-shes-has",
+      "language": "en",
+      "split": "test",
+      "text": "She's finished the work already.",
+      "answers": [
+        [
+          "She's",
+          [
+            [
+              "she",
+              "PRON"
+            ],
+            [
+              "have",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "finished",
+          [
+            [
+              "finish",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-theyve",
+      "language": "en",
+      "split": "test",
+      "text": "They've forgotten the address again.",
+      "answers": [
+        [
+          "They've",
+          [
+            [
+              "they",
+              "PRON"
+            ],
+            [
+              "have",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "forgotten",
+          [
+            [
+              "forget",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-id-had",
+      "language": "en",
+      "split": "test",
+      "text": "I'd already left when the storm began.",
+      "answers": [
+        [
+          "I'd",
+          [
+            [
+              "i",
+              "PRON"
+            ],
+            [
+              "have",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "left",
+          [
+            [
+              "leave",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "began",
+          [
+            [
+              "begin",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-id-would",
+      "language": "en",
+      "split": "test",
+      "text": "I'd visit tomorrow if the roads were clear.",
+      "answers": [
+        [
+          "I'd",
+          [
+            [
+              "i",
+              "PRON"
+            ],
+            [
+              "would",
+              "AUX"
+            ]
+          ]
+        ],
+        [
+          "roads",
+          [
+            [
+              "road",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-alice",
+      "language": "en",
+      "split": "test",
+      "text": "Alice planted roses beside the house.",
+      "answers": [
+        [
+          "Alice",
+          [
+            [
+              "alice",
+              "PROPN"
+            ]
+          ]
+        ],
+        [
+          "planted",
+          [
+            [
+              "plant",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "roses",
+          [
+            [
+              "rose",
+              "NOUN"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-leaves",
+      "language": "en",
+      "split": "test",
+      "text": "The leaves fell as the guests were leaving.",
+      "answers": [
+        [
+          "leaves",
+          [
+            [
+              "leaf",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "fell",
+          [
+            [
+              "fall",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "guests",
+          [
+            [
+              "guest",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "leaving",
+          [
+            [
+              "leave",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "en-read",
+      "language": "en",
+      "split": "test",
+      "text": "She read three books and then began to write.",
+      "answers": [
+        [
+          "read",
+          [
+            [
+              "read",
+              "VERB"
+            ]
+          ]
+        ],
+        [
+          "books",
+          [
+            [
+              "book",
+              "NOUN"
+            ]
+          ]
+        ],
+        [
+          "began",
+          [
+            [
+              "begin",
+              "VERB"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "zh-simplified",
+      "language": "zh",
+      "split": "test",
+      "text": "我喜欢读书，也喜欢音乐。",
+      "answers": [
+        [
+          "我",
+          [
+            [
+              "我",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "喜",
+          [
+            [
+              "喜",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "欢",
+          [
+            [
+              "欢",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "读",
+          [
+            [
+              "读",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "书",
+          [
+            [
+              "书",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "也",
+          [
+            [
+              "也",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "喜",
+          [
+            [
+              "喜",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "欢",
+          [
+            [
+              "欢",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "音",
+          [
+            [
+              "音",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "乐",
+          [
+            [
+              "乐",
+              "X"
+            ]
+          ]
+        ]
+      ],
+      "kind": "characters"
+    },
+    {
+      "id": "zh-traditional",
+      "language": "zh",
+      "split": "dev",
+      "text": "我喜歡讀書，也喜歡音樂。",
+      "answers": [
+        [
+          "我",
+          [
+            [
+              "我",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "喜",
+          [
+            [
+              "喜",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "歡",
+          [
+            [
+              "歡",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "讀",
+          [
+            [
+              "讀",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "書",
+          [
+            [
+              "書",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "也",
+          [
+            [
+              "也",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "喜",
+          [
+            [
+              "喜",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "歡",
+          [
+            [
+              "歡",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "音",
+          [
+            [
+              "音",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "樂",
+          [
+            [
+              "樂",
+              "X"
+            ]
+          ]
+        ]
+      ],
+      "kind": "characters"
+    },
+    {
+      "id": "zh-mixed",
+      "language": "zh",
+      "split": "test",
+      "text": "我读书。I read books. 中文 English",
+      "answers": [
+        [
+          "我",
+          [
+            [
+              "我",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "读",
+          [
+            [
+              "读",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "书",
+          [
+            [
+              "书",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "中",
+          [
+            [
+              "中",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "文",
+          [
+            [
+              "文",
+              "X"
+            ]
+          ]
+        ]
+      ],
+      "kind": "characters"
+    },
+    {
+      "id": "zh-astral",
+      "language": "zh",
+      "split": "test",
+      "text": "我𠮷我 书書𠮷。",
+      "answers": [
+        [
+          "我",
+          [
+            [
+              "我",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "𠮷",
+          [
+            [
+              "𠮷",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "我",
+          [
+            [
+              "我",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "书",
+          [
+            [
+              "书",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "書",
+          [
+            [
+              "書",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "𠮷",
+          [
+            [
+              "𠮷",
+              "X"
+            ]
+          ]
+        ]
+      ],
+      "kind": "characters"
+    },
+    {
+      "id": "zh-repeat",
+      "language": "zh",
+      "split": "test",
+      "text": "看看看，听听听。",
+      "answers": [
+        [
+          "看",
+          [
+            [
+              "看",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "看",
+          [
+            [
+              "看",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "看",
+          [
+            [
+              "看",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "听",
+          [
+            [
+              "听",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "听",
+          [
+            [
+              "听",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "听",
+          [
+            [
+              "听",
+              "X"
+            ]
+          ]
+        ]
+      ],
+      "kind": "characters"
+    }
+  ]
+}

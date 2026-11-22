@@ -147,6 +147,18 @@ Open **Analysis & audio → Words below threshold** for a searchable, language-f
 
 The **Meanings** selector offers **English translation**, **Spanish synonyms / equivalents**, or **Spanish definition**. Meanings load progressively for ten items per page using the configured AI connection and the book's example passage. Spanish synonyms come from local dictionaries and are labelled as possible senses; when no synonyms are available, a labelled Spanish definition is generated instead. Other languages receive Spanish equivalents in synonyms mode. Generated meanings are labelled as AI output and do not alter lemma analysis or exposure counts. Successful meanings are cached with the book analysis, example passage, output mode and AI connection; changes to those inputs invalidate them. Errors can be retried per row. Demo AI rate limits apply, and every demo visitor has their own vocabulary threshold and exposure history.
 
+## Benchmark lemma accuracy
+
+A separate benchmark compares Langy's checked-out analyzer with Stanza using a supplied answer key. It includes pinned published Spanish, Portuguese and English annotations, an original challenge key, and separate Mandarin character checks. It writes a readable summary and a CSV of disagreements without accessing or changing your library or running reader. The first build downloads the public models/reference data; inference then runs locally without paid APIs.
+
+```bash
+cd ~/Langy-Reader &&
+git pull --ff-only &&
+bash scripts/benchmark-lemmas.sh
+```
+
+Results are saved under `benchmark-results/`. See [the benchmark instructions](benchmarks/lemmas/README.md) for the answer-key provenance, model versions, scoring conventions and options. Original challenge labels have not had independent human adjudication; published treebank and novel accuracy should be assessed separately.
+
 ## Mixed-language books, Mandarin and Portuguese
 
 In **Book details** (the pencil on a library card), enable **Choose the languages contained in this book**, add each language, and save. For a Mandarin–English book, select Chinese/Mandarin and English. Analysis, hover help, pinyin and narration are restricted to that selection, including when EPUB tags disagree. Excluding the primary language makes the first selection primary. Saving automatically queues fresh analysis of the existing file and removes stale totals while it runs; no reupload is needed. Turn this option off to restore unrestricted automatic detection. The same choices are available during import.

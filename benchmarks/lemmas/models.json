@@ -1,0 +1,38 @@
+{
+  "stanza_resources_version": "1.15.0",
+  "stanza_resources_sha256": "a09dd4834c631e10dd5a91d68c8c7d3112a7cd5d43a7b656a557545feb07801b",
+  "processors": {
+    "es": {
+      "tokenize": "combined_nocharlm",
+      "mwt": "combined",
+      "pos": "combined_charlm",
+      "lemma": "combined_nocharlm"
+    },
+    "pt": {
+      "tokenize": "bosque_nocharlm",
+      "mwt": "bosque",
+      "pos": "bosque_charlm",
+      "lemma": "bosque_nocharlm"
+    },
+    "en": {
+      "tokenize": "combined_nocharlm",
+      "mwt": "combined",
+      "pos": "combined_charlm",
+      "lemma": "combined_nocharlm"
+    }
+  },
+  "spacy_models": {
+    "es": {
+      "package": "es_core_news_sm",
+      "version": "3.8.0"
+    },
+    "pt": {
+      "package": "pt_core_news_sm",
+      "version": "3.8.0"
+    },
+    "en": {
+      "package": "en_core_web_sm",
+      "version": "3.8.0"
+    }
+  }
+}

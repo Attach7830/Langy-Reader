@@ -6,3 +6,5 @@ server/thesaurus-data
 .env*
 .secrets/
 **/archive-settings.json
+benchmark-results
+**/__pycache__
