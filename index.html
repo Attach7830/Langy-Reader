@@ -357,13 +357,14 @@
           <small id="file-limit"></small>
           <input id="book-file" name="file" type="file" accept=".epub,.pdf,application/epub+zip,application/pdf">
         </label>
+        <p class="field-note" id="book-metadata-status" role="status" aria-live="polite" hidden></p>
         <label class="field">Title <input name="title" maxlength="250" placeholder="From the book or filename"></label>
         <label class="field">Author <input name="author" maxlength="200" placeholder="Optional"></label>
         <div class="form-grid">
           <label class="field">Primary language <input name="language" list="languages" maxlength="70" placeholder="Automatic" autocomplete="off"></label>
           <label class="field">Category <select name="categoryId" id="book-categories"></select></label>
         </div>
-        <p class="field-note" id="book-language-note">EPUBs use their metadata when available. Otherwise the default is Spanish.</p>
+        <p class="field-note" id="book-language-note">Book details are detected from the file and remain editable. If the language cannot be detected, Spanish is used.</p>
         <p class="field-note" id="book-folder-language-note" hidden></p>
         <label class="checkbox-row"><input id="book-language-limit" type="checkbox"> Choose the languages contained in this book</label>
         <div class="form-stack" id="book-language-selection" hidden>

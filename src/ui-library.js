@@ -6,10 +6,11 @@ import { audioTools, audioChanged } from './ui-audio-tools.js';
 import { bookLanguagePicker } from './book-languages.js';
 import { vocabularyLibrary, unfamiliarLabel, recommendationRows } from './ui-vocabulary.js';
 import { bookVocabulary } from './ui-book-vocabulary.js';
+import { bookMetadataFields } from './book-metadata-fields.js';
 
 const vocabularyLabel = (vocabulary) => vocabulary?.byLanguage?.map((item) => `${item.count.toLocaleString()} ${item.language === 'zh' ? 'Mandarin Han characters' : `${languageName(item.language)} ${item.unit}`}`).join(' · ');
 
-export function libraryScreen({ progress, onRemove }) {
+export function libraryScreen({ progress, onRemove, detectMetadata }) {
   const search = $('#search');
   const books = $('#books');
   const bookDialog = $('#book-dialog');
@@ -24,6 +25,8 @@ export function libraryScreen({ progress, onRemove }) {
   let snapshot = { categories: [], books: [], maxUpload: 120 * 1024 ** 2, demo: false };
   let category = 'all', editingBook, editingCategory, selectedFile;
   let bookPending = false, categoryPending = false;
+  const metadataFields = bookMetadataFields({ form: bookForm, status: $('#book-metadata-status'), detect: detectMetadata,
+    active: () => !editingBook && bookDialog.open && $('#book-source').value === 'file' });
   const pendingReadStatus = new Set();
   let audioUploading = false;
   const audioUI = audioTools({ book: () => learningBook, refresh: learningStatus });
@@ -414,6 +417,7 @@ export function libraryScreen({ progress, onRemove }) {
   }
 
   function stageFile(file) {
+    metadataFields.start();
     selectedFile = file;
     $('#file-label').textContent = selectedFile?.name || 'Choose an EPUB or PDF';
     if (!file) return message('#book-error');
@@ -426,10 +430,12 @@ export function libraryScreen({ progress, onRemove }) {
       return message('#book-error', `Books must be ${snapshot.maxUpload / 1024 ** 2} MiB or smaller.`);
     }
     message('#book-error');
+    metadataFields.start(file);
   }
 
   function showBook(book) {
     if (bookPending) { if (!bookDialog.open) bookDialog.showModal(); return; }
+    metadataFields.reset();
     editingBook = book;
     bookForm.reset();
     stageFile();
@@ -485,9 +491,11 @@ export function libraryScreen({ progress, onRemove }) {
   $('#import-book').addEventListener('click', () => showBook());
   $('#book-source').addEventListener('change', () => {
     const archive = $('#book-source').value === 'anna';
+    metadataFields.cancel();
     $('#file-field').hidden = archive;
     $('#archive-book-fields').hidden = !archive;
     message('#book-error');
+    if (!archive && selectedFile) metadataFields.start(selectedFile);
   });
   $('#configure-archive').addEventListener('click', () => bookDialog.close());
   search.addEventListener('input', render);
@@ -511,6 +519,9 @@ export function libraryScreen({ progress, onRemove }) {
   bookForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (bookPending) return;
+    const submittedBook = editingBook, submittedFile = selectedFile, submittedSource = $('#book-source').value;
+    await metadataFields.ready();
+    if (bookPending || !bookDialog.open || submittedBook !== editingBook || submittedFile !== selectedFile || submittedSource !== $('#book-source').value) return;
     const data = new FormData(bookForm);
     const rawLanguage = String(data.get('language') ?? '').trim();
     const language = parseLanguage(rawLanguage);
@@ -604,6 +615,7 @@ export function libraryScreen({ progress, onRemove }) {
   });
 
   bookDialog.addEventListener('cancel', (event) => { if (bookPending && $('#book-source').value !== 'anna') event.preventDefault(); });
+  bookDialog.addEventListener('close', () => metadataFields.cancel());
   categoryDialog.addEventListener('cancel', (event) => { if (categoryPending) event.preventDefault(); });
 
   return { refresh, render, get state() { return snapshot; } };

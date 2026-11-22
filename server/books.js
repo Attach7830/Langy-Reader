@@ -1,11 +1,11 @@
 import { mkdir, open, rename, rm, statfs, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { join, posix, extname, basename } from 'node:path';
+import { join, extname, basename } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { XMLParser } from 'fast-xml-parser';
 import yauzl from 'yauzl';
 import { sampleBook } from './sample.js';
 import { baseLanguage } from '../shared/language.js';
+import { archivePath, bookText, epubMetadataValues, filenameTitle, inferBookLanguage, parseEpubContainer, parseEpubPackage } from '../shared/book-metadata.js';
 
 export const maxUpload = 120 * 1024 * 1024;
 
@@ -16,16 +16,8 @@ export class RequestError extends Error {
   }
 }
 
-const xml = new XMLParser({
-  ignoreAttributes: false,
-  removeNSPrefix: true,
-  parseTagValue: false,
-  processEntities: false,
-});
-
 const covers = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif']);
 const list = (value) => value == null ? [] : [value].flat();
-const xmlText = (value) => typeof value === 'string' ? value : value?.['#text'];
 const asText = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 
 export function normalizeLanguage(value) {
@@ -72,14 +64,25 @@ async function epubMetadata(path) {
     }
 
     const container = await read('META-INF/container.xml', 128 * 1024);
-    const rootfiles = list(xml.parse(container?.toString('utf8') || '').container?.rootfiles?.rootfile);
-    const rootfile = rootfiles.find((item) => item['@_media-type'] === 'application/oebps-package+xml') ?? rootfiles[0];
-    const opfPath = rootfile?.['@_full-path'];
+    const opfPath = archivePath('', parseEpubContainer(container?.toString('utf8') || ''));
     const opf = opfPath && await read(opfPath, 2 * 1024 * 1024);
-    const book = opf && xml.parse(opf.toString('utf8')).package;
+    const book = opf && parseEpubPackage(opf.toString('utf8'));
     if (!book?.spine?.itemref || !book.manifest?.item) throw new Error('Missing package or spine');
     const metadata = book.metadata ?? {};
     const manifest = list(book.manifest.item);
+    const details = epubMetadataValues(metadata);
+    if (!details.language) {
+      const spine = list(book.spine.itemref).filter((item) => item['@_linear'] !== 'no');
+      const indices = [...new Set([0, 1, Math.floor(spine.length / 3), Math.floor(spine.length * 2 / 3), spine.length - 1])].filter((n) => n >= 0 && n < spine.length);
+      const passages = [];
+      for (const index of indices) {
+        const item = manifest.find((entry) => entry['@_id'] === spine[index]['@_idref']);
+        if (!item?.['@_href']) continue;
+        const source = await read(archivePath(opfPath, item['@_href']), 2 * 1024 * 1024);
+        if (source) { try { passages.push(bookText(source.toString('utf8'))); } catch { /* Keep usable metadata when a sampled section is damaged. */ } }
+      }
+      details.language = inferBookLanguage(passages.join(' ').slice(0, 30000));
+    }
     const coverId = list(metadata.meta).find((item) => item?.['@_name'] === 'cover')?.['@_content'];
     const cover = manifest.find((item) => item['@_properties']?.split(/\s+/u).includes('cover-image'))
       ?? manifest.find((item) => coverId && item['@_id'] === coverId);
@@ -87,16 +90,14 @@ async function epubMetadata(path) {
     let thumbnail = null;
     if (covers.has(thumbnailType) && cover?.['@_href']) {
       try {
-        const coverPath = posix.join(posix.dirname(opfPath), decodeURIComponent(cover['@_href']));
+        const coverPath = archivePath(opfPath, cover['@_href']);
         thumbnail = await read(coverPath, 3 * 1024 * 1024);
       } catch {
         // The reader can still use a generated title cover if this asset is damaged.
       }
     }
     return {
-      title: xmlText(list(metadata.title)[0]),
-      author: list(metadata.creator).map(xmlText).filter(Boolean).join(', '),
-      language: normalizeLanguage(xmlText(list(metadata.language)[0])),
+      ...details,
       thumbnail,
       thumbnailType,
     };
@@ -318,7 +319,7 @@ export async function openLibrary(dir, limits = null) {
           throw new RequestError(422, 'Enter a language code such as es, en or fr.');
         }
         const title = asText(body.title, 250) || asText(metadata.title, 250)
-          || asText(basename(file.originalname, extname(file.originalname)), 250) || 'Untitled';
+          || filenameTitle(basename(file.originalname)) || 'Untitled';
         const author = asText(body.author, 200) || asText(metadata.author, 200);
         if (metadata.thumbnail) await writeFile(coverPath(book), metadata.thumbnail, { flag: 'wx' });
         await rename(file.path, filePath(book));

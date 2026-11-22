@@ -20,6 +20,8 @@ The default listener is available on your LAN. Set `READER_BIND=127.0.0.1` in a 
 
 Books and categories live in a named volume. Browser settings and each book’s last position are saved per browser. Back up the `library` volume to preserve uploaded files and the catalog.
 
+Selecting an EPUB or PDF in **Import book** fills in its title, author and primary language from embedded metadata. When no language is declared, Langy samples readable text to estimate it. A missing title falls back to the filename; an undetectable language defaults to Spanish. Review or change the fields before importing, or use **Book details** (the pencil on a library card) afterward. Your edits take precedence over automatic suggestions; language folders still apply their configured language. Detection runs locally without an AI API. Scanned or locked PDFs and files with incomplete metadata may need manual details. Mixed-language books can retain automatic passage detection or use the explicit language selection.
+
 The stack also includes a local `language` service for lemma analysis and audio alignment. Its first build installs Spanish and English spaCy models, lookup data for additional supported languages, and a multilingual Whisper model. These models run offline after the build. Narration connects to your existing Kokoro server.
 
 ## Reading controls
