@@ -10,6 +10,8 @@ import { extractBook, textChunks, readingSamples } from './book-text.js';
 import { bookNarration } from './book-audio.js';
 import { hasUsableTimings, synchronizeChunk } from './audio-timing.js';
 import { uploadedAudio } from './uploaded-audio.js';
+import { audioRescans } from './audio-rescan.js';
+import { openIvoox } from './ivoox.js';
 
 const run = promisify(execFile);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
@@ -67,7 +69,10 @@ export async function openLearning(dir, library, demo, ai) {
     db.exec("UPDATE audio SET state='cancelled' WHERE state IN ('queued','generating','aligning')");
   }
   const workerURL = process.env.READER_LANGUAGE_URL || 'http://127.0.0.1:8091';
-  const recordings = uploadedAudio({ db, folder, library, languageCall, wake: () => void work() });
+  let rescans;
+  const recordings = uploadedAudio({ db, folder, library, languageCall, wake: () => void work(), isRescanning: (id) => rescans?.busy(id) });
+  rescans = audioRescans({ db, folder, library, languageCall, publishUploaded: recordings.publish, wake: () => void work() });
+  const ivoox = demo ? null : await openIvoox({ db, folder, library, recordings });
 
   async function languageCall(path, body, type = 'application/json') {
     let response;
@@ -75,12 +80,12 @@ export async function openLearning(dir, library, demo, ai) {
       response = await fetch(new URL(path, workerURL), {
         method: 'POST', headers: { 'Content-Type': type },
         body: type === 'application/json' ? JSON.stringify(body) : body,
-        signal: AbortSignal.timeout(['/align', '/transcribe', '/match-recording'].includes(path) ? 600_000 : 180_000),
+        signal: AbortSignal.timeout(['/align', '/transcribe', '/match-recording', '/rescan'].includes(path) ? 600_000 : 180_000),
       });
     } catch {
       throw new RequestError(503, 'Language processing is unavailable. Start the language service and try again.');
     }
-    if (!response.ok) throw new RequestError(502, ['/align', '/transcribe', '/match-recording'].includes(path)
+    if (!response.ok) throw new RequestError(502, ['/align', '/transcribe', '/match-recording', '/rescan'].includes(path)
       ? 'Word synchronization failed. Check the language service and try again.'
       : 'The language service could not read this text.');
     return response.json();
@@ -202,7 +207,7 @@ export async function openLearning(dir, library, demo, ai) {
   function chapters(book) {
     return {
       analysis: info(book),
-      narration: completeAudio.status(book),
+      narration: narration(book), rescanAvailable: !demo,
       chapters: db.prepare('SELECT key, title, lemmas, length(trim(text)) AS characters,has_spoken_text(text) AS spoken FROM chapters WHERE book=? ORDER BY ordinal').all(book.id)
         .map(({ lemmas, spoken, ...row }) => ({ ...row, narratable: Boolean(spoken) && (!demo || row.characters <= 20000),
           lemmaCount: JSON.parse(lemmas || '[]').length, audio: publicAudio(audioRow(book, row.key)) })),
@@ -356,20 +361,27 @@ export async function openLearning(dir, library, demo, ai) {
             job = demo ? null : recordings.next();
             if (job) await recordings.process(job);
             else {
-              type = 'estimate';
-              job = db.prepare("SELECT * FROM estimates WHERE state='queued' ORDER BY rowid LIMIT 1").get();
-              if (job) await estimate(job);
+              type = 'rescan';
+              job = demo ? null : rescans.next();
+              if (job) await rescans.process(job);
+              else {
+                type = 'estimate';
+                job = db.prepare("SELECT * FROM estimates WHERE state='queued' ORDER BY rowid LIMIT 1").get();
+                if (job) await estimate(job);
+              }
             }
           }
         }
       }
     } catch (error) {
       const text = error instanceof RequestError ? error.message
-        : type === 'recording' ? 'Recording synchronization failed. Check the language service and retry Sync with book.'
+        : type === 'rescan' ? 'Audio rescan failed. Your existing alignment is unchanged. Check the language service and retry.'
+          : type === 'recording' ? 'Recording synchronization failed. Check the language service and retry Sync with book.'
           : ['audio', 'book'].includes(type) ? 'Narration failed. Check Kokoro and the language service, then try again.'
           : type === 'estimate' ? 'Reading estimate unavailable. Check the AI connection and try again.'
             : 'This book could not be analyzed. Check the language service and try again.';
       if (job && type === 'book') completeAudio.fail(job, text);
+      else if (job && type === 'rescan') rescans.fail(job, text);
       else if (job && type === 'recording') recordings.fail(job, text);
       else if (job) {
         const query = type === 'analysis' ? "UPDATE analyses SET state='error', error=? WHERE book=?"
@@ -377,7 +389,7 @@ export async function openLearning(dir, library, demo, ai) {
             : "UPDATE audio SET state='error', error=? WHERE id=?";
         db.prepare(query).run(text, type === 'audio' ? job.id : job.book);
       }
-      console.error(type === 'recording' ? 'Recording synchronization failed' : type === 'audio' ? 'Narration job failed' : 'Book analysis failed', error.name);
+      console.error(type === 'rescan' ? 'Audio rescan failed' : type === 'recording' ? 'Recording synchronization failed' : type === 'audio' ? 'Narration job failed' : 'Book analysis failed', error.name);
     } finally {
       working = false;
     }
@@ -386,13 +398,15 @@ export async function openLearning(dir, library, demo, ai) {
   timer.unref();
 
   async function remove(id) {
+    ivoox?.cancel({ id });
     const sectionRecordings = db.prepare('SELECT id FROM audio WHERE book=?').all(id);
     const completeFiles = completeAudio.files(id);
     const recordingFiles = recordings.files(id);
+    const rescanFiles = rescans.files(id);
     db.prepare('DELETE FROM analyses WHERE book=?').run(id);
     await Promise.allSettled([...sectionRecordings.flatMap(({ id: audioId }) => [
       rm(join(folder, `${audioId}.mp3`), { force: true }), rm(join(folder, audioId), { recursive: true, force: true }),
-    ]), ...[...completeFiles, ...recordingFiles].map((file) => rm(file, { recursive: true, force: true }))]);
+    ]), ...[...completeFiles, ...recordingFiles, ...rescanFiles].map((file) => rm(file, { recursive: true, force: true }))]);
   }
 
   function audioFile(book, id) {
@@ -415,12 +429,14 @@ export async function openLearning(dir, library, demo, ai) {
       catch { await remove(row.book); }
     }
   }
+  function narration(book, selected) {
+    const result = completeAudio.status(book, selected);
+    result.audio.rescan = result.audio.id ? rescans.status(book, result.audio.id) : null;
+    return { ...result, recordings: demo ? [] : recordings.list(book).filter((item) => item.state === 'ready').map(({ id, name }) => ({ id, name })) };
+  }
   return {
     settings, save, voices, info, ensure, unit, chapters, remove, audioFile, prune, cancel,
-    narration(book, selected) {
-      return { ...completeAudio.status(book, selected), recordings: demo ? [] : recordings.list(book)
-        .filter((item) => item.state === 'ready').map(({ id, name }) => ({ id, name })) };
-    }, queueBook: completeAudio.queue,
-    recordings,
+    narration, queueBook: completeAudio.queue,
+    recordings, rescans, ivoox,
   };
 }

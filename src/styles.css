@@ -519,3 +519,9 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; }
 }
+
+.audio-file-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 12px; }
+.audio-file-row span { flex: 1; min-width: min(180px, 100%); overflow-wrap: anywhere; }
+.audio-file-row .button { min-height: 30px; padding: 3px 6px; font-size: 11px; }
+#ivoox-audio-form { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.recording-chapter-download { display: block; font-size: 12px; padding-block: 3px; overflow-wrap: anywhere; }

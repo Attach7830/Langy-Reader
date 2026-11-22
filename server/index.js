@@ -11,6 +11,8 @@ import { openArchive } from './annas-archive.js';
 import { maxAudioUpload } from './uploaded-audio.js';
 import { opdsPageSize, opdsRouter } from './opds.js';
 import { openProgressSync } from './progress-sync.js';
+import { chapterStorage } from './audio-upload.js';
+import { chapterFileLimit } from './chapter-audio.js';
 import { demoUploadLimit, demoBookLimit, demoStorageLimit, limitJobs, visitorMiddleware } from './demo.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -30,6 +32,7 @@ const archive = await openArchive(dir, { library, demo, onImport: (book) => lear
 const uploadLimit = limits?.upload ?? maxUpload;
 const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 4, fieldSize: 1024 } });
 const audioUpload = multer({ dest: library.uploads, limits: { fileSize: maxAudioUpload, files: 1, fields: 1, fieldSize: 1024 } });
+const chapterUpload = multer({ storage: chapterStorage(library.uploads), limits: { fileSize: maxAudioUpload, files: chapterFileLimit, fields: 1, fieldSize: 1024 } });
 const demoUploads = demo ? [limitJobs({ perMinute: 32, perVisitor: 8 })] : [];
 const demoGenerations = demo ? [limitJobs({ perMinute: 45, perVisitor: 16 })] : [];
 const app = express();
@@ -162,9 +165,29 @@ app.get('/api/books/:id/narration', (req, res) => {
 });
 app.get('/api/books/:id/recordings', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);
-  res.json({ available: !demo, maxUpload: maxAudioUpload, recordings: demo ? [] : learning.recordings.list(book) });
+  res.json({ available: !demo, maxUpload: maxAudioUpload, recordings: demo ? [] : learning.recordings.list(book).map((item) => ({ ...item, rescan: learning.rescans.status(book, item.id) })) });
 });
 if (!demo) {
+  app.post('/api/books/:id/recordings/chapters', (req, _res, next) => {
+    req.audioBook = library.getBook(req.params.id); req.audioUpload = true; req.chapterUpload = true;
+    learning.ensure(req.audioBook);
+    if (Number(req.get('Content-Length')) > maxAudioUpload + 1024 * 1024) throw new RequestError(413, 'Chapter files must total 1 GiB or less per recording.');
+    next();
+  }, chapterUpload.array('files', chapterFileLimit), async (req, res) => {
+    res.status(202).json(await learning.recordings.acceptChapters(req.audioBook, req.files, req.body ?? {}));
+  });
+  app.get('/api/books/:id/recordings/:recording/chapters/:chapter/file', (req, res) => {
+    const file = learning.recordings.originalChapter(library.getBook(req.params.id), req.params.recording, Number(req.params.chapter));
+    res.type('application/octet-stream').download(file.path, file.name, { dotfiles: 'allow' });
+  });
+  app.get('/api/books/:id/ivoox', (req, res) => res.json({ job: learning.ivoox.latest(library.getBook(req.params.id)) }));
+  app.post('/api/books/:id/ivoox', (req, res) => {
+    const book = library.getBook(req.params.id); learning.ensure(book);
+    res.status(202).json({ job: learning.ivoox.queue(book, req.body) });
+  });
+  app.delete('/api/books/:id/ivoox', (req, res) => { learning.ivoox.cancel(library.getBook(req.params.id)); res.sendStatus(204); });
+  app.post('/api/books/:id/audio/:recording/rescan', (req, res) => res.status(202).json(learning.rescans.queue(library.getBook(req.params.id), req.params.recording)));
+  app.delete('/api/books/:id/audio/:recording/rescan', (req, res) => res.json(learning.rescans.cancel(library.getBook(req.params.id), req.params.recording)));
   app.post('/api/books/:id/recordings', (req, _res, next) => {
     library.getBook(req.params.id);
     req.audioUpload = true;
@@ -232,7 +255,7 @@ app.use((err, _req, res, next) => {
   if (res.destroyed) return;
   if (err instanceof multer.MulterError) {
     if (_req.audioUpload) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
-      error: err.code === 'LIMIT_FILE_SIZE' ? 'Audio files must be 1 GiB or smaller.' : 'Upload one audiobook at a time.',
+      error: err.code === 'LIMIT_FILE_SIZE' ? 'Audio files must be 1 GiB or smaller.' : _req.chapterUpload ? 'Choose at most 200 chapter files and one recording name.' : 'Upload one audiobook at a time.',
     });
     return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
       error: err.code === 'LIMIT_FILE_SIZE' ? `Books must be ${uploadLimit / 1024 / 1024} MiB or smaller.` : 'Upload one EPUB or PDF at a time.',

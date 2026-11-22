@@ -182,6 +182,23 @@ def transcribe_recording(body: Alignment):
                        for word, start, end, _ in heard]}
 
 
+@app.post("/rescan")
+def rescan_recording(body: Alignment):
+    # Fresh recognition of a short gap; do not reuse the book transcript or
+    # force the supplied text onto speech that may be absent from this edition.
+    samples = decode_recording(body.audio)
+    if len(samples) > 70 * 16000:
+        raise HTTPException(422, "Rescan windows must be at most 70 seconds.")
+    with lock:
+        language = body.language.replace("_", "-").split("-")[0].lower()
+        heard = recognized_words(recognizer(), samples, language, [], retry=True, vad=False)
+        heard = [word for word in heard if word[3] >= 0.65 and word[2] - word[1] >= 0.02
+                 and 0 <= word[1] < word[2] <= len(samples) / 16000 + .1
+                 and np.sqrt(np.mean(samples[max(0, int(word[1] * 16000)):int(word[2] * 16000)] ** 2)) > 0.0001]
+        times = match_timings(body.words, heard)
+    return {"timings": times}
+
+
 @app.post("/match-recording")
 def match_recording(body: RecordingMatch):
     from book_alignment import align_recording

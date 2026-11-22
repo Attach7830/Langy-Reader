@@ -2,6 +2,7 @@ import { $, api, drawIcons, element, icon, message, toast } from './ui.js';
 import { languageName } from './settings.js';
 import { parseLanguage } from './languages.js';
 import { refreshStorage, showStorage } from './storage.js';
+import { audioTools, audioChanged } from './ui-audio-tools.js';
 
 export function libraryScreen({ progress, onRemove }) {
   const search = $('#search');
@@ -16,6 +17,7 @@ export function libraryScreen({ progress, onRemove }) {
   let category = 'all', editingBook, editingCategory, selectedFile;
   let bookPending = false, categoryPending = false;
   let audioUploading = false;
+  const audioUI = audioTools({ book: () => learningBook, refresh: learningStatus });
   $('#refresh-storage').addEventListener('click', () => void refreshStorage());
   setInterval(() => {
     if (!document.hidden && !$('#library-screen').hidden) void refreshStorage();
@@ -148,29 +150,33 @@ export function libraryScreen({ progress, onRemove }) {
     clearTimeout(learningTimer);
     const id = learningBook.id;
     try {
-      const [result, uploaded] = await Promise.all([api(`/api/books/${id}/learning`), api(`/api/books/${id}/recordings`)]);
+      const [result, uploaded, imported] = await Promise.all([api(`/api/books/${id}/learning`), api(`/api/books/${id}/recordings`),
+        snapshot.demo ? Promise.resolve({ job: null }) : api(`/api/books/${id}/ivoox`)]);
       if (learningBook?.id !== id || !learningDialog.open) return;
       const analysis = result.analysis;
       $('#upload-audio-form').hidden = !uploaded.available;
       $('#audio-upload-note').textContent = uploaded.available
-        ? 'Upload MP3, M4A, M4B, OGG, WAV, FLAC or AAC, up to 1 GiB per file. Sync runs in the background. Recordings of the same edition give better matches.'
+        ? 'Upload a complete audiobook or up to 200 chapter files, totalling 1 GiB and at most 72 hours per recording. Files are sorted by name; adjust their order below before upload. Preparation and sync run in the background.'
         : 'Upload and sync your own audiobooks on a self-hosted installation. This demo previews the reading controls.';
       $('#recordings-list').replaceChildren(...uploaded.recordings.map((recording) => {
         const item = element('div', 'recording-item');
         item.append(element('strong', '', recording.name), element('span', 'field-note', recording.state === 'ready'
           ? `Synced · ${recording.quality.textPercent}% of book words matched. Unmatched passages may differ or be omitted.`
-          : ['queued', 'syncing'].includes(recording.state) ? `Syncing with book · ${Math.round(recording.progress * 100)}%`
+          : recording.state === 'assembling' ? `Preparing chapter files · ${Math.round(recording.progress * 100)}%`
+            : ['queued', 'syncing'].includes(recording.state) ? `Syncing with book · ${Math.round(recording.progress * 100)}%`
             : recording.error || 'Uploaded · ready to sync'));
         const actions = element('div', 'button-row');
         const sync = element('button', 'button secondary small', recording.state === 'ready' ? 'Sync again' : 'Sync with book');
-        sync.type = 'button'; sync.disabled = analysis.state !== 'ready' || ['queued', 'syncing'].includes(recording.state);
+        sync.type = 'button'; sync.disabled = analysis.state !== 'ready' || ['queued', 'syncing', 'assembling'].includes(recording.state)
+          || ['queued', 'running'].includes(recording.rescan?.state);
         sync.addEventListener('click', async () => {
           sync.disabled = true; message('#recording-error');
-          try { await api(`/api/books/${id}/recordings/${recording.id}/sync`, { method: 'POST', body: {} }); await learningStatus(); }
+          try { await api(`/api/books/${id}/recordings/${recording.id}/sync`, { method: 'POST', body: {} }); audioChanged(id); await learningStatus(); }
           catch (error) { message('#recording-error', error.message); sync.disabled = false; }
         });
-        const download = element('a', 'button quiet small', 'Download original');
+        const download = element('a', 'button quiet small', recording.sourceChapters?.length ? 'Download complete MP3' : 'Download original');
         download.href = recording.downloadUrl; download.download = recording.name;
+        download.hidden = !recording.duration;
         const remove = element('button', 'button quiet small', 'Remove recording'); remove.type = 'button';
         remove.addEventListener('click', async () => {
           remove.disabled = true;
@@ -178,6 +184,16 @@ export function libraryScreen({ progress, onRemove }) {
           catch (error) { message('#recording-error', error.message); remove.disabled = false; }
         });
         actions.append(sync, download, remove); item.append(actions);
+        item.append(...audioUI.controls(recording, result.rescanAvailable));
+        if (recording.sourceChapters?.length) {
+          const detail = element('details'), summary = element('summary', 'field-note', `${recording.sourceChapters.length} chapter files · download originals`);
+          detail.append(summary);
+          for (const chapter of recording.sourceChapters) {
+            const link = element('a', 'recording-chapter-download', `${chapter.index + 1}. ${chapter.name}`);
+            link.href = chapter.url; link.download = chapter.name; detail.append(link);
+          }
+          item.append(detail);
+        }
         return item;
       }));
       $('#learning-stats').textContent = analysis.lemmaCount == null ? `Analysis ${analysis.state}…`
@@ -218,14 +234,16 @@ export function libraryScreen({ progress, onRemove }) {
         return row;
       });
       $('#learning-chapters').replaceChildren(...rows);
+      const toolsWorking = audioUI.update(result, uploaded, imported);
       if (['queued', 'running'].includes(analysis.state) || ['queued', 'running'].includes(analysis.reading?.state)
-        || working || uploaded.recordings.some((recording) => ['queued', 'syncing'].includes(recording.state))) {
+        || toolsWorking || working || uploaded.recordings.some((recording) => ['queued', 'syncing', 'assembling'].includes(recording.state))) {
         learningTimer = setTimeout(() => void learningStatus(), 2200);
       }
     } catch (error) { message('#learning-error', error.message); }
   }
 
   async function showLearning(book) {
+    audioUI.reset();
     learningBook = book;
     $('#learning-title').textContent = book.title;
     $('#learning-stats').textContent = 'Loading analysis…';
@@ -266,17 +284,20 @@ export function libraryScreen({ progress, onRemove }) {
   $('#upload-audio-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     if (audioUploading || !learningBook) return;
-    const form = event.currentTarget, file = form.elements.file.files[0];
-    if (!file || file.size > 1024 ** 3) return message('#recording-error', 'Choose an audiobook of 1 GiB or smaller.');
+    const form = event.currentTarget, files = audioUI.files();
+    if (!files.length || files.length > 200 || files.reduce((sum, file) => sum + file.size, 0) > 1024 ** 3) return message('#recording-error', 'Choose up to 200 audio files totalling 1 GiB or less.');
     const id = learningBook.id;
     audioUploading = true; $('#upload-audio').disabled = true; $('#upload-audio').textContent = 'Uploading…';
+    audioUI.setBusy(true);
     message('#recording-error');
     try {
-      await api(`/api/books/${id}/recordings`, { method: 'POST', body: new FormData(form) });
-      form.reset(); toast('Recording uploaded. Choose Sync with book to align it.');
+      const body = new FormData(); body.append('name', form.elements.name.value);
+      for (const file of files) body.append('files', file);
+      await api(`/api/books/${id}/recordings/chapters`, { method: 'POST', body });
+      audioUI.clearUpload(); audioChanged(id); toast('Recording uploaded. Sync with book when preparation finishes.');
       if (learningBook?.id === id) await learningStatus();
     } catch (error) { message('#recording-error', error.message); }
-    finally { audioUploading = false; $('#upload-audio').disabled = false; $('#upload-audio').textContent = 'Upload recording'; }
+    finally { audioUploading = false; audioUI.setBusy(false); $('#upload-audio').disabled = false; $('#upload-audio').textContent = 'Upload recording'; }
   });
   $('#cancel-book-audio').addEventListener('click', async () => {
     if (!learningBook) return;

@@ -23,7 +23,7 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
   ) STRICT;
   CREATE INDEX IF NOT EXISTS book_audio_book ON book_audio(book, created);
   UPDATE book_audio SET state='queued' WHERE state='assembling';`);
-  for (const [name, definition] of [['kind', "TEXT NOT NULL DEFAULT 'generated'"], ['name', "TEXT NOT NULL DEFAULT ''"], ['quality', 'TEXT']]) {
+  for (const [name, definition] of [['kind', "TEXT NOT NULL DEFAULT 'generated'"], ['name', "TEXT NOT NULL DEFAULT ''"], ['quality', 'TEXT'], ['alignmentRevision', 'INTEGER NOT NULL DEFAULT 0']]) {
     if (!db.prepare('PRAGMA table_info(book_audio)').all().some((column) => column.name === name)) db.exec(`ALTER TABLE book_audio ADD COLUMN ${name} ${definition}`);
   }
 
@@ -37,7 +37,7 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
     const segments = row.state === 'ready' ? JSON.parse(row.segments) : [];
     return {
       id: row.id, state: row.state, error: row.error, complete, total: parts.length, duration: row.duration,
-      kind: row.kind, name: row.name, quality: row.quality ? JSON.parse(row.quality) : null,
+      kind: row.kind, name: row.name, quality: row.quality ? JSON.parse(row.quality) : null, alignmentRevision: row.alignmentRevision,
       ...(row.state === 'ready' ? {
         url: `/api/books/${row.book}/audio/${row.id}`,
         segments, markers: JSON.parse(row.markers), approximateSections: segments.filter((part) => part.approximate).length,

@@ -190,7 +190,8 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   }
   async function updateRecording(result) {
     const epoch = lifecycle;
-    const changed = recording?.id !== result.audio.id || recording?.state !== result.audio.state;
+    const changed = recording?.id !== result.audio.id || recording?.state !== result.audio.state
+      || recording?.alignmentRevision !== result.audio.alignmentRevision;
     recording = result.audio; connection = result.connected; previewAudio = Boolean(result.previewAudio);
     const isReady = ready();
     if (!isReady) play.disabled = seek.disabled = true;
@@ -203,7 +204,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
       queued: `Generating book audio · ${recording.complete} / ${recording.total} sections`,
       assembling: 'Finishing the complete book recording…', cancelled: 'Book audio generation cancelled.', error: recording.error,
     })[recording.state] || '';
-    if (changed) { clearHighlight(); cache.clear(); renderMarkers(); }
+    if (changed) { clearHighlight(); cache.clear(); unit = descriptor = local = undefined; renderMarkers(); }
     await loadCurrent().catch((error) => { if (!previewAudio) throw error; });
     if (epoch !== lifecycle || recording !== result.audio) return;
     if (enabled && isReady && audio.getAttribute('src') !== recording.url) {
@@ -235,7 +236,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
         recordingChoice.value = choices.some((item) => item.id === selected) ? selected : '';
         $('#recording-choice').hidden = !choices.length;
         await updateRecording(result);
-        if (['queued', 'assembling'].includes(recording.state)) poll = setTimeout(() => { void loadRecording(); }, 1800);
+        if (['queued', 'assembling'].includes(recording.state) || ['queued', 'running'].includes(recording.rescan?.state)) poll = setTimeout(() => { void loadRecording(); }, 1800);
       } catch (error) {
         if (epoch !== lifecycle) return;
         status.textContent = error.message;
@@ -260,6 +261,9 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
       else { drawHighlight(); void follow(); }
     } catch (error) { if (!previewAudio && error.name !== 'AbortError') status.textContent = error.message; }
   }
+  window.addEventListener('langy-audio-updated', (event) => {
+    if (book()?.id === event.detail?.book) void loadRecording();
+  });
   function stop() {
     lifecycle++; controller?.abort(); clearTimeout(poll); cancelAnimationFrame(animation);
     audio.onloadedmetadata = null; audio.pause(); audio.removeAttribute('src'); audio.load(); clearHighlight();

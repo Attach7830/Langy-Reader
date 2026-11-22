@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, open, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, open, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -186,7 +186,40 @@ test('passwordless installations support browser sync but do not expose a native
   assert.equal((await response(base, '/api/books/sync-book/progress', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(local) })).progress.percentage, .2);
 });
 
-test('demo mode never creates a shared native or browser progress service', async (t) => {
+test('chapter, rescan and iVoox endpoints require the web login and preserve original chapter downloads', async (t) => {
+  const f = await fixture(t), base = await f.start();
+  const root = '/api/books/sync-book';
+  for (const [method, path] of [['POST', '/recordings/chapters'], ['POST', '/ivoox'], ['GET', '/ivoox'],
+    ['DELETE', '/ivoox'], ['POST', '/audio/fake/rescan'], ['DELETE', '/audio/fake/rescan'], ['GET', '/recordings/fake/chapters/0/file']]) {
+    assert.equal((await fetch(base + root + path, { method })).status, 401);
+  }
+  await response(base, root + '/ivoox', { status: 422, method: 'POST', headers: json, body: JSON.stringify({ links: 'https://127.0.0.1/private' }) });
+  assert.equal((await response(base, root + '/ivoox', { headers: json })).job, null);
+  await response(base, root + '/audio/fake/rescan', { status: 409, method: 'POST', headers: json, body: '{}' });
+  const wav = Buffer.alloc(44 + 4800);
+  wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(24000, 24); wav.writeUInt32LE(48000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
+  wav.write('data', 36); wav.writeUInt32LE(wav.length - 44, 40);
+  const form = () => {
+    const body = new FormData(); body.append('name', 'Two chapters');
+    for (const name of ['02-first.wav', '01-second.wav']) body.append('files', new Blob([wav], { type: 'audio/wav' }), name);
+    return body;
+  };
+  assert.equal((await fetch(base + root + '/recordings/chapters', { method: 'POST', headers: { Authorization: basic, Origin: 'https://other.example' }, body: form() })).status, 403);
+  const item = await response(base, root + '/recordings/chapters', { status: 202, method: 'POST', headers: { Authorization: basic }, body: form() });
+  assert.deepEqual(item.sourceChapters.map((chapter) => chapter.name), ['02-first.wav', '01-second.wav']);
+  const download = await fetch(base + item.sourceChapters[0].url, { headers: { Authorization: basic } });
+  assert.equal(download.status, 200);
+  assert.deepEqual(Buffer.from(await download.arrayBuffer()), wav);
+  const tooMany = new FormData();
+  for (let index = 0; index < 201; index++) tooMany.append('files', new Blob(['small']), `${index}.mp3`);
+  await response(base, root + '/recordings/chapters', { status: 400, method: 'POST', headers: { Authorization: basic }, body: tooMany });
+  assert.deepEqual(await readdir(f.library.uploads), []);
+  assert.equal((await response(base, root + '/recordings', { headers: json })).recordings.length, 1);
+});
+
+test('demo mode never exposes shared progress, external audio imports, chapter uploads or rescans', async (t) => {
   const f = await fixture(t, { demo: true, password: '' });
   const base = await f.start();
   const settings = await response(base, '/api/settings/sync');
@@ -195,4 +228,8 @@ test('demo mode never creates a shared native or browser progress service', asyn
     assert.equal((await fetch(base + path, { headers: deviceHeaders() })).status, 404);
   }
   assert.equal((await response(base, '/api/library')).progress, null);
+  for (const [method, path] of [['POST', '/recordings/chapters'], ['POST', '/ivoox'], ['GET', '/ivoox'],
+    ['DELETE', '/ivoox'], ['POST', '/audio/fake/rescan'], ['DELETE', '/audio/fake/rescan'], ['GET', '/recordings/fake/chapters/0/file']]) {
+    assert.equal((await fetch(base + '/api/books/sync-book' + path, { method })).status, 404);
+  }
 });

@@ -373,14 +373,24 @@
       <label class="checkbox-row"><input type="checkbox" id="replace-book-audio"> Replace existing recordings</label>
       <p id="book-audio-status" class="field-note" role="status"></p>
       <a id="book-audio-download" class="button secondary" hidden>Download complete book MP3</a>
+      <div id="generated-rescan" class="form-stack"></div>
       <section class="recordings-section">
         <h3>Your audiobooks</h3>
-        <p class="field-note" id="audio-upload-note">Upload MP3, M4A, M4B, OGG, WAV, FLAC or AAC, up to 1 GiB per file. Sync runs in the background. Recordings of the same edition give better matches.</p>
+        <p class="field-note" id="audio-upload-note">Upload one complete audiobook or up to 200 chapter files, totalling 1 GiB and at most 72 hours per recording. Preparation and sync run in the background.</p>
         <form id="upload-audio-form" class="form-stack">
           <label class="field">Recording name <input name="name" maxlength="120" placeholder="Narrator or edition (optional)"></label>
-          <label class="field">Audiobook file <input name="file" type="file" accept=".mp3,.m4a,.m4b,.ogg,.opus,.wav,.flac,.aac,audio/*" required></label>
+          <label class="field">Audiobook or chapter files <input name="file" type="file" accept=".mp3,.m4a,.m4b,.ogg,.opus,.wav,.flac,.aac,audio/*" multiple required></label>
+          <div id="audio-file-order" class="form-stack" aria-label="Chapter file order"></div>
           <button class="button secondary" id="upload-audio" type="submit">Upload recording</button>
         </form>
+        <form id="ivoox-audio-form" class="form-stack" hidden>
+          <h3>Import from iVoox</h3>
+          <label class="field">Recording name <input name="name" maxlength="120" placeholder="Narrator or edition (optional)"></label>
+          <label class="field">Episode links, in chapter order <textarea name="links" rows="3" required placeholder="https://www.ivoox.com/…_rf_123456_1.html"></textarea></label>
+          <p class="field-note">One publicly downloadable episode per line. Multiple episodes become one continuous audiobook with chapter markers. Up to 200 chapters and 1 GiB total.</p>
+          <div class="button-row"><button class="button secondary" id="import-ivoox" type="submit">Import iVoox audio</button><button class="button quiet" id="cancel-ivoox" type="button" hidden>Cancel import</button></div>
+        </form>
+        <p id="ivoox-audio-status" class="field-note" role="status" hidden></p>
         <div id="recordings-list" class="form-stack"></div>
         <p class="form-error" id="recording-error" role="alert" hidden></p>
       </section>
