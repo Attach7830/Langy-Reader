@@ -9,6 +9,8 @@ import { RequestError } from './books.js';
 import { extractBook, readingSamples, languageChunks } from './book-text.js';
 import { narrationOptions, sectionLanguages } from './language-voices.js';
 import { addVocabulary, vocabularySummary } from './vocabulary.js';
+import { selectedLanguages } from '../shared/language.js';
+import { readerVocabulary } from './reader-vocabulary.js';
 import { bookNarration } from './book-audio.js';
 import { hasUsableTimings, synchronizeChunk } from './audio-timing.js';
 import { uploadedAudio } from './uploaded-audio.js';
@@ -62,6 +64,10 @@ export async function openLearning(dir, library, demo, ai) {
     }
   }
   if (languageUpgrade) db.exec("UPDATE analyses SET state='queued',error=NULL WHERE state='ready'");
+  if (!db.prepare('PRAGMA table_info(analyses)').all().some(({ name }) => name === 'languageSelection')) {
+    db.exec("ALTER TABLE analyses ADD COLUMN languageSelection TEXT NOT NULL DEFAULT '[]'");
+  }
+  const vocabulary = readerVocabulary(db);
   let config = {
     baseUrl: process.env.READER_KOKORO_URL || '', voice: process.env.READER_KOKORO_VOICE || 'ef_dora',
     model: 'kokoro', speed: 1, apiKey: process.env.READER_KOKORO_API_KEY || '', autoLanguageVoices: true, voicesByLanguage: {},
@@ -169,10 +175,13 @@ export async function openLearning(dir, library, demo, ai) {
 
   function ensure(book, retry = false) {
     const previous = db.prepare('SELECT * FROM analyses WHERE book=?').get(book.id);
-    if (!previous || previous.language !== book.language || (retry && !['queued', 'running'].includes(previous.state))) {
-      db.prepare(`INSERT INTO analyses(book, owner, language, state) VALUES(?,?,?,'queued')
-        ON CONFLICT(book) DO UPDATE SET language=excluded.language,state='queued',error=NULL`)
-        .run(book.id, book.owner || '', book.language);
+    const selection = JSON.stringify(selectedLanguages(book.languages).sort());
+    if (!previous || previous.language !== book.language || previous.languageSelection !== selection || (retry && !['queued', 'running'].includes(previous.state))) {
+      db.prepare(`INSERT INTO analyses(book, owner, language, languageSelection, state) VALUES(?,?,?,?,'queued')
+        ON CONFLICT(book) DO UPDATE SET language=excluded.language,languageSelection=excluded.languageSelection,state='queued',error=NULL,
+        metrics=NULL,lemmas=NULL,wordCount=NULL,method=NULL`)
+        .run(book.id, book.owner || '', book.language, selection);
+      db.prepare('DELETE FROM estimates WHERE book=?').run(book.id);
     }
     if (retry) db.prepare("UPDATE estimates SET state='queued',error=NULL WHERE book=? AND state='error'").run(book.id);
     void work();
@@ -213,6 +222,7 @@ export async function openLearning(dir, library, demo, ai) {
     const audio = pinned ? db.prepare('SELECT * FROM audio WHERE id=? AND book=?').get(pinned.audioId, book.id) : audioRow(book, key);
     return {
       key: row.key, title: row.title, text: row.text, textHash: row.digest,
+      analysisState: db.prepare('SELECT state FROM analyses WHERE book=?').get(book.id)?.state,
       tokens: JSON.parse(row.tokens || '[]'), audio: publicAudio(audio), connected: Boolean(audioConfig().baseUrl),
       method: db.prepare('SELECT method FROM analyses WHERE book=?').get(book.id)?.method,
       lemmaCount: JSON.parse(row.lemmas || '[]').length,
@@ -253,7 +263,7 @@ export async function openLearning(dir, library, demo, ai) {
     db.prepare("UPDATE analyses SET state='running', error=NULL WHERE book=?").run(row.book);
     const book = library.getBook(row.book, { id: row.owner });
     const sections = await extractBook(book, library.filePath(book), languageCall);
-    const stillCurrent = () => db.prepare("SELECT book FROM analyses WHERE book=? AND language=? AND state='running'").get(book.id, row.language);
+    const stillCurrent = () => db.prepare("SELECT book FROM analyses WHERE book=? AND language=? AND languageSelection=? AND state='running'").get(book.id, row.language, row.languageSelection);
     if (!stillCurrent()) return;
     const unique = new Set();
     const vocabularyGroups = new Map(), chinesePassages = [];
@@ -281,10 +291,11 @@ export async function openLearning(dir, library, demo, ai) {
         JSON.stringify(section.languages || []), JSON.stringify(vocabularySummary(chinese.join('\n'), sectionGroups, book.language)),
       );
     }
-    if (!db.prepare('SELECT book FROM analyses WHERE book=? AND language=?').get(book.id, row.language)) return;
+    if (!stillCurrent()) return;
     const metrics = vocabularySummary(chinesePassages.join('\n'), vocabularyGroups, book.language);
     db.prepare("UPDATE analyses SET state='ready', lemmas=?, wordCount=?, method=?,metrics=? WHERE book=?")
       .run(JSON.stringify([...unique].sort()), wordCount, metrics.unit === 'characters' ? 'characters' : method, JSON.stringify(metrics), book.id);
+    vocabulary.reindex(book);
     db.prepare("INSERT INTO estimates(book,state) VALUES(?,'queued') ON CONFLICT(book) DO UPDATE SET state='queued',json=NULL,error=NULL").run(book.id);
   }
 
@@ -301,6 +312,7 @@ export async function openLearning(dir, library, demo, ai) {
       return;
     }
     const result = await ai.readingLevel(sample, new AbortController().signal);
+    if (!db.prepare("SELECT book FROM analyses WHERE book=? AND state='ready' AND metrics=?").get(row.book, JSON.stringify(metrics))) return;
     db.prepare("UPDATE estimates SET state='ready',json=? WHERE book=?").run(JSON.stringify(result), row.book);
   }
 
@@ -409,9 +421,12 @@ export async function openLearning(dir, library, demo, ai) {
       if (job && type === 'book') completeAudio.fail(job, text);
       else if (job && type === 'rescan') rescans.fail(job, text);
       else if (job && type === 'recording') recordings.fail(job, text);
+      else if (job && type === 'analysis') {
+        db.prepare("UPDATE analyses SET state='error',error=? WHERE book=? AND language=? AND languageSelection=? AND state='running'")
+          .run(text, job.book, job.language, job.languageSelection);
+      }
       else if (job) {
-        const query = type === 'analysis' ? "UPDATE analyses SET state='error', error=? WHERE book=?"
-          : type === 'estimate' ? "UPDATE estimates SET state='error',error=? WHERE book=?"
+        const query = type === 'estimate' ? "UPDATE estimates SET state='error',error=? WHERE book=?"
             : "UPDATE audio SET state='error', error=? WHERE id=?";
         db.prepare(query).run(text, type === 'audio' ? job.id : job.book);
       }
@@ -463,6 +478,6 @@ export async function openLearning(dir, library, demo, ai) {
   return {
     settings, save, voices, info, ensure, unit, chapters, remove, audioFile, prune, cancel,
     narration, queueBook: completeAudio.queue,
-    recordings, rescans, ivoox,
+    recordings, rescans, ivoox, vocabulary,
   };
 }

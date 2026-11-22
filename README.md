@@ -123,7 +123,17 @@ Langy estimates the reading demand from passages sampled across the book with th
 
 The OPI assesses a person's speaking. Langy's reading estimate describes text demand. A reader's proficiency requires performance assessment. [ACTFL OPI](https://www.actfl.org/assessments/postsecondary-assessments/opi)
 
+## Seen vocabulary and recommendations
+
+Langy records vocabulary from the text visible on a page after it remains displayed briefly, independently of whether audio is enabled. Inflected words use the analyzed lemma; proper names are excluded in line with book analysis. Mandarin uses individual Han characters, and each other language keeps its own lemma or word-form inventory. **Vocabulary** in the library opens the saved catalogue, with language/search filters and dates. Records are shared by browsers using the personal installation; demo visitors keep separate, expiring catalogues. Previous reading and KOReader progress do not automatically mark vocabulary as seen. A bounded browser queue retries temporarily failed saves.
+
+Library cards and **Analysis & audio** show how many unique items are **Not yet seen**, separately for each language. This is an exposure estimate, not proof that a word is unknown or mastered. **Most vocabulary seen** sorts the library by average per-language exposure coverage; it does not add character counts to lemma counts. Counts are of distinct items, rather than all occurrences in the text. When a book's language selection changes, its saved reading ranges are reanalyzed to correct the catalogue as well as its book statistics.
+
+Select **Find books with similar vocabulary** in a book's analysis panel to see other analyzed books from your library, ranked by the average per-language Jaccard overlap of their vocabulary inventories. Matches show shared vocabulary and the candidate's not-yet-seen counts. Mandarin character overlap is compared separately from lemma overlap. Recommendation calculation is local, needs no AI call, and does not infer similarity of plot or genre.
+
 ## Mixed-language books, Mandarin and Portuguese
+
+In **Book details** (the pencil on a library card), enable **Choose the languages contained in this book**, add each language, and save. For a Mandarin–English book, select Chinese/Mandarin and English. Analysis, hover help, pinyin and narration are restricted to that selection, including when EPUB tags disagree. Excluding the primary language makes the first selection primary. Saving automatically queues fresh analysis of the existing file and removes stale totals while it runs; no reupload is needed. Turn this option off to restore unrestricted automatic detection. The same choices are available during import.
 
 Langy uses EPUB `lang` / `xml:lang` tags and script/passage detection for word help, vocabulary analysis and narration. Mandarin, English and Portuguese passages can coexist in a book without sharing a vocabulary counter. Automatic identification of short, untagged passages can be ambiguous; correct language tags and the primary **Book language** help. Existing books are reanalyzed automatically after this update; re-uploading an EPUB is unnecessary. Portuguese analysis supports `pt`, `pt-BR` and `pt-PT`; inflected forms are mapped to lemmas and known contractions are included in the vocabulary analysis.
 
@@ -138,6 +148,8 @@ Uploaded mixed-language recordings use multilingual speech recognition instead o
 CC-CEDICT data is distributed under CC BY-SA 4.0, Unihan under the Unicode license, pinyin-pro under MIT, and Noto fonts under the SIL Open Font License. Source links and notices are included with the dictionary and font packages. Dictionary definitions are indexed separately from application code.
 
 ## Kokoro narration
+
+The top-right headphone button and the customizable **A** shortcut share the same audio-toolbar toggle. Either can show narration when it was disabled, then hide or show the toolbar without stopping playback. The button's pressed state indicates toolbar visibility; narration itself can still be disabled in Settings.
 
 Open **Settings → Narration** on your personal installation. Enter your Kokoro API base URL, such as `http://host.docker.internal:8880/v1`, model `kokoro`, and a voice for the book's language, such as `ef_dora` or `em_alex` for Spanish. The optional API key stays on the server. **Save and find voices** tests the connection and accepts both voice IDs and objects returned by Kokoro. You can also initialize the connection with `READER_KOKORO_URL`, `READER_KOKORO_VOICE`, and `READER_KOKORO_API_KEY`.
 

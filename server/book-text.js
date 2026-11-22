@@ -62,7 +62,7 @@ export async function extractBook(book, path, languageCall) {
   if (book.format === 'pdf') {
     const data = await languageCall('/pdf', await readFile(path), 'application/pdf');
     return data.chapters.map((section) => ({ ...section, languages: languageSpans({ text: section.text,
-      runs: [{ start: 0, end: section.text.length, node: null }] }, book.language) }));
+      runs: [{ start: 0, end: section.text.length, node: null }] }, book.language, book.languages) }));
   }
   const zip = await yauzl.openPromise(path, { autoClose: false });
   try {
@@ -120,7 +120,7 @@ export async function extractBook(book, path, languageCall) {
       const content = readingText(body);
       chapters.push({
         key: `epub:${index}`, title, text: content.text,
-        languages: languageSpans(content, book.language),
+        languages: languageSpans(content, book.language, book.languages),
         markers: chapterMarkers(doc, body, content, targets.filter((target) => target.file === file), title),
       });
     }

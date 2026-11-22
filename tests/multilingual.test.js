@@ -46,6 +46,17 @@ test('Mandarin vocabulary totals never combine Han characters with English or Po
   assert.equal(characterProfile('我我🙂A文').total, 3);
 });
 
+test('user-selected languages constrain script detection and reject unrelated metadata tags without discarding text', () => {
+  const root = new DOMParser().parseFromString('<body lang="zh"><p>中文银行</p><p lang="de">The people were reading books in the library during the afternoon.</p><p xml:lang="jv">This short English note has an incorrect language tag.</p><p>books, pages, stories</p></body>', 'text/xml');
+  const content = readingText(root), spans = languageSpans(content, 'zh', ['zh-Hant', 'en']);
+  assert.deepEqual([...new Set(spans.map((span) => span.language))].sort(), ['en', 'zh']);
+  assert.equal(spans[0].from, 0); assert.equal(spans.at(-1).to, content.text.length);
+  for (let n = 1; n < spans.length; n++) assert.equal(spans[n - 1].to, spans[n].from);
+  assert.equal(detectLanguage('The people were reading books in the library during the afternoon.', 'zh', false, ['zh', 'en']), 'en');
+  assert.equal(detectLanguage('As pessoas estavam lendo os livros da biblioteca durante toda a tarde.', 'en', false, ['en', 'pt']), 'pt');
+  assert.equal(detectLanguage('Las personas leían libros en la biblioteca durante toda la tarde.', 'en', false, ['en', 'es']), 'es');
+});
+
 test('pinyin preserves character offsets and distinguishes contextual polyphonic readings and neutral tones', () => {
   const text = '🙂银行音乐快乐 hello';
   const parts = pinyinCharacters(text);

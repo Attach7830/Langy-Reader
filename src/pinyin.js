@@ -35,7 +35,7 @@ export function pinyinOverlay({ host, preferences, renderer, book, request }) {
         while (runIndex < data.content.runs.length && data.content.runs[runIndex].end <= character.from) runIndex++;
         const run = data.content.runs[runIndex];
         if (!run || run.end < character.to || !run.node.isConnected) continue;
-        if (nodeLanguage(run.node, book().language, character.character) !== 'zh') continue;
+        if (nodeLanguage(run.node, book().language, character.character, book().languages) !== 'zh') continue;
         const range = doc.createRange();
         range.setStart(run.node, run.offset + character.from - run.start);
         range.setEnd(run.node, run.offset + character.to - run.start);

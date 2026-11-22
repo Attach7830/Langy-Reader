@@ -59,8 +59,10 @@
           <option value="">All reading ranges</option><option>Novice</option><option>Intermediate</option>
           <option>Advanced</option><option>Superior</option><option>Distinguished</option>
         </select>
+        <select id="book-sort" aria-label="Sort books"><option value="recent">Recently added</option><option value="familiar">Most vocabulary seen</option></select>
         <span class="muted" id="book-count"></span>
       </div>
+      <div class="vocabulary-overview"><p class="field-note" id="vocabulary-summary"></p><button class="button secondary small" id="open-vocabulary" type="button">Vocabulary</button></div>
       <div id="books" class="book-grid"></div>
       <p class="field-note" id="archive-import-status" role="status" hidden></p>
       <div id="empty-library" class="empty-state" hidden>
@@ -357,10 +359,18 @@
         <label class="field">Title <input name="title" maxlength="250" placeholder="From the book or filename"></label>
         <label class="field">Author <input name="author" maxlength="200" placeholder="Optional"></label>
         <div class="form-grid">
-          <label class="field">Book language <input name="language" list="languages" maxlength="70" placeholder="Automatic" autocomplete="off"></label>
+          <label class="field">Primary language <input name="language" list="languages" maxlength="70" placeholder="Automatic" autocomplete="off"></label>
           <label class="field">Category <select name="categoryId" id="book-categories"></select></label>
         </div>
         <p class="field-note" id="book-language-note">EPUBs use their metadata when available. Otherwise the default is Spanish.</p>
+        <label class="checkbox-row"><input id="book-language-limit" type="checkbox"> Choose the languages contained in this book</label>
+        <div class="form-stack" id="book-language-selection" hidden>
+          <label class="field">Add a language <input id="book-language-choice" list="languages" maxlength="70" placeholder="For example, Mandarin or English" autocomplete="off"></label>
+          <button class="button secondary small" id="book-language-add" type="button">Add language</button>
+          <div class="book-language-list" id="book-language-list" aria-live="polite"></div>
+          <p class="field-note">Analysis, word help and narration use only these languages. If the primary language is excluded, the first selection becomes primary. Saving reanalyzes the existing book.</p>
+        </div>
+        <p class="field-note">Leave language selection off for automatic passage detection.</p>
         <p class="field-note" id="book-import-progress" role="status" hidden></p>
         <p class="form-error" id="book-error" role="alert" hidden></p>
       </div>
@@ -368,11 +378,27 @@
     </form>
   </dialog>
 
+  <dialog class="modal" id="vocabulary-dialog" aria-labelledby="vocabulary-title">
+    <header class="modal-header"><h2 id="vocabulary-title">Seen vocabulary</h2><button class="icon-button" type="button" data-close aria-label="Close vocabulary"><i data-lucide="x"></i></button></header>
+    <div class="modal-body">
+      <p class="field-note">Collected from text displayed while you read. These are exposure records, not a test of mastery. Mandarin characters and each language’s lemmas remain separate. Earlier reading is not guessed from saved progress.</p>
+      <div class="form-grid"><label class="field">Language <select id="vocabulary-language"><option value="">All languages</option></select></label><label class="field">Find a lemma or character <input id="vocabulary-search" type="search" maxlength="100"></label></div>
+      <div class="table-scroll"><table class="vocabulary-table"><thead><tr><th>Lemma / character</th><th>Language</th><th>Unit</th><th>Last seen</th></tr></thead><tbody id="vocabulary-entries"></tbody></table></div>
+      <p id="vocabulary-page" role="status"></p><p class="form-error" id="vocabulary-error" role="alert" hidden></p>
+    </div>
+    <footer class="modal-footer"><button class="button quiet" id="vocabulary-previous" type="button">Previous</button><button class="button secondary" id="vocabulary-next" type="button">Next</button><button class="button quiet" type="button" data-close>Close</button></footer>
+  </dialog>
+
   <dialog class="modal" id="learning-dialog" aria-labelledby="learning-title">
     <header class="modal-header"><h2 id="learning-title">Book analysis</h2><button class="icon-button" type="button" data-close aria-label="Close book analysis"><i data-lucide="x"></i></button></header>
     <div class="modal-body">
       <p id="learning-stats"></p>
+      <button class="button quiet small" id="edit-book-languages" type="button">Set book languages</button>
       <div id="learning-vocabulary"></div>
+      <p class="field-note">“Not yet seen” counts unique lemmas or Mandarin characters absent from your reading catalogue; it does not mean you cannot understand them.</p>
+      <button class="button secondary small" id="find-similar-books" type="button">Find books with similar vocabulary</button>
+      <p class="field-note">Recommendations come from your library and compare vocabulary within each language. They do not compare plots or genres.</p>
+      <div id="similar-books" role="status"></div>
       <p id="learning-estimate"></p>
       <p class="field-note">Estimated reading demand uses sampled passages and broad ACTFL reading descriptors. This estimate describes the text and is provisional.</p>
       <p id="learning-reason"></p>

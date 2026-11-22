@@ -278,7 +278,10 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   }
   function apply() {
     enabled = preferences().audioEnabled; player.hidden = !enabled || Boolean(preferences().audioToolbarHidden);
-    $('#audio-toggle').setAttribute('aria-pressed', String(enabled));
+    const toggle = $('#audio-toggle');
+    toggle.setAttribute('aria-pressed', String(!player.hidden));
+    toggle.title = player.hidden ? 'Show audio toolbar' : 'Hide audio toolbar';
+    toggle.setAttribute('aria-label', toggle.title);
     audio.playbackRate = preferences().audioRate;
     const podcast = Boolean(preferences().podcastMode);
     player.classList.toggle('podcast-mode', podcast);

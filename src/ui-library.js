@@ -3,6 +3,8 @@ import { languageName } from './settings.js';
 import { parseLanguage } from './languages.js';
 import { refreshStorage, showStorage } from './storage.js';
 import { audioTools, audioChanged } from './ui-audio-tools.js';
+import { bookLanguagePicker } from './book-languages.js';
+import { vocabularyLibrary, unfamiliarLabel, recommendationRows } from './ui-vocabulary.js';
 
 const vocabularyLabel = (vocabulary) => vocabulary?.byLanguage?.map((item) => `${item.count.toLocaleString()} ${item.language === 'zh' ? 'Mandarin Han characters' : `${languageName(item.language)} ${item.unit}`}`).join(' · ');
 
@@ -11,6 +13,8 @@ export function libraryScreen({ progress, onRemove }) {
   const books = $('#books');
   const bookDialog = $('#book-dialog');
   const bookForm = $('#book-form');
+  const languagePicker = bookLanguagePicker(bookForm);
+  const vocabularyUI = vocabularyLibrary();
   const categoryDialog = $('#category-dialog');
   const categoryForm = $('#category-form');
   const learningDialog = $('#learning-dialog');
@@ -92,6 +96,7 @@ export function libraryScreen({ progress, onRemove }) {
     const vocabulary = vocabularyLabel(analysis?.vocabulary) || (count == null ? '' : `${count.toLocaleString()} ${analysis.vocabulary?.unit === 'characters' ? 'Han characters' : analysis.method === 'word forms' ? 'word forms' : 'lemmas'}`);
     const estimate = analysis?.reading?.band ? `Est. ${analysis.reading.band}` : '';
     detail.append(element('span', 'book-meta', [vocabulary, estimate].filter(Boolean).join(' · ')));
+    if (book.familiarity) detail.append(element('span', 'book-meta', 'Not yet seen: ' + unfamiliarLabel(book.familiarity)));
     const tools = element('button', 'button quiet small', 'Analysis & audio');
     tools.type = 'button';
     tools.setAttribute('aria-label', `Analysis and audio for ${book.title}`);
@@ -126,6 +131,7 @@ export function libraryScreen({ progress, onRemove }) {
       (!$('#reading-filter').value || book.learning?.reading?.band === $('#reading-filter').value) &&
       (!filter || `${book.title} ${book.author}`.toLocaleLowerCase().includes(filter)));
     $('#book-count').textContent = `${visible.length} ${visible.length === 1 ? 'book' : 'books'}`;
+    if ($('#book-sort').value === 'familiar') visible.sort((a, b) => (b.familiarity?.score ?? -1) - (a.familiarity?.score ?? -1) || b.addedAt - a.addedAt);
     books.replaceChildren(...visible.map(bookCard));
     $('#empty-library').hidden = visible.length > 0;
     $('#empty-title').textContent = filter ? 'No matching books' : 'No books here yet';
@@ -136,6 +142,7 @@ export function libraryScreen({ progress, onRemove }) {
 
   async function refresh() {
     snapshot = await api('/api/library');
+    vocabularyUI.update(snapshot.vocabulary);
     showStorage(snapshot.storage);
     message('#library-error');
     render();
@@ -156,6 +163,7 @@ export function libraryScreen({ progress, onRemove }) {
         snapshot.demo ? Promise.resolve({ job: null }) : api(`/api/books/${id}/ivoox`)]);
       if (learningBook?.id !== id || !learningDialog.open) return;
       const analysis = result.analysis;
+      $('#find-similar-books').disabled = analysis.state !== 'ready';
       $('#upload-audio-form').hidden = !uploaded.available;
       $('#audio-upload-note').textContent = uploaded.available
         ? 'Upload a complete audiobook or up to 200 chapter files, totalling 1 GiB and at most 72 hours per recording. Files are sorted by name; adjust their order below before upload. Preparation and sync run in the background.'
@@ -207,11 +215,12 @@ export function libraryScreen({ progress, onRemove }) {
       if (vocabulary?.byLanguage?.length) {
         const table = element('table', 'vocabulary-table');
         const header = element('tr');
-        for (const label of ['Language', 'Unit', 'Unique', 'Text total']) header.append(element('th', '', label));
+        for (const label of ['Language', 'Unit', 'Unique', 'Text total', 'Seen', 'Not yet seen']) header.append(element('th', '', label));
         table.append(header);
         for (const item of vocabulary.byLanguage) {
           const row = element('tr');
-          for (const text of [item.language === 'zh' ? 'Mandarin' : languageName(item.language), item.unit === 'characters' ? 'Han characters' : item.unit, item.count.toLocaleString(), `${item.total.toLocaleString()} ${item.unit === 'characters' ? 'characters' : 'word tokens'}`]) row.append(element('td', '', text));
+          const familiarity = result.familiarity?.byLanguage?.find((entry) => entry.language === item.language && entry.unit === item.unit);
+          for (const text of [item.language === 'zh' ? 'Mandarin' : languageName(item.language), item.unit === 'characters' ? 'Han characters' : item.unit, item.count.toLocaleString(), `${item.total.toLocaleString()} ${item.unit === 'characters' ? 'characters' : 'word tokens'}`, familiarity?.seen?.toLocaleString() ?? '—', familiarity?.unfamiliar?.toLocaleString() ?? '—']) row.append(element('td', '', text));
           table.append(row);
         }
         breakdown.append(table);
@@ -264,6 +273,9 @@ export function libraryScreen({ progress, onRemove }) {
   async function showLearning(book) {
     audioUI.reset();
     learningBook = book;
+    $('#edit-book-languages').hidden = snapshot.demo && book.id === 'sample';
+    $('#find-similar-books').disabled = true;
+    $('#similar-books').replaceChildren();
     $('#learning-title').textContent = book.title;
     $('#learning-stats').textContent = 'Loading analysis…';
     $('#learning-estimate').textContent = '';
@@ -281,6 +293,23 @@ export function libraryScreen({ progress, onRemove }) {
       await api(`/api/books/${learningBook.id}/learning`, { method: 'POST', body: {} });
       void learningStatus();
     } catch (error) { message('#learning-error', error.message); }
+  });
+  $('#edit-book-languages').addEventListener('click', () => {
+    const book = learningBook;
+    if (!book) return;
+    learningDialog.close(); showBook(book);
+    $('#book-language-limit').focus();
+  });
+  $('#find-similar-books').addEventListener('click', async (event) => {
+    if (!learningBook) return;
+    const id = learningBook.id; event.currentTarget.disabled = true;
+    $('#similar-books').textContent = 'Comparing vocabulary…';
+    try {
+      const result = await api(`/api/books/${encodeURIComponent(id)}/recommendations`);
+      if (learningBook?.id !== id) return;
+      $('#similar-books').replaceChildren(...(result.books.length ? recommendationRows(result.books, () => learningDialog.close()) : [element('p', 'field-note', 'No other analyzed books with shared vocabulary yet.')]));
+    } catch (error) { if (learningBook?.id === id) $('#similar-books').textContent = error.message; }
+    finally { $('#find-similar-books').disabled = false; }
   });
   $('#generate-book-audio').addEventListener('click', async (event) => {
     if (!learningBook) return;
@@ -371,6 +400,7 @@ export function libraryScreen({ progress, onRemove }) {
     fields.author.value = book?.author ?? '';
     fields.language.value = book?.language ?? '';
     fields.language.required = isEdit;
+    languagePicker.set(book?.languages);
     $('#book-language-note').hidden = isEdit;
     fields.categoryId.value = book?.categoryId ?? (['all', 'uncategorized'].includes(category) ? '' : category);
     bookDialog.showModal();
@@ -398,6 +428,7 @@ export function libraryScreen({ progress, onRemove }) {
   $('#configure-archive').addEventListener('click', () => bookDialog.close());
   search.addEventListener('input', render);
   $('#reading-filter').addEventListener('change', render);
+  $('#book-sort').addEventListener('change', render);
   $('#book-file').addEventListener('change', (event) => stageFile(event.target.files[0]));
   $('#file-field').addEventListener('dragover', (event) => {
     event.preventDefault();
@@ -419,6 +450,8 @@ export function libraryScreen({ progress, onRemove }) {
     const language = parseLanguage(rawLanguage);
     if (rawLanguage && !language) return message('#book-error', 'Choose a language or enter a valid language code.');
     data.set('language', language);
+    try { data.set('languages', JSON.stringify(languagePicker.value())); }
+    catch (error) { return message('#book-error', error.message); }
     const archiveImport = !editingBook && $('#book-source').value === 'anna';
     const reference = bookForm.elements.archiveReference.value.trim();
     data.delete('source');

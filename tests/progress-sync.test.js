@@ -225,6 +225,23 @@ test('chapter, rescan and iVoox endpoints require the web login and preserve ori
   assert.equal((await response(base, root + '/recordings', { headers: json })).recordings.length, 1);
 });
 
+test('book language choices persist through the authenticated API and vocabulary endpoints require the reader login', async (t) => {
+  const f = await fixture(t);
+  let base = await f.start();
+  for (const path of ['/api/vocabulary', '/api/books/sync-book/recommendations', '/api/books/sync-book/vocabulary/sections/epub%3A0']) assert.equal((await fetch(base + path)).status, 401);
+  assert.equal((await fetch(base + '/api/books/sync-book/vocabulary/seen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 401);
+  const body = { title: 'Mixed languages', author: '', language: 'zh', languages: ['zh-Hant', 'en'], categoryId: '' };
+  const edited = await response(base, '/api/books/sync-book', { method: 'PATCH', headers: json, body: JSON.stringify(body) });
+  assert.deepEqual(edited.languages, ['zh-Hant', 'en']);
+  assert.equal(edited.owner, undefined);
+  await response(base, '/api/books/sync-book', { method: 'PATCH', status: 422, headers: json, body: JSON.stringify({ ...body, languages: ['not a valid code'] }) });
+  const catalogue = await response(base, '/api/vocabulary', { headers: json }); assert.deepEqual(catalogue.entries, []);
+  await response(base, '/api/books/sync-book/vocabulary/seen', { method: 'POST', status: 422, headers: json, body: '{}' });
+  assert.deepEqual((await response(base, '/api/books/sync-book/recommendations', { headers: json })).books, []);
+  base = await f.start();
+  assert.deepEqual((await response(base, '/api/library', { headers: json })).books.find((book) => book.id === 'sync-book').languages, ['zh-Hant', 'en']);
+});
+
 test('demo mode never exposes shared progress, external audio imports, chapter uploads or rescans', async (t) => {
   const f = await fixture(t, { demo: true, password: '' });
   const base = await f.start();

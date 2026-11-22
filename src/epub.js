@@ -415,6 +415,12 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       get syncResolution() { return syncResolution; },
       get contents() { return epubContents(book); },
       readingRoots() { return rendition.getContents().map((contents) => contents.content).filter(Boolean); },
+      vocabularyPages() {
+        if (reflowing) return [];
+        return rendition.getContents().filter((contents) => contents.content).map((contents) => ({
+          key: `epub:${contents.sectionIndex}`, track: () => trackText(contents.content, language),
+        }));
+      },
       audioUnit() {
         if (reflowing) return null;
         const index = activeSection;

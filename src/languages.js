@@ -15,6 +15,8 @@ export const languageOptions = codes.map((code) => ({ code, label: english.of(co
 
 export function parseLanguage(value) {
   const text = value.trim();
+  const alias = { mandarin: 'zh', 'mandarin chinese': 'zh', 'simplified chinese': 'zh-Hans', 'traditional chinese': 'zh-Hant' }[text.toLowerCase()];
+  if (alias) return alias;
   const choice = languageOptions.find(({ label }) => label.toLowerCase() === text.toLowerCase());
   try { return choice?.code ?? Intl.getCanonicalLocales(text.replaceAll('_', '-'))[0] ?? ''; }
   catch { return ''; }

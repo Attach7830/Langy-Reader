@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { XMLParser } from 'fast-xml-parser';
 import yauzl from 'yauzl';
 import { sampleBook } from './sample.js';
+import { baseLanguage } from '../shared/language.js';
 
 export const maxUpload = 120 * 1024 * 1024;
 
@@ -35,6 +36,18 @@ export function normalizeLanguage(value) {
     return '';
   }
 }
+
+export function normalizeBookLanguages(value, previous = []) {
+  if (value === undefined) return previous;
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value); } catch { throw new RequestError(422, 'Choose the languages contained in this book.'); }
+  }
+  if (!Array.isArray(value) || value.length > 20 || value.some((code) => typeof code !== 'string' || code.length > 35 || !normalizeLanguage(code))) {
+    throw new RequestError(422, 'Choose up to 20 valid book languages.');
+  }
+  return [...new Map(value.map((code) => [baseLanguage(code), normalizeLanguage(code)])).values()];
+}
+const primaryLanguage = (language, languages) => languages.length && !languages.some((code) => baseLanguage(code) === baseLanguage(language)) ? languages[0] : language;
 
 async function epubMetadata(path) {
   const zip = await yauzl.openPromise(path, { autoClose: false });
@@ -138,15 +151,18 @@ export async function openLibrary(dir, limits = null) {
     db.exec('ALTER TABLE books ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0; UPDATE books SET updatedAt = addedAt;');
   }
 
+  if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'languages')) {
+    db.exec("ALTER TABLE books ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'");
+  }
   if (db.prepare('PRAGMA user_version').get().user_version === 0) {
     const sample = await sampleBook();
     await writeFile(join(folder, 'sample.epub'), sample);
     db.exec('BEGIN');
     try {
       db.prepare('INSERT INTO categories VALUES (?, ?, ?, ?)').run('spanish', 'Spanish', shared, null);
-      db.prepare('INSERT INTO books VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+      db.prepare('INSERT INTO books VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
         'sample', 'El café de la esquina', '', 'es', 'epub', 'spanish', null, Date.now(), shared, null, sample.byteLength,
-        Date.now(),
+        Date.now(), '[]',
       );
       db.exec('PRAGMA user_version = 1; COMMIT;');
     } catch (error) {
@@ -160,13 +176,13 @@ export async function openLibrary(dir, limits = null) {
   const bookScope = limits ? "(owner = ? OR id = 'sample')" : 'owner = ?';
   const categoryScope = limits ? "(owner = ? OR id = 'spanish')" : 'owner = ?';
   const editable = (visitor) => visitor?.id ?? shared;
-  const publicBook = ({ owner, expires, bytes, ...book }) => book;
+  const publicBook = ({ owner, expires, bytes, ...book }) => ({ ...book, languages: typeof book.languages === 'string' ? JSON.parse(book.languages) : book.languages });
   const publicCategory = ({ id, name }) => ({ id, name });
 
   function getBook(id, visitor) {
     const book = db.prepare(`SELECT * FROM books WHERE id = ? AND ${bookScope}`).get(id, editable(visitor));
     if (!book) throw new RequestError(404, 'Book not found.');
-    return book;
+    return { ...book, languages: JSON.parse(book.languages) };
   }
 
   function categoryId(value, visitor) {
@@ -254,7 +270,8 @@ export async function openLibrary(dir, limits = null) {
       try {
         const metadata = await readMetadata(file.path, format);
         const providedLanguage = asText(body.language, 35);
-        const language = normalizeLanguage(providedLanguage) || metadata.language || 'es';
+        const languages = normalizeBookLanguages(body.languages);
+        const language = primaryLanguage(normalizeLanguage(providedLanguage) || metadata.language || 'es', languages);
         if (providedLanguage && !normalizeLanguage(providedLanguage)) {
           throw new RequestError(422, 'Enter a language code such as es, en or fr.');
         }
@@ -272,9 +289,9 @@ export async function openLibrary(dir, limits = null) {
           const { used } = db.prepare('SELECT coalesce(sum(bytes), 0) AS used FROM books WHERE expires > ?').get(Date.now());
           if (used + file.size > limits.storage) throw new RequestError(507, 'Demo storage is full. Try later.');
         }
-        db.prepare('INSERT INTO books VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+        db.prepare('INSERT INTO books VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
           id, title, author, language, format, categoryId(body.categoryId, visitor),
-          metadata.thumbnail ? metadata.thumbnailType : null, Date.now(), owner, visitor?.expires ?? null, file.size, Date.now(),
+          metadata.thumbnail ? metadata.thumbnailType : null, Date.now(), owner, visitor?.expires ?? null, file.size, Date.now(), JSON.stringify(languages),
         );
         saved = true;
         touch();
@@ -289,12 +306,14 @@ export async function openLibrary(dir, limits = null) {
       const book = getBook(id, visitor);
       if (book.owner !== editable(visitor)) throw new RequestError(403, 'The sample book is read-only.');
       const title = asText(body.title, 250);
-      const language = normalizeLanguage(body.language);
-      if (!title || !language) throw new RequestError(422, 'Enter a title and a valid language code.');
-      db.prepare('UPDATE books SET title = ?, author = ?, language = ?, categoryId = ?, updatedAt = ? WHERE id = ?')
-        .run(title, asText(body.author, 200), language, categoryId(body.categoryId, visitor), Date.now(), id);
+      const languages = normalizeBookLanguages(body.languages, book.languages);
+      const requestedLanguage = normalizeLanguage(body.language);
+      if (!title || !requestedLanguage) throw new RequestError(422, 'Enter a title and a valid language code.');
+      const language = primaryLanguage(requestedLanguage, languages);
+      db.prepare('UPDATE books SET title = ?, author = ?, language = ?, categoryId = ?, updatedAt = ?, languages = ? WHERE id = ?')
+        .run(title, asText(body.author, 200), language, categoryId(body.categoryId, visitor), Date.now(), JSON.stringify(languages), id);
       touch();
-      return getBook(id);
+      return publicBook(getBook(id, visitor));
     },
     async removeBook(id, visitor) {
       const book = getBook(id, visitor);

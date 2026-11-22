@@ -15,6 +15,7 @@ import { earlierPageContext } from './reading-context.js';
 import { narration } from './narration.js';
 import { readingProgressSync } from './reading-sync.js';
 import { pinyinOverlay } from './pinyin.js';
+import { readingVocabulary } from './reading-vocabulary.js';
 import { eventKey, getProgress, getSettings, keyLabel, languageName, modes, saveProgress, saveSettings, syncDeviceId, updateAppearance } from './settings.js';
 
 const viewer = $('#viewer');
@@ -35,9 +36,12 @@ let moving = false, summaryQueued = false, fallbackFullscreen = false;
 let zoom = 1;
 let statusCheck = 0;
 const pinyin = pinyinOverlay({ host: viewer, preferences: () => settings, renderer: () => renderer, book: () => activeBook, request: api });
+const vocabulary = readingVocabulary({ book: () => activeBook, renderer: () => renderer, request: api });
+viewer.addEventListener('scroll', () => vocabulary.refresh(), { passive: true });
 
 const words = wordHelp({
   preferences: () => settings, request: api,
+  languages: () => activeBook?.languages || [],
   lemmaAt: (node, offset) => audio.lemmaAt(node, offset),
   seekWord: (node, offset) => audio.seekWord(node, offset),
 });
@@ -134,6 +138,7 @@ function applySettings(updated, aiChanged) {
   if (relayout || aiChanged) resetSummary();
   Promise.resolve(renderer?.apply?.(settings)).then(() => {
     pinyin.refresh();
+    vocabulary.refresh();
     if (syncChanged && activeBook && renderer) void readingSync.start(activeBook, renderer);
   }).catch(reportError);
   if (activeBook) viewer.focus({ preventScroll: true });
@@ -198,6 +203,7 @@ function positionChanged(position) {
   }
   void audio.refresh({ seekToPage: changed && !position.reflowed });
   pinyin.refresh();
+  vocabulary.refresh();
 }
 
 function showSummary(visible) {
@@ -375,6 +381,7 @@ async function toggleFullscreen() {
 }
 
 function closeReader() {
+  vocabulary.stop();
   pinyin.clear();
   readingSync.stop();
   audio.stop();
@@ -429,7 +436,7 @@ async function openBook(book) {
       language: book.language, settings, signal,
       hooks: {
         keydown, bindWords: words.bind,
-        layout: () => pinyin.refresh(),
+        layout: () => { pinyin.refresh(); vocabulary.refresh(); },
         position: (position) => { if (!signal.aborted) positionChanged(position); },
         error: (error) => { if (!signal.aborted) reportError(error); },
       },
@@ -437,6 +444,7 @@ async function openBook(book) {
     if (signal.aborted) return opened.destroy();
     renderer = opened;
     pinyin.refresh();
+    vocabulary.refresh();
     if (book.format === 'pdf' && opened.contents.length) {
       contentsButton.title = 'Contents';
       contentsButton.setAttribute('aria-label', contentsButton.title);
@@ -631,12 +639,7 @@ function keydown(event) {
   else if (key === next || key === alternate) void move(1);
   else if (key === fullscreen) void toggleFullscreen();
   else if (key === playback) audio.toggle();
-  else if (key === audioToolbar) {
-    settings = { ...settings, audioToolbarHidden: !settings.audioToolbarHidden };
-    saveSettings(settings);
-    audio.apply();
-    toast(settings.audioToolbarHidden ? 'Audio toolbar hidden' : 'Audio toolbar shown');
-  }
+  else if (key === audioToolbar) toggleAudioToolbar();
   else if (key === summary) {
     if (summaryPanel.hidden) summarize();
     else closeSummary();
@@ -650,13 +653,16 @@ $('#sync-progress').addEventListener('click', () => void readingSync.check());
 $('#sync-resume').addEventListener('click', () => void readingSync.resume());
 $('#sync-keep').addEventListener('click', () => void readingSync.keepLocal());
 $('#fullscreen').addEventListener('click', toggleFullscreen);
-$('#audio-toggle').addEventListener('click', () => {
-  settings = { ...settings, audioEnabled: !settings.audioEnabled };
+function toggleAudioToolbar() {
+  const visible = settings.audioEnabled && !settings.audioToolbarHidden;
+  settings = { ...settings, audioEnabled: true, audioToolbarHidden: visible };
   saveSettings(settings);
   audio.apply();
   void audio.refresh();
   viewer.focus({ preventScroll: true });
-});
+  toast(visible ? 'Audio toolbar hidden' : 'Audio toolbar shown');
+}
+$('#audio-toggle').addEventListener('click', toggleAudioToolbar);
 $('#summarize').addEventListener('click', summarize);
 $('#generate-summary').addEventListener('click', summarize);
 $('#close-summary').addEventListener('click', closeSummary);

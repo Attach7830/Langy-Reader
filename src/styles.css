@@ -176,7 +176,7 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .about-page section .button { margin-top: 14px; }
 .about-back { margin-left: -10px; }
 .library-toolbar {
-  margin-top: 32px; padding-block: 14px; display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  margin-top: 32px; padding-block: 14px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px;
   border-top: 1px solid var(--border);
 }
 .library-toolbar > span { font-size: 13px; }
@@ -535,3 +535,9 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 .audio-file-row .button { min-height: 30px; padding: 3px 6px; font-size: 11px; }
 #ivoox-audio-form { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
 .recording-chapter-download { display: block; font-size: 12px; padding-block: 3px; overflow-wrap: anywhere; }
+.book-language-list { display: flex; flex-wrap: wrap; gap: .5rem; }
+.vocabulary-overview { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.vocabulary-overview p { margin: 0; }
+.table-scroll { overflow-x: auto; }
+.recommendation-row { display: grid; gap: .3rem; padding: .75rem 0; border-bottom: 1px solid var(--border); }
+#learning-vocabulary { overflow-x: auto; }

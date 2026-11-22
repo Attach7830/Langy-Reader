@@ -43,7 +43,7 @@ function wordAt(root, event, segmenter) {
   return null;
 }
 
-export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord = () => {} }) {
+export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord = () => {}, languages = () => [] }) {
   const bubble = document.querySelector('#word-help');
   const hint = bubble.querySelector('[data-word-mode]');
   const heading = bubble.querySelector('[data-word]');
@@ -73,7 +73,7 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
 
   async function show(item, mode, language, getContext) {
     if (active !== item) return;
-    language = nodeLanguage(item.node, language, item.word);
+    language = nodeLanguage(item.node, language, item.word, languages());
     const chinese = hasHan(item.word) && language === 'zh';
     let mandarin;
     if (chinese) {
