@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from spanish_morphology import build_conjugation_data, spanish_correction
+from spanish_lexicon import decode
 
 
 LOOKUP = {"miraron": "mirar", "mira": "mirar", "mirando": "mirar", "miró": "mirar",
@@ -32,6 +33,14 @@ class SpanishFormTests(unittest.TestCase):
     def setUp(self):
         mock = patch("spanish_morphology.conjugation_data", return_value=build_conjugation_data(LOOKUP))
         mock.start(); self.addCleanup(mock.stop)
+        # The tagged layer supplies noun paradigms and homographs; the remaining
+        # cases also exercise the conservative no-index fallback.
+        facts = {"adulta": [("adulto", "NOUN", "NCFS000")], "adultas": [("adulto", "NOUN", "NCFP000")],
+                 "adultos": [("adulto", "NOUN", "NCMP000")],
+                 "fui": [("ir", "VERB", "VMIS1S0"), ("ser", "VERB", "VSIS1S0")],
+                 "di": [("dar", "VERB", "VMIS1S0"), ("decir", "VERB", "VMM02S0")]}
+        tagged = patch("spanish_dictionary.readings", side_effect=lambda word, folded=False: tuple(decode(*row) for row in facts.get(word, [])))
+        tagged.start(); self.addCleanup(tagged.stop)
 
     def test_infinitives_split_one_two_and_three_pronouns(self):
         for word, expected in [("mirarlo", ["mirar", "él"]), ("achicarme", ["achicar", "yo"]),

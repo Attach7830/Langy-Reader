@@ -1,5 +1,7 @@
 # Spanish reader vocabulary normalization
 
+This record describes the initial correction. Its noun allowlist and short-imperative list have since been replaced by [tagged dictionary paradigms](SPANISH-GENERALIZATION.md); the historical numeric record remains unchanged.
+
 The analyzer sometimes returned combined headwords such as `achicar yo` and `agregar él`, or left `-ándome` and stacked pronouns unparsed. It now keeps the base verb as the main lemma and attaches separate grammatical components with their original UTF-16 source positions. Inventory, reading exposures, read-book contributions, recommendations and below-threshold lists all use these components. Original source words remain intact for hover and audio matching.
 
 Examples: `achicarme / achicándome → achicar + yo`; `agregarlo → agregar + él`; `aproximársele → aproximar + él + él`. The two occurrences of `él` represent different pronouns, so they have separate exposure positions while sharing one vocabulary entry. This retains the existing singular-person pronoun convention. The reader-reported `aproximárse` spelling also recovers the attested base without changing the source text.

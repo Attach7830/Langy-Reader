@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "repository": "https://github.com/TALP-UPC/FreeLing",
+  "commit": "0bae6b7f6d1b405e67658895de54b59bfb3b6338",
+  "attribution": "Spanish Resource Grammar, Institut Universitari de Linguistica Aplicada, Universitat Pompeu Fabra; distributed by TALP-UPC FreeLing.",
+  "license": "LGPL-LR",
+  "files": [
+    {
+      "path": "data/es/dictionary/entries/MM.adj",
+      "url": "https://raw.githubusercontent.com/TALP-UPC/FreeLing/0bae6b7f6d1b405e67658895de54b59bfb3b6338/data/es/dictionary/entries/MM.adj",
+      "size": 1908746,
+      "sha256": "0bfdce1ec95f3a5128e961b018118da1c5f34b3a3a8b5610642020e526c8f616"
+    },
+    {
+      "path": "data/es/dictionary/entries/MM.nom",
+      "url": "https://raw.githubusercontent.com/TALP-UPC/FreeLing/0bae6b7f6d1b405e67658895de54b59bfb3b6338/data/es/dictionary/entries/MM.nom",
+      "size": 3151447,
+      "sha256": "574828e19d023444ca4073e324261be8df872e3f03cbaf052b4891446c7b451f"
+    },
+    {
+      "path": "data/es/dictionary/entries/MM.vaux",
+      "url": "https://raw.githubusercontent.com/TALP-UPC/FreeLing/0bae6b7f6d1b405e67658895de54b59bfb3b6338/data/es/dictionary/entries/MM.vaux",
+      "size": 5132,
+      "sha256": "7067a5474d942ea3ae32171d0a483b7cb2fe4add8ba298eb22b230c5c797b133"
+    },
+    {
+      "path": "data/es/dictionary/entries/MM.verb",
+      "url": "https://raw.githubusercontent.com/TALP-UPC/FreeLing/0bae6b7f6d1b405e67658895de54b59bfb3b6338/data/es/dictionary/entries/MM.verb",
+      "size": 14406354,
+      "sha256": "72a0dafe3df20e2d23a6f5b823240aaeb01f4715b9cf373970991da086e18033"
+    },
+    {
+      "path": "COPYING",
+      "url": "https://raw.githubusercontent.com/TALP-UPC/FreeLing/0bae6b7f6d1b405e67658895de54b59bfb3b6338/COPYING",
+      "size": 13452,
+      "sha256": "fc3684c11a4b798ed51e7408920910a9641af63068024e1555181e00e1a23aa8"
+    },
+    {
+      "path": "LICENSES/LGPLLR.license",
+      "url": "https://raw.githubusercontent.com/TALP-UPC/FreeLing/0bae6b7f6d1b405e67658895de54b59bfb3b6338/LICENSES/LGPLLR.license",
+      "size": 14816,
+      "sha256": "c02d70e02318549a35631d9e621587a306592a2599a53398eb8215ed0bd58c77"
+    }
+  ]
+}

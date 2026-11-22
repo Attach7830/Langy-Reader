@@ -1,0 +1,784 @@
+{
+  "version": 1,
+  "suite": "spanish-generalization",
+  "title": "Spanish tagged morphology generalization regressions",
+  "provenance": "Original assistant-authored targets added while replacing example-specific noun/imperative lists with tagged morphology. Not independently human-adjudicated, not an untouched holdout, and not a general literary accuracy estimate. The original challenge, future and forms keys remain unchanged.",
+  "license": "CC0-1.0",
+  "conventions": [
+    "Uses Langy learner grouping for adjectival participles and explicit noun gender paradigms; distinct nouns remain separate.",
+    "Attached pronouns follow the existing singular-person convention and are scored as a multiset at the original word span."
+  ],
+  "references": [
+    "https://freeling-user-manual.readthedocs.io/en/latest/tagsets/tagset-es/",
+    "https://www.rae.es/dpd/pronombres%20personales%20%C3%A1tonos",
+    "https://www.rae.es/gtg/g%C3%A9nero"
+  ],
+  "cases": [
+    {
+      "id": "es-generalized-professions",
+      "language": "es",
+      "split": "dev",
+      "text": "Las profesoras ayudaban a las investigadoras.",
+      "answers": [
+        [
+          "profesoras",
+          [
+            [
+              "profesor",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "investigadoras",
+          [
+            [
+              "investigador",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-writers",
+      "language": "es",
+      "split": "dev",
+      "text": "Las escritoras y las trabajadoras llegaron.",
+      "answers": [
+        [
+          "escritoras",
+          [
+            [
+              "escritor",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "trabajadoras",
+          [
+            [
+              "trabajador",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-animals",
+      "language": "es",
+      "split": "test",
+      "text": "Las leonas descansaban con los leones.",
+      "answers": [
+        [
+          "leonas",
+          [
+            [
+              "león",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "leones",
+          [
+            [
+              "león",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-gender-accent",
+      "language": "es",
+      "split": "test",
+      "text": "Las campeonas andaluzas saludaron a los jóvenes.",
+      "answers": [
+        [
+          "campeonas",
+          [
+            [
+              "campeón",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "andaluzas",
+          [
+            [
+              "andaluz",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "jóvenes",
+          [
+            [
+              "joven",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-gerund-complex",
+      "language": "es",
+      "split": "dev",
+      "text": "Seguía desenmarañándomelos con paciencia.",
+      "answers": [
+        [
+          "desenmarañándomelos",
+          [
+            [
+              "desenmarañar",
+              "X"
+            ],
+            [
+              "yo",
+              "PRON"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-rewriting",
+      "language": "es",
+      "split": "test",
+      "text": "Ella iba reescribiéndosela en otro papel.",
+      "answers": [
+        [
+          "reescribiéndosela",
+          [
+            [
+              "reescribir",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-reconstruction",
+      "language": "es",
+      "split": "test",
+      "text": "Terminó reconstruyéndoselo durante el verano.",
+      "answers": [
+        [
+          "reconstruyéndoselo",
+          [
+            [
+              "reconstruir",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-diaeresis",
+      "language": "es",
+      "split": "test",
+      "text": "Antes de argüírselo, decidió esperar.",
+      "answers": [
+        [
+          "argüírselo",
+          [
+            [
+              "argüir",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-imperative-plural",
+      "language": "es",
+      "split": "dev",
+      "text": "Compradlo y lavadlo con cuidado.",
+      "answers": [
+        [
+          "Compradlo",
+          [
+            [
+              "comprar",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ],
+        [
+          "lavadlo",
+          [
+            [
+              "lavar",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-clause-adverb",
+      "language": "es",
+      "split": "dev",
+      "text": "Escuchad; después sentaos aquí.",
+      "answers": [
+        [
+          "sentaos",
+          [
+            [
+              "sentar",
+              "X"
+            ],
+            [
+              "tú",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-imperative-hearing",
+      "language": "es",
+      "split": "dev",
+      "text": "Oídme antes de salir.",
+      "answers": [
+        [
+          "Oídme",
+          [
+            [
+              "oír",
+              "X"
+            ],
+            [
+              "yo",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-imperative-bring",
+      "language": "es",
+      "split": "test",
+      "text": "Traédmelo cuando podáis.",
+      "answers": [
+        [
+          "Traédmelo",
+          [
+            [
+              "traer",
+              "X"
+            ],
+            [
+              "yo",
+              "PRON"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-imperative-exhortative",
+      "language": "es",
+      "split": "dev",
+      "text": "Rompámoslas antes de tirarlas.",
+      "answers": [
+        [
+          "Rompámoslas",
+          [
+            [
+              "romper",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ],
+        [
+          "tirarlas",
+          [
+            [
+              "tirar",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-imperative-reflexive",
+      "language": "es",
+      "split": "test",
+      "text": "Ponéoslo antes de salir.",
+      "answers": [
+        [
+          "Ponéoslo",
+          [
+            [
+              "poner",
+              "X"
+            ],
+            [
+              "tú",
+              "PRON"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-future-compound",
+      "language": "es",
+      "split": "test",
+      "text": "Si hubiéremos terminado, avisaremos.",
+      "answers": [
+        [
+          "hubiéremos",
+          [
+            [
+              "haber",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "terminado",
+          [
+            [
+              "terminar",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-future-derived",
+      "language": "es",
+      "split": "dev",
+      "text": "Quien interviniere deberá identificarse.",
+      "answers": [
+        [
+          "interviniere",
+          [
+            [
+              "intervenir",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "identificarse",
+          [
+            [
+              "identificar",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-preterite-derived",
+      "language": "es",
+      "split": "test",
+      "text": "Deshicieron el nudo y satisficieron la petición.",
+      "answers": [
+        [
+          "Deshicieron",
+          [
+            [
+              "deshacer",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "satisficieron",
+          [
+            [
+              "satisfacer",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-preterite-other",
+      "language": "es",
+      "split": "dev",
+      "text": "Anduvieron mucho y supisteis responder.",
+      "answers": [
+        [
+          "Anduvieron",
+          [
+            [
+              "andar",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "supisteis",
+          [
+            [
+              "saber",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-conditional",
+      "language": "es",
+      "split": "test",
+      "text": "Si pudiéramos, cabríamos todos en el coche.",
+      "answers": [
+        [
+          "cabríamos",
+          [
+            [
+              "caber",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-participle-irregular",
+      "language": "es",
+      "split": "test",
+      "text": "La ventana estaba abierta, la puerta rota y la carta escrita.",
+      "answers": [
+        [
+          "abierta",
+          [
+            [
+              "abrir",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "rota",
+          [
+            [
+              "romper",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "escrita",
+          [
+            [
+              "escribir",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-participle-other",
+      "language": "es",
+      "split": "test",
+      "text": "La hoja estaba impresa y la tarea hecha.",
+      "answers": [
+        [
+          "impresa",
+          [
+            [
+              "imprimir",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "hecha",
+          [
+            [
+              "hacer",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-noun-fruit",
+      "language": "es",
+      "split": "test",
+      "text": "El manzano daba manzanas junto al huerto y la huerta.",
+      "answers": [
+        [
+          "manzano",
+          [
+            [
+              "manzano",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "manzanas",
+          [
+            [
+              "manzana",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "huerto",
+          [
+            [
+              "huerto",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "huerta",
+          [
+            [
+              "huerta",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-noun-bags",
+      "language": "es",
+      "split": "test",
+      "text": "El bolso estaba dentro de la bolsa.",
+      "answers": [
+        [
+          "bolso",
+          [
+            [
+              "bolso",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "bolsa",
+          [
+            [
+              "bolsa",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-noun-music",
+      "language": "es",
+      "split": "dev",
+      "text": "La música llenaba la sala.",
+      "answers": [
+        [
+          "música",
+          [
+            [
+              "música",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-noun-door",
+      "language": "es",
+      "split": "test",
+      "text": "La puerta estaba lejos del puerto.",
+      "answers": [
+        [
+          "puerta",
+          [
+            [
+              "puerta",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "puerto",
+          [
+            [
+              "puerto",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-noun-object",
+      "language": "es",
+      "split": "dev",
+      "text": "El tomate estaba junto al regalo.",
+      "answers": [
+        [
+          "tomate",
+          [
+            [
+              "tomate",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "regalo",
+          [
+            [
+              "regalo",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-ordinals",
+      "language": "es",
+      "split": "test",
+      "text": "La segunda vuelta vino después del primer intento.",
+      "answers": [
+        [
+          "segunda",
+          [
+            [
+              "segundo",
+              "X"
+            ]
+          ]
+        ],
+        [
+          "primer",
+          [
+            [
+              "primero",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-preposition",
+      "language": "es",
+      "split": "test",
+      "text": "Según testigos, pese a todo siguieron trabajando.",
+      "answers": [
+        [
+          "pese",
+          [
+            [
+              "pese",
+              "X"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "es-generalized-unicode",
+      "language": "es",
+      "split": "test",
+      "text": "📖 Seguía reconstruyéndoselo sin prisa.",
+      "answers": [
+        [
+          "reconstruyéndoselo",
+          [
+            [
+              "reconstruir",
+              "X"
+            ],
+            [
+              "él",
+              "PRON"
+            ],
+            [
+              "él",
+              "PRON"
+            ]
+          ]
+        ]
+      ]
+    }
+  ]
+}

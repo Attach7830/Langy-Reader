@@ -17,8 +17,12 @@ COPY benchmarks/lemmas/models.json benchmarks/lemmas/prepare_models.py /app/benc
 RUN python /app/benchmarks/lemmas/prepare_models.py /opt/benchmark-models/stanza
 COPY benchmarks/lemmas/core.py benchmarks/lemmas/sources.json benchmarks/lemmas/prepare_corpora.py /app/benchmarks/lemmas/
 RUN python /app/benchmarks/lemmas/prepare_corpora.py /opt/benchmark-corpora
+COPY language/prepare_spanish_lexicon.py language/spanish-lexicon-sources.json /app/language/
+RUN python /app/language/prepare_spanish_lexicon.py /opt/models/spanish-morphology
 COPY language/app.py /app/language/app.py
 COPY language/spanish_morphology.py /app/language/spanish_morphology.py
+COPY language/spanish_dictionary.py language/spanish_lexicon.py /app/language/
 COPY benchmarks/lemmas/benchmark.py benchmarks/lemmas/challenge.json benchmarks/lemmas/spanish-future.json benchmarks/lemmas/spanish-forms.json /app/benchmarks/lemmas/
+COPY benchmarks/lemmas/spanish-generalization.json /app/benchmarks/lemmas/
 RUN python /app/benchmarks/lemmas/benchmark.py --validate-only --split all
 ENTRYPOINT ["python", "/app/benchmarks/lemmas/benchmark.py"]

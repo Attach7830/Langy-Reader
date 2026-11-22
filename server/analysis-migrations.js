@@ -8,6 +8,10 @@ export function migrateSpanishVerbForms(db) {
   return refreshSpanishAnalyses(db, 'spanish-verb-components-and-inflections-v1');
 }
 
+export function migrateSpanishTaggedMorphology(db) {
+  return refreshSpanishAnalyses(db, 'spanish-tagged-morphology-v1');
+}
+
 function refreshSpanishAnalyses(db, name) {
   db.exec('CREATE TABLE IF NOT EXISTS analysis_migrations (name TEXT PRIMARY KEY, appliedAt INTEGER NOT NULL) STRICT');
   if (db.prepare('SELECT 1 FROM analysis_migrations WHERE name=?').get(name)) return [];

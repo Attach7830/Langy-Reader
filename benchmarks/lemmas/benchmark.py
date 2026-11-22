@@ -41,12 +41,23 @@ def langy_analyzer(language, source):
     helper = Path(source).with_name("spanish_morphology.py")
     if helper.is_file():
         metadata["spanish_morphology_sha256"] = hashlib.sha256(helper.read_bytes()).hexdigest()
+    if language == "es" and Path(source).with_name("spanish_dictionary.py").is_file():
+        from spanish_lexicon import metadata as dictionary_metadata
+        metadata["spanish_dictionary"] = dictionary_metadata()
+        for filename in ["spanish_dictionary.py", "spanish_lexicon.py", "prepare_spanish_lexicon.py", "spanish-lexicon-sources.json"]:
+            metadata[filename + "_sha256"] = hashlib.sha256(Path(source).with_name(filename).read_bytes()).hexdigest()
     if language != "zh":
         model, method = module.pipeline(language)
         expected = load_json(HERE / "models.json")["spacy_models"][language]
         if module.MODELS[language] != expected["package"] or model.meta["version"] != expected["version"]:
             raise ValueError("Langy's baseline model changed; update the benchmark model pins before comparing it.")
         metadata.update(model=module.MODELS[language], model_version=model.meta["version"], method=method)
+        if language == "es":
+            helper_module = sys.modules.get(getattr(module.spanish_correction, "__module__", "")) if hasattr(module, "spanish_correction") else None
+            prepare = getattr(helper_module, "conjugation_data", None)
+            if prepare:
+                started = time.perf_counter(); prepare()
+                metadata["fallback_index_load_seconds"] = time.perf_counter() - started
 
     def analyze(text):
         result = module.analyze(module.Analysis(text=text, language=language))
@@ -134,6 +145,10 @@ def selected_key(args):
         forms = load_json(HERE / "spanish-forms.json")
         cases.extend(expand_challenge(forms))
         provenance["spanish_forms"] = {key: value for key, value in forms.items() if key != "cases"}
+    if args.suite in {"all", "challenge", "generalized"}:
+        generalized = load_json(HERE / "spanish-generalization.json")
+        cases.extend(expand_challenge(generalized))
+        provenance["spanish_generalization"] = {key: value for key, value in generalized.items() if key != "cases"}
     if args.suite in {"all", "ud"}:
         path = Path(args.corpora)
         if not path.is_file():
@@ -248,7 +263,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--languages", default="es,pt,en,zh", help="Comma-separated es,pt,en,zh")
     parser.add_argument("--engines", default="langy,stanza")
-    parser.add_argument("--suite", choices=["all", "challenge", "future", "forms", "ud"], default="all")
+    parser.add_argument("--suite", choices=["all", "challenge", "future", "forms", "generalized", "ud"], default="all")
     parser.add_argument("--split", choices=["dev", "test", "all"], default="test")
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--output", default=os.environ.get("BENCHMARK_OUTPUT", str(ROOT / "benchmark-results")))

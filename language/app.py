@@ -87,14 +87,11 @@ def analyze(body: Analysis):
             correction = spanish_correction(token)
             if correction:
                 lemma = correction["lemma"]
-                is_name = False
+                if correction.get("pos", token.pos_) in {"VERB", "AUX"}:
+                    is_name = False
                 if correction.get("components"):
                     correction["components"] = [{**part, "from": offsets[token.idx + part["from"]],
                                                   "to": offsets[token.idx + part["to"]]} for part in correction["components"]]
-            if token.text.casefold() in {"hago", "hace"}:
-                lemma = "hacer"
-            if token.text.casefold() == "haces" and token.pos_ != "NOUN":
-                lemma = "hacer"
         if not is_name:
             if language == "es" and token.text.casefold() in {"al", "del"}:
                 lemmas.update(("a" if token.text.casefold() == "al" else "de", "el"))

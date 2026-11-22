@@ -1,15 +1,14 @@
-"""Conservative future-subjunctive recovery from attested Spanish verb paradigms.
+"""Spanish tagged morphology with a conservative fallback for missing entries.
 
-The future subjunctive uses the third-person-plural preterite stem without -ron.
-Use the installed lookup lexicon to establish the verb; never invent an infinitive
-by removing a suffix from an arbitrary reader word.
+Dictionary readings supply POS, gender and full verb paradigms. The fallback
+uses attested lookup forms and never invents a verb from an arbitrary suffix.
 """
 import functools
 import gzip
 import json
 from pathlib import Path
-import itertools
 import unicodedata
+from spanish_dictionary import correction as dictionary_correction, PRONOUN_LEMMAS, CLITICS
 
 
 def key(text):
@@ -181,23 +180,14 @@ def spanish_future_correction(token):
     return None
 
 
-PRONOUN_LEMMAS = {"me": "yo", "nos": "yo", "te": "tú", "os": "tú",
-                  "se": "él", "lo": "él", "la": "él", "los": "él", "las": "él", "le": "él", "les": "él"}
-# RAE order: se, second person, first person, third person; up to three clitics.
-CLITIC_GROUPS = [("se",), ("te", "os"), ("me", "nos"), ("lo", "la", "los", "las", "le", "les")]
-CLITICS = sorted([parts for size in (1, 2, 3) for groups in itertools.combinations(CLITIC_GROUPS, size)
-                  for parts in itertools.product(*groups)], key=lambda parts: -sum(map(len, parts)))
 ACUTES = str.maketrans("áéíóú", "aeiou")
-SHORT_IMPERATIVES = {"da", "de", "di", "haz", "pon", "sal", "ten", "ven", "ve", "se", "id"}
-# Restrict noun gender grouping to unambiguous animate pairs. The raw lookup also
-# maps música/líneas/política to adjective stems, which would damage noun counts.
-ANIMATE_GENDER_HEADWORDS = {"adulto", "niño", "muchacho", "chico", "amigo", "alumno", "maestro", "abuelo",
-                           "hermano", "primo", "tío", "novio", "esposo", "vecino", "compañero", "anciano"}
 
 
 def enclitic_correction(token):
     word = key(token.text)
     if not word.endswith(tuple(PRONOUN_LEMMAS)):
+        return None
+    if token.pos_ == "PROPN" and word == word.translate(ACUTES):
         return None
     verbs, infinitives, nouns = verb_data()
     lemma = key(token.lemma_ or token.text)
@@ -218,17 +208,16 @@ def enclitic_correction(token):
             variants.append(plain + "s")
         if parts[0] == "os" and plain.endswith(("a", "e", "i")):
             variants.append(plain + "d")
-        if plain == "de":
-            variants.append("dé")
-        if plain == "se":
-            variants.append("sé")
+        for index, char in enumerate(plain):
+            if char in "aeiou":
+                variants.append(plain[:index] + char.translate(str.maketrans("aeiou", "áéíóú")) + plain[index + 1:])
         for base in dict.fromkeys(variants):
             headword = base if base in infinitives else verbs.get(base)
             if not headword:
                 continue
             nonfinite = base in infinitives or base.endswith(("ando", "iendo", "yendo"))
             clause_start = token.i == 0 or getattr(token.doc[token.i - 1], "is_punct", False)
-            imperative = clause_start and (plain in SHORT_IMPERATIVES or parts[0] == "os" and base.endswith("d"))
+            imperative = clause_start and base.endswith(("a", "e", "á", "é", "ad", "ed", "id"))
             # Recover misclassified forms only with strong spelling evidence.
             if token.pos_ not in {"VERB", "AUX"} and not nonfinite and not (
                 token.pos_ in {"NOUN", "ADJ", "PROPN"} and any(char in word for char in "áéíóú")
@@ -249,6 +238,11 @@ def enclitic_correction(token):
 
 
 def spanish_correction(token):
+    tagged = dictionary_correction(token)
+    if tagged:
+        return tagged
+    if token.pos_ not in {"VERB", "AUX", "NOUN", "ADJ", "PROPN"}:
+        return None
     correction = spanish_future_correction(token) or enclitic_correction(token)
     if correction:
         return correction
@@ -258,10 +252,9 @@ def spanish_correction(token):
         verbs, infinitives, _ = verb_data()
         attested = verbs.get(word)
         if attested:
-            ambiguous = {"fui", "fuiste", "fue", "fuimos", "fuisteis", "fueron", "di", "sé"}
-            if word in ambiguous:
-                candidates = ["ir", "ser"] if word.startswith("fu") else ["dar", "decir"] if word == "di" else ["saber", "ser"]
-                return {"lemma": lemma if lemma in candidates else attested, "lemmaCandidates": candidates,
+            # The untagged fallback cannot disambiguate two attested infinitives.
+            if lemma in infinitives and lemma != attested:
+                return {"lemma": lemma, "lemmaCandidates": sorted({lemma, attested}),
                         "lemmaUncertain": True, "lemmaSource": "Spanish verb paradigm"}
             past = "Tense=Past" in str(token.morph) or word.endswith(("é", "aste", "ó", "asteis", "aron", "í", "iste", "ió", "isteis", "ieron"))
             if lemma not in infinitives or past:
@@ -274,8 +267,8 @@ def spanish_correction(token):
         attested = participle_index().get(word)
         if attested:
             return {"lemma": attested, "modelLemma": lemma, "lemmaSource": "Spanish participle grouped with its verb"}
-    if token.pos_ in {"NOUN", "ADJ"}:
+    if token.pos_ == "ADJ":
         attested = gender_index().get(word)
-        if attested and (token.pos_ == "ADJ" or attested in ANIMATE_GENDER_HEADWORDS):
+        if attested:
             return {"lemma": attested, "modelLemma": lemma, "lemmaSource": "Spanish gender inflection"}
     return None

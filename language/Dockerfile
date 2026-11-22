@@ -9,8 +9,11 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && python -m spacy download pt_core_news_sm
 COPY install_models.py ./
 RUN python install_models.py && useradd --system --uid 10001 --create-home langy
+COPY prepare_spanish_lexicon.py spanish-lexicon-sources.json ./
+RUN python prepare_spanish_lexicon.py /opt/models/spanish-morphology
 COPY app.py ./
 COPY spanish_morphology.py ./
+COPY spanish_dictionary.py spanish_lexicon.py ./
 COPY book_alignment.py ./
 USER langy
 EXPOSE 8000
