@@ -129,7 +129,7 @@ app.get('/api/library', async (req, res) => {
     progress: demo ? null : progressSync.snapshot(),
     storage: await library.storage(req.visitor),
     archive: { available: !demo, hasKey: archive.settings().hasKey, job: demo ? null : archive.latest() },
-    vocabulary: { byLanguage: reader.byLanguage, likelyKnown: reader.knownByLanguage, threshold: reader.threshold },
+    vocabulary: { byLanguage: reader.byLanguage, likelyKnown: reader.knownByLanguage, threshold: reader.threshold, reading: reader.reading },
     books: books.map((book) => ({ ...book, familiarity: learning.vocabulary.familiarity(book, reader) })),
   });
 });

@@ -472,10 +472,15 @@ async function route() {
   }
   const match = /^#read\/([a-z0-9-]+)$/i.exec(location.hash);
   if (!match) {
+    const returning = Boolean(activeBook);
     if (activeBook) closeReader();
     showScreen('library');
     document.title = 'Langy Reader';
     library.render();
+    if (returning) {
+      await vocabulary.flush();
+      await library.refresh().catch((error) => message('#library-error', error.message));
+    }
     return;
   }
   const book = library.state.books.find(({ id }) => id === match[1]);

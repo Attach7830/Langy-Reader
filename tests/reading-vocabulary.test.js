@@ -62,6 +62,20 @@ test('reading records only visible source ranges with audio disabled, queues fai
   await delay(30); assert.equal(posts.length, 2, 'leaving the book cancels a late capture');
 });
 
+test('returning to the library can await an existing reading save before refreshing totals', async (t) => {
+  const dom = new JSDOM('<div></div>', { url: 'https://langy.test' }); globals(t, dom);
+  localStorage.setItem('langy-reading-exposures-v1', JSON.stringify([{ id: 'book', body: { key: 'epub:0', digest: 'text', ranges: [{ from: 0, to: 4 }], session: 'one' } }]));
+  let release, calls = 0, finished = false;
+  const held = new Promise((resolve) => { release = resolve; });
+  const vocabulary = readingVocabulary({ book: () => null, renderer: () => null, async request() { calls++; await held; return { saved: true }; } });
+  t.after(() => vocabulary.destroy());
+  await until(() => calls === 1);
+  const saving = vocabulary.flush(); saving.then(() => { finished = true; });
+  assert.equal(saving, vocabulary.flush()); await delay(10); assert.equal(finished, false);
+  release(); await saving;
+  assert.deepEqual(JSON.parse(localStorage.getItem('langy-reading-exposures-v1')), []); assert.equal(calls, 1);
+});
+
 test('the vocabulary view keeps language totals separate, filters and paginates entries, and renders book text safely', async (t) => {
   const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
   const dom = new JSDOM(html, { url: 'https://langy.test' }); globals(t, dom);

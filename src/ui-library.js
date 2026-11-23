@@ -4,7 +4,7 @@ import { parseLanguage } from './languages.js';
 import { refreshStorage, showStorage } from './storage.js';
 import { audioTools, audioChanged } from './ui-audio-tools.js';
 import { bookLanguagePicker } from './book-languages.js';
-import { vocabularyLibrary, unfamiliarLabel, recommendationRows } from './ui-vocabulary.js';
+import { vocabularyLibrary, unfamiliarLabel, recommendationRows, bookCountLabel } from './ui-vocabulary.js';
 import { bookVocabulary } from './ui-book-vocabulary.js';
 import { bookMetadataFields } from './book-metadata-fields.js';
 
@@ -103,6 +103,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
     card.append(link);
     const analysis = book.learning;
     const detail = element('div', 'book-learning');
+    detail.append(element('span', 'book-meta book-word-count', bookCountLabel(analysis?.counts)
+      || (analysis?.state === 'error' ? 'Word count unavailable' : 'Counting words…')));
     const count = analysis?.vocabulary?.count ?? analysis?.lemmaCount;
     const vocabulary = vocabularyLabel(analysis?.vocabulary) || (count == null ? '' : `${count.toLocaleString()} ${analysis.vocabulary?.unit === 'characters' ? 'Han characters' : analysis.method === 'word forms' ? 'word forms' : 'lemmas'}`);
     const estimate = analysis?.reading?.band ? `Est. ${analysis.reading.band}` : '';
@@ -244,6 +246,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
         return item;
       }));
       const vocabulary = analysis.vocabulary;
+      $('#learning-word-count').textContent = bookCountLabel(analysis.counts) || (analysis.state === 'error' ? 'Word count unavailable' : 'Counting words…');
       $('#learning-stats').textContent = vocabulary?.byLanguage?.length
         ? vocabularyLabel(vocabulary)
         : analysis.lemmaCount == null ? `Analysis ${analysis.state}…`
@@ -323,6 +326,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
     $('#similar-books').replaceChildren();
     $('#learning-title').textContent = book.title;
     $('#learning-stats').textContent = 'Loading analysis…';
+    $('#learning-word-count').textContent = 'Counting words…';
     $('#learning-estimate').textContent = '';
     $('#retry-reading-estimate').disabled = true;
     $('#learning-reason').textContent = '';

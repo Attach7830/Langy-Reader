@@ -197,7 +197,7 @@ export async function openLearning(dir, library, demo, ai) {
     const count = row.lemmas ? JSON.parse(row.lemmas).length : null;
     if (row.state === 'ready' && !estimates.status(book)) estimates.queue(book);
     const reading = estimates.status(book);
-    return { state: row.state, lemmaCount: count, wordCount: row.wordCount, reading, method: row.method, error: row.error,
+    return { state: row.state, lemmaCount: count, wordCount: row.wordCount, counts: vocabulary.bookCounts(book), reading, method: row.method, error: row.error,
       vocabulary: row.metrics ? JSON.parse(row.metrics) : null };
   }
 

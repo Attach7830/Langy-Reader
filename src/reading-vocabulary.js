@@ -18,12 +18,12 @@ export function readingVocabulary({ book, renderer, request, dwell = 1500 }) {
   if (!Array.isArray(pending)) pending = [];
   pending = pending.filter((entry) => typeof entry?.id === 'string' && entry.body && Array.isArray(entry.body.ranges)).slice(-200);
   const chapters = new Map(), recorded = new Set();
-  let epoch = 0, timer, retry, flushing = false, session, sessionBook;
+  let epoch = 0, timer, retry, flushing, session, sessionBook;
   const persist = () => { try { localStorage.setItem(storageKey, JSON.stringify(pending)); } catch { /* Reading stays available if browser storage is full. */ } };
-  async function flush() {
-    if (flushing || !pending.length) return;
-    flushing = true;
-    try {
+  function flush() {
+    if (flushing) return flushing;
+    if (!pending.length) return Promise.resolve();
+    flushing = Promise.resolve().then(async () => {
       while (pending.length) {
         const entry = pending[0];
         try { await request(`/api/books/${encodeURIComponent(entry.id)}/vocabulary/seen`, { method: 'POST', body: entry.body }); }
@@ -34,7 +34,8 @@ export function readingVocabulary({ book, renderer, request, dwell = 1500 }) {
         if (index >= 0) pending.splice(index, 1);
         persist();
       }
-    } finally { flushing = false; }
+    }).finally(() => { flushing = undefined; });
+    return flushing;
   }
   async function capture(version) {
     const current = book(), currentRenderer = renderer();

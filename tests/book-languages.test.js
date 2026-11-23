@@ -40,6 +40,7 @@ async function fixture(t) {
 test('saved book languages override incorrect tags, rebuild existing analysis and reclassify seen terms without reupload', async (t) => {
   const f = await fixture(t);
   const original = await f.ready();
+  assert.ok(original.counts.words > 0); assert.equal(original.counts.characters, 6);
   assert.deepEqual(original.vocabulary.languages.sort(), ['de', 'jv', 'zh']);
   const unit = f.learning.unit(f.library.getBook('mixed'), 'epub:0');
   f.learning.vocabulary.record(f.library.getBook('mixed'), { key: unit.key, digest: unit.textHash, ranges: [{ from: 0, to: unit.text.length }] });

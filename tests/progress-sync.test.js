@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { once } from 'node:events';
 import { mkdtemp, open, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -272,11 +273,46 @@ test('read status requires login, preserves the bookmark and waits for analysis 
   await response(base, path, { method: 'PATCH', headers: json, body: '{"read":"true"}', status: 422 });
   await response(base, '/api/books/not-visible/read-status', { method: 'PATCH', headers: json, body: '{"read":true}', status: 404 });
   assert.deepEqual(await response(base, '/api/books/sync-book/progress', { headers: json }), progress);
-  assert.deepEqual(await response(base, '/api/vocabulary', { headers: json }), vocabulary);
+  assert.deepEqual(await response(base, '/api/vocabulary', { headers: json }), { ...vocabulary, reading: { ...vocabulary.reading, pendingBooks: 1 } });
   base = await f.start();
   assert.equal((await response(base, '/api/library', { headers: json })).books.find((book) => book.id === 'sync-book').readAt, marked.readAt);
   assert.equal((await response(base, path, { method: 'PATCH', headers: json, body: '{"read":false}' })).readAt, null);
   assert.equal(f.library.getBook('sync-book').readAt, null);
+  assert.equal((await response(base, '/api/vocabulary', { headers: json })).reading.pendingBooks, 0);
+});
+
+test('authenticated book word counts and reading totals persist across saved views, completion changes and server restarts', async (t) => {
+  const f = await fixture(t); let base = await f.start();
+  const db = new DatabaseSync(join(f.folder, 'learning.sqlite')); t.after(() => db.close());
+  const text = 'Ana lee libros 2026 中文', digest = createHash('sha256').update(text).digest('hex');
+  const words = ['Ana', 'lee', 'libros', '中', '文'];
+  const tokens = words.map((word) => ({ word, lemma: word === 'lee' ? 'leer' : word === 'libros' ? 'libro' : word,
+    language: ['中', '文'].includes(word) ? 'zh' : 'es', properName: word === 'Ana', from: text.indexOf(word), to: text.indexOf(word) + word.length }));
+  const lemmas = JSON.stringify(['es:leer', 'es:libro']);
+  const metrics = JSON.stringify({ characters: { inventory: '中文', total: 2, unique: 2 }, byLanguage: [
+    { language: 'es', unit: 'lemmas', count: 2, total: 3 }, { language: 'zh', unit: 'characters', count: 2, total: 2 },
+  ] });
+  db.prepare(`INSERT INTO analyses(book,owner,language,state,lemmas,wordCount,method,metrics,languageSelection)
+    VALUES(?,?,?,'ready',?,3,'contextual',?,'[]')`).run('sync-book', '', 'es', lemmas, metrics);
+  db.prepare(`INSERT INTO chapters(book,key,ordinal,title,text,digest,tokens,lemmas,markers,languages)
+    VALUES(?,?,0,?,?,?,?,?,'[]',?)`).run('sync-book', 'epub:0', 'Test chapter', text, digest, JSON.stringify(tokens), lemmas,
+      JSON.stringify([{ from: 0, to: text.indexOf('中'), language: 'es' }, { from: text.indexOf('中'), to: text.length, language: 'zh' }]));
+  const snapshot = () => response(base, '/api/library', { headers: json });
+  assert.deepEqual((await snapshot()).books.find((book) => book.id === 'sync-book').learning.counts, { words: 4, characters: 2 });
+  async function seen(from, to) {
+    await response(base, '/api/books/sync-book/vocabulary/seen', { method: 'POST', headers: json,
+      body: JSON.stringify({ key: 'epub:0', digest, session: 'one', ranges: [{ from, to }] }) });
+  }
+  await seen(0, 3); await seen(0, 3);
+  assert.equal((await snapshot()).vocabulary.reading.words, 1, 'viewed proper names count once even when omitted from the lemma catalogue');
+  await response(base, '/api/books/sync-book/read-status', { method: 'PATCH', headers: json, body: '{"read":true}' });
+  let reading = (await snapshot()).vocabulary.reading;
+  assert.equal(reading.words, 4); assert.equal(reading.characters, 2); assert.equal(reading.completedWords, 3);
+  await seen(text.indexOf('2026'), text.indexOf('2026') + 4);
+  reading = (await snapshot()).vocabulary.reading; assert.equal(reading.words, 4); assert.equal(reading.trackedWords, 2);
+  await response(base, '/api/books/sync-book/read-status', { method: 'PATCH', headers: json, body: '{"read":false}' });
+  assert.equal((await snapshot()).vocabulary.reading.words, 2);
+  base = await f.start(); assert.equal((await snapshot()).vocabulary.reading.words, 2);
 });
 
 test('demo mode never exposes shared progress, external audio imports, chapter uploads or rescans', async (t) => {

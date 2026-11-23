@@ -404,6 +404,7 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 .settings-fields { display: grid; gap: 14px; }
 .book-learning { display: flex; align-items: center; flex-wrap: wrap; gap: 3px 8px; margin-top: 7px; }
 .book-learning .button { min-height: 28px; padding: 3px 5px; font-size: 12px; }
+.book-word-count { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; }
 .learning-chapter { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .learning-chapter strong { font-size: 14px; }
 .narration-player { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 5px 0; }
@@ -542,6 +543,9 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 .book-language-list { display: flex; flex-wrap: wrap; gap: .5rem; }
 .vocabulary-overview { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
 .vocabulary-overview p { margin: 0; }
+.reading-overview { margin-bottom: 12px; }
+.reading-overview strong { font-size: 14px; }
+.reading-overview p { margin: 3px 0 0; }
 .table-scroll { overflow-x: auto; }
 .recommendation-row { display: grid; gap: .3rem; padding: .75rem 0; border-bottom: 1px solid var(--border); }
 #learning-vocabulary { overflow-x: auto; }

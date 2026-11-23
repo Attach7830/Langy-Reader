@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { RequestError } from './books.js';
 import { baseLanguage, hanPattern } from '../shared/language.js';
+import { readingUnits, countReadingUnits, mergeReadingRanges } from './reading-counts.js';
 
 const identity = (language, unit, term) => JSON.stringify([language, unit, term]);
 const ownerOf = (visitor) => visitor?.id || '';
@@ -9,6 +10,7 @@ export const defaultKnownThreshold = 20;
 export function readerVocabulary(db, { completedBooks = null } = {}) {
   const backfill = !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='vocabulary_occurrences'").get();
   const completionUpgrade = !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='vocabulary_completions'").get();
+  let readingUpgrade = !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='reading_coverage'").get();
   db.exec(`CREATE TABLE IF NOT EXISTS reading_exposures (
     owner TEXT NOT NULL, book TEXT NOT NULL, chapter TEXT NOT NULL, page TEXT NOT NULL,
     digest TEXT NOT NULL, ranges TEXT NOT NULL, firstSeen INTEGER NOT NULL, lastSeen INTEGER NOT NULL, expires INTEGER,
@@ -37,6 +39,18 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
     occurrences INTEGER NOT NULL, readAt INTEGER NOT NULL, expires INTEGER,
     PRIMARY KEY(owner,book,language,unit,term)
   ) STRICT;
+  CREATE TABLE IF NOT EXISTS reading_coverage (
+    owner TEXT NOT NULL, book TEXT NOT NULL, chapter TEXT NOT NULL, digest TEXT NOT NULL,
+    scope INTEGER NOT NULL CHECK(scope IN (0,1)), session TEXT NOT NULL, ranges TEXT NOT NULL,
+    words INTEGER NOT NULL, characters INTEGER NOT NULL, expires INTEGER,
+    PRIMARY KEY(owner,book,chapter,digest,scope,session)
+  ) STRICT;
+  CREATE TABLE IF NOT EXISTS reading_book_counts (
+    book TEXT PRIMARY KEY REFERENCES analyses(book) ON DELETE CASCADE,
+    signature TEXT NOT NULL, words INTEGER NOT NULL, characters INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX IF NOT EXISTS reading_coverage_owner ON reading_coverage(owner,scope,book);
+  CREATE INDEX IF NOT EXISTS reading_coverage_expiry ON reading_coverage(expires);
   CREATE INDEX IF NOT EXISTS occurrence_owner_term ON vocabulary_occurrences(owner,language,unit,term);
   CREATE INDEX IF NOT EXISTS occurrence_expiry ON vocabulary_occurrences(expires);
   CREATE INDEX IF NOT EXISTS vocabulary_owner ON vocabulary_seen(owner,language,unit,term);
@@ -48,7 +62,10 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
   if (!db.prepare('PRAGMA table_info(reading_exposures)').all().some(({ name }) => name === 'session')) {
     db.exec("ALTER TABLE reading_exposures ADD COLUMN session TEXT NOT NULL DEFAULT 'legacy'");
   }
-  const inventories = new Map(), completionSources = new Map();
+  for (const name of ['words', 'characters']) if (!db.prepare('PRAGMA table_info(vocabulary_completions)').all().some((column) => column.name === name)) {
+    db.exec(`ALTER TABLE vocabulary_completions ADD COLUMN ${name} INTEGER NOT NULL DEFAULT 0`); readingUpgrade = true;
+  }
+  const inventories = new Map(), completionSources = new Map(), readingSources = new WeakMap();
   function inventory(book) {
     const row = db.prepare('SELECT state,metrics,lemmas FROM analyses WHERE book=?').get(book.id);
     if (row?.state !== 'ready' || !row.metrics) return null;
@@ -73,6 +90,7 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
     db.prepare('DELETE FROM vocabulary_preferences WHERE expires<=?').run(Date.now());
     db.prepare('DELETE FROM vocabulary_completions WHERE expires<=?').run(Date.now());
     db.prepare('DELETE FROM vocabulary_completed_terms WHERE expires<=?').run(Date.now());
+    db.prepare('DELETE FROM reading_coverage WHERE expires<=?').run(Date.now());
   }
   function preferences(visitor) {
     return { threshold: db.prepare('SELECT threshold FROM vocabulary_preferences WHERE owner=? AND (expires IS NULL OR expires>?)')
@@ -123,7 +141,7 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
   }
   function profile(visitor) {
     prune(); syncCompletions(visitor);
-    return summarize(exposureRows(visitor), preferences(visitor).threshold);
+    return { ...summarize(exposureRows(visitor), preferences(visitor).threshold), reading: readingTotals(visitor) };
   }
   function familiarity(book, reader) {
     const groups = inventory(book);
@@ -180,12 +198,39 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
     if (completionSources.size > 100) completionSources.delete(completionSources.keys().next().value);
     return result;
   }
+  function bookCounts(book, signature = completionSignature(book)) {
+    if (signature === 'pending') return null;
+    const saved = db.prepare('SELECT signature,words,characters FROM reading_book_counts WHERE book=?').get(book.id);
+    if (saved?.signature === signature) return { words: saved.words, characters: saved.characters };
+    const counts = { words: 0, characters: 0 };
+    for (const section of db.prepare('SELECT * FROM chapters WHERE book=?').all(book.id)) {
+      const total = countReadingUnits(readingUnits(section, book.language));
+      counts.words += total.words; counts.characters += total.characters;
+    }
+    db.prepare(`INSERT INTO reading_book_counts VALUES(?,?,?,?) ON CONFLICT(book)
+      DO UPDATE SET signature=excluded.signature,words=excluded.words,characters=excluded.characters`)
+      .run(book.id, signature, counts.words, counts.characters);
+    return counts;
+  }
+  function readingTotals(visitor) {
+    const owner = ownerOf(visitor);
+    const tracked = db.prepare('SELECT coalesce(sum(words),0) AS words,coalesce(sum(characters),0) AS characters FROM reading_coverage WHERE owner=? AND scope=1').get(owner);
+    const completed = db.prepare(`WITH covered AS (
+      SELECT book,sum(words) AS words,sum(characters) AS characters FROM reading_coverage WHERE owner=? AND scope=0 GROUP BY book
+    ) SELECT coalesce(sum(max(c.words-coalesce(r.words,0),0)),0) AS words,
+      coalesce(sum(max(c.characters-coalesce(r.characters,0),0)),0) AS characters
+      FROM vocabulary_completions c LEFT JOIN covered r USING(book) WHERE c.owner=?`).get(owner, owner);
+    const pendingBooks = db.prepare("SELECT count(*) AS n FROM vocabulary_completions WHERE owner=? AND signature='pending'").get(owner).n;
+    return { words: tracked.words + completed.words, characters: tracked.characters + completed.characters,
+      trackedWords: tracked.words, completedWords: completed.words, trackedCharacters: tracked.characters, completedCharacters: completed.characters, pendingBooks };
+  }
   function saveCompletion(book, completion, signature = completionSignature(book)) {
     const source = completionSource(book, signature);
+    const counts = bookCounts(book, signature) || { words: 0, characters: 0 };
     db.prepare('DELETE FROM vocabulary_completed_terms WHERE owner=? AND book=?').run(completion.owner, book.id);
-    db.prepare(`INSERT INTO vocabulary_completions VALUES(?,?,?,?,?) ON CONFLICT(owner,book)
-      DO UPDATE SET readAt=excluded.readAt,signature=excluded.signature,expires=excluded.expires`)
-      .run(completion.owner, book.id, completion.readAt, source.signature, completion.expires);
+    db.prepare(`INSERT INTO vocabulary_completions(owner,book,readAt,signature,expires,words,characters) VALUES(?,?,?,?,?,?,?) ON CONFLICT(owner,book)
+      DO UPDATE SET readAt=excluded.readAt,signature=excluded.signature,expires=excluded.expires,words=excluded.words,characters=excluded.characters`)
+      .run(completion.owner, book.id, completion.readAt, source.signature, completion.expires, counts.words, counts.characters);
     const insert = db.prepare('INSERT INTO vocabulary_completed_terms VALUES(?,?,?,?,?,?,?,?)');
     for (const item of source.counts) insert.run(completion.owner, book.id, item.language, item.unit, item.term, item.occurrences, completion.readAt, completion.expires);
   }
@@ -211,6 +256,20 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
   function apply(exposure, section, groups) {
     if (!section || section.digest !== exposure.digest) return;
     const ranges = JSON.parse(exposure.ranges), terms = new Map();
+    const units = readingSources.get(section) || readingUnits(section);
+    readingSources.set(section, units);
+    // Scope 1 deduplicates each reading session; scope 0 measures covered text
+    // across sessions so marking read fills only the untracked part of a book.
+    for (const scope of [0, 1]) {
+      const session = scope ? exposure.session || 'legacy' : '';
+      const previous = db.prepare('SELECT ranges FROM reading_coverage WHERE owner=? AND book=? AND chapter=? AND digest=? AND scope=? AND session=?')
+        .get(exposure.owner, exposure.book, exposure.chapter, exposure.digest, scope, session);
+      const merged = mergeReadingRanges([...JSON.parse(previous?.ranges || '[]'), ...ranges]);
+      const counts = countReadingUnits(units, merged);
+      db.prepare(`INSERT INTO reading_coverage VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner,book,chapter,digest,scope,session)
+        DO UPDATE SET ranges=excluded.ranges,words=excluded.words,characters=excluded.characters,expires=excluded.expires`)
+        .run(exposure.owner, exposure.book, exposure.chapter, exposure.digest, scope, session, JSON.stringify(merged), counts.words, counts.characters, exposure.expires);
+    }
     const occurrence = db.prepare(`INSERT INTO vocabulary_occurrences VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(owner,book,chapter,digest,session,language,unit,term,fromOffset,toOffset)
       DO UPDATE SET firstSeen=min(firstSeen,excluded.firstSeen),lastSeen=max(lastSeen,excluded.lastSeen),expires=excluded.expires`);
@@ -232,7 +291,7 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
     if (typeof session !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/u.test(session)) throw new RequestError(422, 'Choose a valid reading session.');
     const groups = inventory(book);
     if (!groups) throw new RequestError(409, 'Wait for this book to finish analysis.');
-    const section = db.prepare('SELECT text,digest,tokens FROM chapters WHERE book=? AND key=?').get(book.id, body.key);
+    const section = db.prepare('SELECT * FROM chapters WHERE book=? AND key=?').get(book.id, body.key);
     if (!section || section.digest !== body.digest) throw new RequestError(409, 'The book text changed. Reload this page.');
     if (!Array.isArray(body.ranges) || !body.ranges.length || body.ranges.length > 1000 || body.ranges.some((range) =>
       !Number.isInteger(range?.from) || !Number.isInteger(range?.to) || range.from < 0 || range.to <= range.from || range.to > section.text.length)
@@ -257,13 +316,15 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
   function reindex(book) {
     inventories.delete(book.id);
     completionSources.delete(book.id);
+    db.prepare('DELETE FROM reading_book_counts WHERE book=?').run(book.id);
     const groups = inventory(book);
     if (!groups) return;
-    const sections = new Map(db.prepare('SELECT key,digest,tokens FROM chapters WHERE book=?').all(book.id).map((section) => [section.key, section]));
+    const sections = new Map(db.prepare('SELECT * FROM chapters WHERE book=?').all(book.id).map((section) => [section.key, section]));
     db.exec('BEGIN');
     try {
       db.prepare('DELETE FROM vocabulary_seen WHERE book=?').run(book.id);
       db.prepare('DELETE FROM vocabulary_occurrences WHERE book=?').run(book.id);
+      db.prepare('DELETE FROM reading_coverage WHERE book=?').run(book.id);
       for (const exposure of db.prepare('SELECT * FROM reading_exposures WHERE book=? AND (expires IS NULL OR expires>?)').all(book.id, Date.now())) apply(exposure, sections.get(exposure.chapter), groups);
       for (const completion of db.prepare('SELECT * FROM vocabulary_completions WHERE book=? AND (expires IS NULL OR expires>?)').all(book.id, Date.now())) saveCompletion(book, completion);
       db.exec('COMMIT');
@@ -279,7 +340,7 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
       .sort((a, b) => b.lastSeen - a.lastSeen || a.language.localeCompare(b.language) || a.unit.localeCompare(b.unit) || a.term.localeCompare(b.term));
     const total = matches.length;
     const entries = matches.slice(offset, offset + 100).map((item) => ({ ...item, likelyKnown: item.exposures >= reader.threshold }));
-    return { byLanguage: reader.byLanguage, likelyKnown: reader.knownByLanguage, threshold: reader.threshold, entries, total, offset, more: offset + entries.length < total };
+    return { byLanguage: reader.byLanguage, likelyKnown: reader.knownByLanguage, threshold: reader.threshold, reading: readingTotals(visitor), entries, total, offset, more: offset + entries.length < total };
   }
   function bookTerms(book) {
     const signature = completionSignature(book);
@@ -336,6 +397,6 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
         score: byLanguage.reduce((sum, item) => sum + item.similarity, 0) / byLanguage.length };
     }).filter(Boolean).sort((a, b) => b.score - a.score || b.familiarity.score - a.familiarity.score || a.title.localeCompare(b.title)).slice(0, 8);
   }
-  if (backfill || completionUpgrade) for (const row of db.prepare('SELECT DISTINCT book AS id FROM reading_exposures').all()) reindex(row);
-  return { profile, familiarity, section, record, reindex, catalogue, recommendations, preferences, savePreferences, syncCompletions, belowThreshold, term };
+  if (backfill || completionUpgrade || readingUpgrade) for (const row of db.prepare('SELECT book AS id FROM reading_exposures UNION SELECT book AS id FROM vocabulary_completions').all()) reindex(row);
+  return { profile, familiarity, section, record, reindex, catalogue, recommendations, preferences, savePreferences, syncCompletions, belowThreshold, term, bookCounts };
 }

@@ -43,6 +43,54 @@ function fixture(t) {
   return { db, vocabulary, book, record, mark, completedBooks };
 }
 
+test('book word counts and total reading include names, numbers and occurrences without conflating vocabulary or Mandarin', (t) => {
+  const f = fixture(t), source = f.book('counts', 'Counts', 'María lee libros libros 2026 中文', [
+    ['María', 'maría', 'es', true], ['lee', 'leer', 'es'], ['libros', 'libro', 'es'], ['libros', 'libro', 'es'], ['中文', '中文', 'zh'],
+  ]);
+  assert.deepEqual(f.vocabulary.bookCounts(source), { words: 5, characters: 2 });
+  f.record(source, ['María', 'lee', '中文'], undefined, 'one');
+  let reading = f.vocabulary.profile().reading;
+  assert.equal(reading.words, 2); assert.equal(reading.characters, 2);
+  assert.equal(f.vocabulary.catalogue().byLanguage.find((row) => row.language === 'es').count, 1, 'names affect word totals but not lemma inventories');
+  f.record(source, ['María', 'lee'], undefined, 'one');
+  assert.equal(f.vocabulary.profile().reading.words, 2, 'same-session overlapping views count once');
+  f.mark(source); reading = f.vocabulary.profile().reading;
+  assert.equal(reading.words, 5); assert.equal(reading.trackedWords, 2); assert.equal(reading.completedWords, 3);
+  assert.equal(reading.characters, 2); assert.equal(reading.completedCharacters, 0);
+  f.record(source, ['María'], undefined, 'two');
+  assert.equal(f.vocabulary.profile().reading.words, 6, 'rereading adds a new session while completion fills only uncovered text');
+  f.mark(source, false); assert.equal(f.vocabulary.profile().reading.words, 3);
+  const reopened = readerVocabulary(f.db, { completedBooks: f.completedBooks });
+  assert.equal(reopened.profile().reading.words, 3); assert.deepEqual(reopened.bookCounts(source), { words: 5, characters: 2 });
+  f.mark(source); assert.equal(reopened.profile().reading.words, 6);
+  reopened.reindex(source); assert.equal(reopened.profile().reading.words, 6, 'reanalyzing does not inflate read totals');
+});
+
+test('reading totals backfill saved ranges and already completed books after upgrade without a new upload', (t) => {
+  const f = fixture(t), tracked = f.book('tracked-counts', 'Tracked', 'Ana lee libros 20', [['Ana', 'ana', 'es', true], ['lee', 'leer', 'es'], ['libros', 'libro', 'es']]);
+  const completed = f.book('completed-counts', 'Completed', 'Luis lee 中文', [['Luis', 'luis', 'es', true], ['lee', 'leer', 'es'], ['中文', '中文', 'zh']]);
+  f.record(tracked, ['Ana', 'lee'], undefined, 'one'); f.mark(completed); f.vocabulary.profile();
+  f.db.exec('DROP TABLE reading_coverage; DROP TABLE reading_book_counts; ALTER TABLE vocabulary_completions DROP COLUMN words; ALTER TABLE vocabulary_completions DROP COLUMN characters;');
+  const migrated = readerVocabulary(f.db, { completedBooks: f.completedBooks }), reading = migrated.profile().reading;
+  assert.equal(reading.words, 4); assert.equal(reading.characters, 2);
+  assert.equal(reading.trackedWords, 2); assert.equal(reading.completedWords, 2);
+  assert.deepEqual(migrated.bookCounts(tracked), { words: 4, characters: 0 });
+});
+
+test('pending book counts wait for analysis, and reader totals remain private and expire with demo sessions', (t) => {
+  const f = fixture(t), source = f.book('private-counts', 'Private', 'Ana lee 中文', [['Ana', 'ana', 'es', true], ['lee', 'leer', 'es'], ['中文', '中文', 'zh']]);
+  const a = { id: 'reader-a', expires: Date.now() + 60000 }, b = { id: 'reader-b', expires: Date.now() + 60000 };
+  f.db.prepare("UPDATE analyses SET state='queued' WHERE book=?").run(source.id); f.mark(source, true, a);
+  assert.equal(f.vocabulary.bookCounts(source), null); assert.equal(f.vocabulary.profile(a).reading.pendingBooks, 1);
+  assert.equal(f.vocabulary.profile(a).reading.words, 0);
+  f.db.prepare("UPDATE analyses SET state='ready' WHERE book=?").run(source.id); f.vocabulary.reindex(source);
+  assert.equal(f.vocabulary.profile(a).reading.words, 2); assert.equal(f.vocabulary.profile(b).reading.words, 0);
+  f.record(source, ['Ana'], b, 'one'); assert.equal(f.vocabulary.profile(b).reading.words, 1);
+  f.db.prepare('UPDATE reading_coverage SET expires=1 WHERE owner=?').run(b.id);
+  assert.equal(f.vocabulary.profile(b).reading.words, 0);
+  f.mark(source, true, { ...a, expires: 1 }); assert.equal(f.vocabulary.profile(a).reading.words, 0);
+});
+
 test('only displayed words enter the catalogue; inflections merge and language/character inventories remain separate', (t) => {
   const f = fixture(t);
   const spanish = f.book('mixed', 'Mixed', 'Hablo hablaron libros pie 中文书 Teresa', [

@@ -63,6 +63,7 @@
         <select id="book-status-filter" aria-label="Reading status"><option value="">All books</option><option value="unread">Unread</option><option value="read">Read</option></select>
         <span class="muted" id="book-count"></span>
       </div>
+      <div class="reading-overview"><strong id="reading-summary">Total words read: 0</strong><p class="field-note" id="reading-detail"></p></div>
       <div class="vocabulary-overview"><div><p class="field-note" id="vocabulary-summary"></p><p class="field-note" id="vocabulary-known-summary"></p></div><button class="button secondary small" id="open-vocabulary" type="button">Vocabulary</button></div>
       <div id="books" class="book-grid"></div>
       <p class="field-note" id="archive-import-status" role="status" hidden></p>
@@ -419,6 +420,7 @@
     <header class="modal-header"><h2 id="learning-title">Book analysis</h2><button class="icon-button" type="button" data-close aria-label="Close book analysis"><i data-lucide="x"></i></button></header>
     <div class="modal-body">
       <p id="learning-stats"></p>
+      <p id="learning-word-count" class="field-note"></p>
       <button class="button quiet small" id="edit-book-languages" type="button">Set book languages</button>
       <div id="learning-vocabulary"></div>
       <button class="button secondary small" id="open-book-vocabulary" type="button" disabled>Words below threshold</button>

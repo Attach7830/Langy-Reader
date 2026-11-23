@@ -2,6 +2,8 @@ import { $, api, element, message } from './ui.js';
 import { languageName } from './settings.js';
 
 const language = (code) => code === 'zh' ? 'Mandarin' : languageName(code);
+export const bookCountLabel = (counts) => counts ? [counts.words || !counts.characters ? `${counts.words.toLocaleString()} words` : '',
+  counts.characters ? `${counts.characters.toLocaleString()} Mandarin characters` : ''].filter(Boolean).join(' · ') : '';
 export const unfamiliarLabel = (value) => value?.byLanguage?.map((item) => `${item.unfamiliar.toLocaleString()} ${language(item.language)} ${item.unit}`).join(' · ') || '';
 
 export function vocabularyLibrary({ changed = () => {} } = {}) {
@@ -16,6 +18,7 @@ export function vocabularyLibrary({ changed = () => {} } = {}) {
       if (version !== epoch || !dialog.open) return;
       if (!thresholdEdited) thresholdInput.value = result.threshold ?? 20;
       showKnown(result);
+      showReading(result.reading);
       $('#vocabulary-entries').replaceChildren(...result.entries.map((item) => {
         const row = element('tr');
         const source = item.completionExposures ? `${(item.trackedExposures || 0).toLocaleString()} tracked · ${item.completionExposures.toLocaleString()} from read books` : 'Tracked reading';
@@ -33,6 +36,13 @@ export function vocabularyLibrary({ changed = () => {} } = {}) {
     const text = rows.length ? rows.map((item) => `${item.count.toLocaleString()} ${language(item.language)} ${item.unit}`).join(' · ') : 'No recorded vocabulary yet';
     $('#vocabulary-known-summary').textContent = `Likely known (${summary?.threshold ?? 20}+ exposures): ${text}`;
     $('#vocabulary-known-detail').textContent = `Likely known: ${text}`;
+  }
+  function showReading(reading) {
+    $('#reading-summary').textContent = `Total words read: ${(reading?.words ?? 0).toLocaleString()}`
+      + (reading?.characters ? ` · Mandarin characters read: ${reading.characters.toLocaleString()}` : '');
+    $('#reading-summary').title = `${(reading?.trackedWords ?? 0).toLocaleString()} tracked words · ${(reading?.completedWords ?? 0).toLocaleString()} additional words from books marked read`;
+    $('#reading-detail').textContent = 'Estimated from displayed passages and books marked read. Rereading in a new session counts again.'
+      + (reading?.pendingBooks ? ` ${reading.pendingBooks} read ${reading.pendingBooks === 1 ? 'book awaits' : 'books await'} analysis.` : '');
   }
   $('#open-vocabulary').addEventListener('click', () => { offset = 0; thresholdEdited = false; dialog.showModal(); void load(); });
   thresholdInput.addEventListener('input', () => { thresholdEdited = true; });
@@ -56,6 +66,7 @@ export function vocabularyLibrary({ changed = () => {} } = {}) {
       const rows = summary?.byLanguage || [];
       $('#vocabulary-summary').textContent = rows.length ? 'Seen: ' + rows.map((item) => `${item.count.toLocaleString()} ${language(item.language)} ${item.unit}`).join(' · ') : 'Your vocabulary catalogue grows from reading and books marked read.';
       showKnown(summary);
+      showReading(summary?.reading);
       const select = $('#vocabulary-language'), value = select.value;
       select.replaceChildren(new Option('All languages', ''), ...[...new Set(rows.map((item) => item.language))].map((code) => new Option(language(code), code)));
       if ([...select.options].some((option) => option.value === value)) select.value = value;
