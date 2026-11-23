@@ -62,13 +62,18 @@ test('server imports detect missing EPUB language and preserve manual details an
   const metadata = '<title>Embedded title</title><creator>Embedded Author</creator>';
   const inferred = await upload('inferred', metadata, passages.pt);
   assert.equal(inferred.title, 'Embedded title'); assert.equal(inferred.author, 'Embedded Author'); assert.equal(inferred.language, 'pt');
-  assert.deepEqual(inferred.languages, [], 'primary language detection does not restrict mixed-language passage analysis');
+  assert.deepEqual(inferred.languages, [], 'automatic metadata keeps the default monolingual mode');
   const manual = await upload('manual', metadata + '<language>es</language>', passages.es, { title: 'My title', author: 'My author', language: 'en' });
   assert.equal(manual.title, 'My title'); assert.equal(manual.author, 'My author'); assert.equal(manual.language, 'en');
   library.editBook('inferred', { title: 'Corrected title', author: '', language: 'zh', languages: ['zh', 'en'] });
   const reopened = (await openLibrary(dir)).getBook('inferred');
   assert.equal(reopened.title, 'Corrected title'); assert.equal(reopened.author, ''); assert.equal(reopened.language, 'zh');
   assert.deepEqual(reopened.languages, ['zh', 'en']);
+  const detected = await library.resolveBookDetails('inferred', { title: '', author: '', language: '', languages: [] });
+  const restored = library.editBook('inferred', detected);
+  assert.equal(restored.title, 'Embedded title'); assert.equal(restored.author, 'Embedded Author'); assert.equal(restored.language, 'pt');
+  const overrides = { title: 'Manual title', author: 'Manual author', language: 'es' };
+  assert.deepEqual(await library.resolveBookDetails('inferred', overrides), overrides);
 });
 
 test('PDF metadata prefers XMP with Info fallbacks and canonical language', () => {

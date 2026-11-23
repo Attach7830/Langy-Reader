@@ -42,7 +42,7 @@ export function vocabularyLibrary({ changed = () => {} } = {}) {
       + (reading?.characters ? ` · Mandarin characters read: ${reading.characters.toLocaleString()}` : '');
     $('#reading-summary').title = `${(reading?.trackedWords ?? 0).toLocaleString()} tracked words · ${(reading?.completedWords ?? 0).toLocaleString()} additional words from books marked read`;
     $('#reading-detail').textContent = 'Estimated from displayed passages and books marked read. Rereading in a new session counts again.'
-      + (reading?.pendingBooks ? ` ${reading.pendingBooks} read ${reading.pendingBooks === 1 ? 'book awaits' : 'books await'} analysis.` : '');
+      + (reading?.pendingBooks ? ` ${reading.pendingBooks} read ${reading.pendingBooks === 1 ? 'book awaits' : 'books await'} text counting.` : '');
   }
   $('#open-vocabulary').addEventListener('click', () => { offset = 0; thresholdEdited = false; dialog.showModal(); void load(); });
   thresholdInput.addEventListener('input', () => { thresholdEdited = true; });

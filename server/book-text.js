@@ -4,7 +4,7 @@ import { DOMParser } from '@xmldom/xmldom';
 import { XMLParser } from 'fast-xml-parser';
 import yauzl from 'yauzl';
 import { readingText } from '../shared/reading-text.js';
-import { languageSpans } from '../shared/language.js';
+import { languageSpans, bookLanguages } from '../shared/language.js';
 import { RequestError } from './books.js';
 
 const xml = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true, parseTagValue: false, processEntities: false });
@@ -62,7 +62,7 @@ export async function extractBook(book, path, languageCall) {
   if (book.format === 'pdf') {
     const data = await languageCall('/pdf', await readFile(path), 'application/pdf');
     return data.chapters.map((section) => ({ ...section, languages: languageSpans({ text: section.text,
-      runs: [{ start: 0, end: section.text.length, node: null }] }, book.language, book.languages) }));
+      runs: [{ start: 0, end: section.text.length, node: null }] }, book.language, bookLanguages(book)) }));
   }
   const zip = await yauzl.openPromise(path, { autoClose: false });
   try {
@@ -113,14 +113,18 @@ export async function extractBook(book, path, languageCall) {
       const item = manifest.get(reference['@_idref']);
       if (!item?.['@_href']) continue;
       const file = posix.join(posix.dirname(opf), decodeURIComponent(item['@_href'].split('#')[0]));
+      if (item['@_media-type']?.startsWith('image/') || /\.(?:png|jpe?g|gif|webp|svg|avif)$/iu.test(file)) {
+        chapters.push({ key: `epub:${index}`, title: `Section ${index + 1}`, text: '', languages: [], markers: [] });
+        continue;
+      }
       const doc = parser.parseFromString(await text(file), 'application/xhtml+xml');
-      const body = doc.getElementsByTagName('body')[0];
+      const body = doc.getElementsByTagName('body')[0] || doc.getElementsByTagNameNS('*', 'body')[0];
       const heading = ['h1', 'h2', 'h3'].flatMap((tag) => Array.from(doc.getElementsByTagName(tag)))[0];
       const title = label(heading) || `Section ${index + 1}`;
       const content = readingText(body);
       chapters.push({
         key: `epub:${index}`, title, text: content.text,
-        languages: languageSpans(content, book.language, book.languages),
+        languages: languageSpans(content, book.language, bookLanguages(book)),
         markers: chapterMarkers(doc, body, content, targets.filter((target) => target.file === file), title),
       });
     }

@@ -99,7 +99,7 @@ test('only displayed words enter the catalogue; inflections merge and language/c
   ]);
   const english = f.book('english', 'English', 'pie books', [['pie', 'pie', 'en'], ['books', 'book', 'en']]);
   f.record(spanish, ['Hablo', 'hablaron', 'pie', '中', '文', 'Teresa']);
-  assert.deepEqual(f.vocabulary.section(spanish, 'epub:0'), { key: 'epub:0', text: spanish.text, textHash: spanish.digest, analysisState: 'ready' });
+  assert.deepEqual(f.vocabulary.section(spanish, 'epub:0'), { key: 'epub:0', text: spanish.text, textHash: spanish.digest, textReady: true, analysisState: 'ready' });
   let catalogue = f.vocabulary.catalogue();
   assert.deepEqual(catalogue.byLanguage, [{ language: 'es', unit: 'lemmas', count: 2 }, { language: 'zh', unit: 'characters', count: 2 }]);
   assert.ok(!catalogue.entries.some((item) => ['libro', '书', 'teresa'].includes(item.term)));

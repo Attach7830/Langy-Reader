@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import JSZip from 'jszip';
 import { openLibrary } from '../server/books.js';
@@ -37,11 +38,12 @@ async function fixture(t) {
   };
 }
 
-test('saved book languages override incorrect tags, rebuild existing analysis and reclassify seen terms without reupload', async (t) => {
+test('books default to one primary language; explicit multilingual selection rebuilds analysis and seen terms without reupload', async (t) => {
   const f = await fixture(t);
   const original = await f.ready();
   assert.ok(original.counts.words > 0); assert.equal(original.counts.characters, 6);
-  assert.deepEqual(original.vocabulary.languages.sort(), ['de', 'jv', 'zh']);
+  assert.deepEqual(original.vocabulary.languages, ['zh']);
+  assert.ok(f.calls.every((language) => language === 'zh'), 'incorrect EPUB tags cannot enable extra languages by default');
   const unit = f.learning.unit(f.library.getBook('mixed'), 'epub:0');
   f.learning.vocabulary.record(f.library.getBook('mixed'), { key: unit.key, digest: unit.textHash, ranges: [{ from: 0, to: unit.text.length }] });
   const updated = f.library.editBook('mixed', { title: 'Mixed', language: 'zh', languages: '["zh","en"]' });
@@ -59,6 +61,11 @@ test('saved book languages override incorrect tags, rebuild existing analysis an
   assert.deepEqual(preserved.languages, ['zh', 'en']);
   const automatic = f.library.editBook('mixed', { title: 'Mixed', language: 'zh', languages: [] });
   assert.deepEqual(automatic.languages, []);
+  f.calls.length = 0;
+  f.learning.ensure(f.library.getBook('mixed'));
+  assert.deepEqual((await f.ready()).vocabulary.languages, ['zh']);
+  assert.ok(f.calls.every((language) => language === 'zh'));
+  assert.deepEqual(f.learning.vocabulary.catalogue().byLanguage.map((item) => item.language), ['zh']);
 });
 
 test('a language change during an outstanding analysis cannot publish obsolete language totals', async (t) => {
@@ -71,6 +78,19 @@ test('a language change during an outstanding analysis cannot publish obsolete l
   assert.ok(f.learning.unit(f.library.getBook('mixed'), 'epub:0').tokens.every((token) => ['en', 'zh'].includes(token.language)));
 });
 
+test('an existing unrestricted analysis is refreshed automatically to the primary language', async (t) => {
+  const f = await fixture(t);
+  await f.ready();
+  const db = new DatabaseSync(join(f.dir, 'learning.sqlite')); t.after(() => db.close());
+  db.prepare("UPDATE analyses SET languageSelection='[]' WHERE book='mixed'").run();
+  f.calls.length = 0;
+  const refreshing = f.learning.info(f.library.getBook('mixed'));
+  assert.ok(['queued', 'running'].includes(refreshing.state)); assert.equal(refreshing.vocabulary, null);
+  assert.deepEqual((await f.ready()).vocabulary.languages, ['zh']);
+  assert.ok(f.calls.length > 0 && f.calls.every((language) => language === 'zh'));
+  assert.equal(db.prepare("SELECT languageSelection FROM analyses WHERE book='mixed'").get().languageSelection, '["zh"]');
+});
+
 test('completed-book vocabulary follows actual book analysis and folder language changes without counting tracked passages twice', async (t) => {
   const f = await fixture(t), book = f.library.getBook('mixed');
   f.library.setReadStatus(book.id, { read: true });
@@ -79,7 +99,7 @@ test('completed-book vocabulary follows actual book analysis and folder language
   await f.ready();
   const before = f.learning.vocabulary.catalogue();
   assert.ok(before.total > 0);
-  assert.deepEqual(before.byLanguage.map((row) => row.language), ['de', 'jv', 'zh']);
+  assert.deepEqual(before.byLanguage.map((row) => row.language), ['zh']);
   const unit = f.learning.unit(book, 'epub:0');
   f.learning.vocabulary.record(book, { key: unit.key, digest: unit.textHash, session: 'one-pass', ranges: [{ from: 0, to: unit.text.length }] });
   assert.deepEqual(f.learning.vocabulary.catalogue().entries.map(({ term, exposures }) => [term, exposures]), before.entries.map(({ term, exposures }) => [term, exposures]));

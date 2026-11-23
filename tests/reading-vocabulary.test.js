@@ -16,11 +16,14 @@ function globals(t, dom) {
 }
 async function until(check) { for (let n = 0; n < 150; n++) { if (check()) return; await delay(10); } throw new Error('Reader exposure timed out'); }
 
-test('the book language picker adds named languages, persists variants, removes selections and restores automatic mode', async (t) => {
+test('the book language picker adds named languages, persists variants, and restores primary-language mode when disabled', async (t) => {
   const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
   const dom = new JSDOM(html, { url: 'https://langy.test' }); globals(t, dom);
   const form = document.querySelector('#book-form'), picker = bookLanguagePicker(form);
   picker.set(); assert.deepEqual(picker.value(), []);
+  picker.set(['es']); assert.equal(form.querySelector('#book-language-limit').checked, false, 'a single folder language does not enable multiple-language mode');
+  assert.deepEqual(picker.value(), []);
+  picker.set();
   const limit = form.querySelector('#book-language-limit'), input = form.querySelector('#book-language-choice');
   limit.checked = true; limit.dispatchEvent(new dom.window.Event('change'));
   assert.equal(form.querySelector('#book-language-selection').hidden, false);
@@ -44,7 +47,7 @@ test('reading records only visible source ranges with audio disabled, queues fai
   const vocabulary = readingVocabulary({ book: () => active, renderer: () => renderer, dwell: 20, async request(path, options) {
     if (options?.method === 'POST') { if (!online) throw new Error('offline'); posts.push(options.body); return { saved: true }; }
     if (delayed) await delayed;
-    return { text, textHash: 'source-digest', analysisState: 'ready' };
+    return { text, textHash: 'source-digest', textReady: true, analysisState: 'error' };
   } });
   t.after(() => vocabulary.destroy());
   vocabulary.refresh(); await until(() => JSON.parse(localStorage.getItem('langy-reading-exposures-v1') || '[]').length === 1);

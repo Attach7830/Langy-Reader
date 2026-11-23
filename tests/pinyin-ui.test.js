@@ -35,7 +35,7 @@ test('pinyin annotations use original iframe ranges, preserve source text, and d
     return [{ left: 10 + this.startOffset * 20, top: 60, width: 20, height: 24 }];
   };
   let preferences = { ...defaults, showPinyin: true }, requests = 0;
-  const overlay = pinyinOverlay({ host, preferences: () => preferences, renderer: () => ({ readingRoots: () => [doc.body] }), book: () => ({ language: 'en' }),
+  const overlay = pinyinOverlay({ host, preferences: () => preferences, renderer: () => ({ readingRoots: () => [doc.body] }), book: () => ({ language: 'en', languages: ['en', 'zh', 'ja'] }),
     async request(path, options) { requests++; assert.equal(path, '/api/mandarin/pinyin'); return { characters: pinyinCharacters(options.body.text) }; } });
   overlay.refresh();
   await until(() => document.querySelectorAll('.pinyin-layer span').length === 3);

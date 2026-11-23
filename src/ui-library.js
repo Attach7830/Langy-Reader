@@ -9,6 +9,8 @@ import { bookVocabulary } from './ui-book-vocabulary.js';
 import { bookMetadataFields } from './book-metadata-fields.js';
 
 const vocabularyLabel = (vocabulary) => vocabulary?.byLanguage?.map((item) => `${item.count.toLocaleString()} ${item.language === 'zh' ? 'Mandarin Han characters' : `${languageName(item.language)} ${item.unit}`}`).join(' · ');
+const wordCountLabel = (analysis) => bookCountLabel(analysis?.counts)
+  || (analysis?.counting?.state === 'error' ? 'Word count unavailable' : 'Counting words…');
 
 export function libraryScreen({ progress, onRemove, detectMetadata }) {
   const search = $('#search');
@@ -103,8 +105,9 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
     card.append(link);
     const analysis = book.learning;
     const detail = element('div', 'book-learning');
-    detail.append(element('span', 'book-meta book-word-count', bookCountLabel(analysis?.counts)
-      || (analysis?.state === 'error' ? 'Word count unavailable' : 'Counting words…')));
+    const wordCount = element('span', 'book-meta book-word-count', wordCountLabel(analysis));
+    wordCount.title = analysis?.counting?.error || '';
+    detail.append(wordCount);
     const count = analysis?.vocabulary?.count ?? analysis?.lemmaCount;
     const vocabulary = vocabularyLabel(analysis?.vocabulary) || (count == null ? '' : `${count.toLocaleString()} ${analysis.vocabulary?.unit === 'characters' ? 'Han characters' : analysis.method === 'word forms' ? 'word forms' : 'lemmas'}`);
     const estimate = analysis?.reading?.band ? `Est. ${analysis.reading.band}` : '';
@@ -186,6 +189,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
     render();
     clearTimeout(libraryTimer);
     if (snapshot.books.some((book) => ['queued', 'running'].includes(book.learning?.state)
+      || ['queued', 'running'].includes(book.learning?.counting?.state)
       || ['queued', 'running'].includes(book.learning?.reading?.state)) || archiveWorking(snapshot.archive?.job)) {
       libraryTimer = setTimeout(() => { if (!document.querySelector('dialog[open]')) void refresh(); }, archiveWorking(snapshot.archive?.job) ? 1200 : 4500);
     }
@@ -246,7 +250,9 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
         return item;
       }));
       const vocabulary = analysis.vocabulary;
-      $('#learning-word-count').textContent = bookCountLabel(analysis.counts) || (analysis.state === 'error' ? 'Word count unavailable' : 'Counting words…');
+      $('#learning-word-count').textContent = wordCountLabel(analysis);
+      $('#learning-word-count').title = analysis.counting?.error || '';
+      if (analysis.counting?.error) $('#learning-word-count').textContent += ` · ${analysis.counting.error}`;
       $('#learning-stats').textContent = vocabulary?.byLanguage?.length
         ? vocabularyLabel(vocabulary)
         : analysis.lemmaCount == null ? `Analysis ${analysis.state}…`
@@ -311,6 +317,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
       $('#learning-chapters').replaceChildren(...rows);
       const toolsWorking = audioUI.update(result, uploaded, imported);
       if (['queued', 'running'].includes(analysis.state) || ['queued', 'running'].includes(analysis.reading?.state)
+        || ['queued', 'running'].includes(analysis.counting?.state)
         || toolsWorking || working || uploaded.recordings.some((recording) => ['queued', 'syncing', 'assembling'].includes(recording.state))) {
         learningTimer = setTimeout(() => void learningStatus(), 2200);
       }
@@ -458,12 +465,12 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
     $('#book-categories').replaceChildren(...choices);
     const fields = bookForm.elements;
     fields.title.value = book?.title ?? '';
-    fields.title.required = isEdit;
+    fields.title.required = false;
     fields.author.value = book?.author ?? '';
     fields.language.value = book?.language ?? '';
-    fields.language.required = isEdit;
+    fields.language.required = false;
     languagePicker.set(book?.languages);
-    $('#book-language-note').hidden = isEdit;
+    $('#book-language-note').hidden = false;
     fields.categoryId.value = book?.categoryId ?? (['all', 'uncategorized'].includes(category) ? '' : category);
     showFolderLanguage();
     bookDialog.showModal();
@@ -473,7 +480,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
     const language = snapshot.categories.find((entry) => entry.id === bookForm.elements.categoryId.value)?.language;
     const input = bookForm.elements.language;
     input.readOnly = Boolean(language);
-    input.required = Boolean(editingBook) && !language;
+    input.required = false;
     if (language) input.value = language;
     $('#book-folder-language-note').hidden = !language;
     $('#book-folder-language-note').textContent = language ? `This folder sets the primary language to ${languageName(language)}. Other explicitly selected book languages are kept.` : '';

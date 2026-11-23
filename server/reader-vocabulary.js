@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { RequestError } from './books.js';
 import { baseLanguage, hanPattern } from '../shared/language.js';
-import { readingUnits, countReadingUnits, mergeReadingRanges } from './reading-counts.js';
+import { readingUnits, countReadingUnits, mergeReadingRanges, bookCountSignature } from './reading-counts.js';
 
 const identity = (language, unit, term) => JSON.stringify([language, unit, term]);
 const ownerOf = (visitor) => visitor?.id || '';
@@ -198,19 +198,22 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
     if (completionSources.size > 100) completionSources.delete(completionSources.keys().next().value);
     return result;
   }
-  function bookCounts(book, signature = completionSignature(book)) {
-    if (signature === 'pending') return null;
-    const saved = db.prepare('SELECT signature,words,characters FROM reading_book_counts WHERE book=?').get(book.id);
-    if (saved?.signature === signature) return { words: saved.words, characters: saved.characters };
+  function saveBookCounts(book, sections) {
     const counts = { words: 0, characters: 0 };
-    for (const section of db.prepare('SELECT * FROM chapters WHERE book=?').all(book.id)) {
+    for (const section of sections) {
       const total = countReadingUnits(readingUnits(section, book.language));
       counts.words += total.words; counts.characters += total.characters;
     }
     db.prepare(`INSERT INTO reading_book_counts VALUES(?,?,?,?) ON CONFLICT(book)
       DO UPDATE SET signature=excluded.signature,words=excluded.words,characters=excluded.characters`)
-      .run(book.id, signature, counts.words, counts.characters);
+      .run(book.id, bookCountSignature(book), counts.words, counts.characters);
     return counts;
+  }
+  function bookCounts(book) {
+    const saved = db.prepare('SELECT signature,words,characters FROM reading_book_counts WHERE book=?').get(book.id);
+    if (saved?.signature === bookCountSignature(book)) return { words: saved.words, characters: saved.characters };
+    if (db.prepare('SELECT state FROM analyses WHERE book=?').get(book.id)?.state !== 'ready') return null;
+    return saveBookCounts(book, db.prepare('SELECT * FROM chapters WHERE book=?').all(book.id));
   }
   function readingTotals(visitor) {
     const owner = ownerOf(visitor);
@@ -220,13 +223,14 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
     ) SELECT coalesce(sum(max(c.words-coalesce(r.words,0),0)),0) AS words,
       coalesce(sum(max(c.characters-coalesce(r.characters,0),0)),0) AS characters
       FROM vocabulary_completions c LEFT JOIN covered r USING(book) WHERE c.owner=?`).get(owner, owner);
-    const pendingBooks = db.prepare("SELECT count(*) AS n FROM vocabulary_completions WHERE owner=? AND signature='pending'").get(owner).n;
+    const pendingBooks = db.prepare(`SELECT count(*) AS n FROM vocabulary_completions c
+      LEFT JOIN reading_book_counts b ON b.book=c.book WHERE c.owner=? AND b.book IS NULL`).get(owner).n;
     return { words: tracked.words + completed.words, characters: tracked.characters + completed.characters,
       trackedWords: tracked.words, completedWords: completed.words, trackedCharacters: tracked.characters, completedCharacters: completed.characters, pendingBooks };
   }
   function saveCompletion(book, completion, signature = completionSignature(book)) {
     const source = completionSource(book, signature);
-    const counts = bookCounts(book, signature) || { words: 0, characters: 0 };
+    const counts = bookCounts(book) || { words: 0, characters: 0 };
     db.prepare('DELETE FROM vocabulary_completed_terms WHERE owner=? AND book=?').run(completion.owner, book.id);
     db.prepare(`INSERT INTO vocabulary_completions(owner,book,readAt,signature,expires,words,characters) VALUES(?,?,?,?,?,?,?) ON CONFLICT(owner,book)
       DO UPDATE SET readAt=excluded.readAt,signature=excluded.signature,expires=excluded.expires,words=excluded.words,characters=excluded.characters`)
@@ -247,7 +251,9 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
       }
       for (const book of current.values()) {
         const previous = saved.get(book.id), signature = completionSignature(book), expires = book.expires ?? null;
-        if (previous?.readAt !== book.readAt || previous?.signature !== signature || previous?.expires !== expires)
+        const counts = bookCounts(book) || { words: 0, characters: 0 };
+        if (previous?.readAt !== book.readAt || previous?.signature !== signature || previous?.expires !== expires
+          || previous?.words !== counts.words || previous?.characters !== counts.characters)
           saveCompletion(book, { owner, readAt: book.readAt, expires }, signature);
       }
       db.exec('COMMIT');
@@ -289,8 +295,8 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
     if (typeof body.key !== 'string' || body.key.length > 250 || typeof body.digest !== 'string' || body.digest.length > 100) throw new RequestError(422, 'Choose a valid book section and text digest.');
     const session = body.session === undefined ? 'legacy' : body.session;
     if (typeof session !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/u.test(session)) throw new RequestError(422, 'Choose a valid reading session.');
-    const groups = inventory(book);
-    if (!groups) throw new RequestError(409, 'Wait for this book to finish analysis.');
+    const groups = inventory(book) || new Map();
+    if (!bookCounts(book)) throw new RequestError(409, 'Wait for this book’s text to finish loading.');
     const section = db.prepare('SELECT * FROM chapters WHERE book=? AND key=?').get(book.id, body.key);
     if (!section || section.digest !== body.digest) throw new RequestError(409, 'The book text changed. Reload this page.');
     if (!Array.isArray(body.ranges) || !body.ranges.length || body.ranges.length > 1000 || body.ranges.some((range) =>
@@ -311,15 +317,26 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
   function section(book, key) {
     const row = db.prepare('SELECT text,digest FROM chapters WHERE book=? AND key=?').get(book.id, key);
     if (!row) throw new RequestError(409, 'Wait for this book to finish analysis.');
-    return { key, text: row.text, textHash: row.digest, analysisState: db.prepare('SELECT state FROM analyses WHERE book=?').get(book.id)?.state };
+    return { key, text: row.text, textHash: row.digest, textReady: bookCounts(book) !== null,
+      analysisState: db.prepare('SELECT state FROM analyses WHERE book=?').get(book.id)?.state };
+  }
+  function reindexReading(book) {
+    const sections = new Map(db.prepare('SELECT * FROM chapters WHERE book=?').all(book.id).map((section) => [section.key, section]));
+    db.exec('BEGIN');
+    try {
+      db.prepare('DELETE FROM reading_coverage WHERE book=?').run(book.id);
+      for (const exposure of db.prepare('SELECT * FROM reading_exposures WHERE book=? AND (expires IS NULL OR expires>?)').all(book.id, Date.now()))
+        apply(exposure, sections.get(exposure.chapter), new Map());
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
   }
   function reindex(book) {
     inventories.delete(book.id);
     completionSources.delete(book.id);
-    db.prepare('DELETE FROM reading_book_counts WHERE book=?').run(book.id);
     const groups = inventory(book);
     if (!groups) return;
     const sections = new Map(db.prepare('SELECT * FROM chapters WHERE book=?').all(book.id).map((section) => [section.key, section]));
+    saveBookCounts(book, sections.values());
     db.exec('BEGIN');
     try {
       db.prepare('DELETE FROM vocabulary_seen WHERE book=?').run(book.id);
@@ -398,5 +415,5 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
     }).filter(Boolean).sort((a, b) => b.score - a.score || b.familiarity.score - a.familiarity.score || a.title.localeCompare(b.title)).slice(0, 8);
   }
   if (backfill || completionUpgrade || readingUpgrade) for (const row of db.prepare('SELECT book AS id FROM reading_exposures UNION SELECT book AS id FROM vocabulary_completions').all()) reindex(row);
-  return { profile, familiarity, section, record, reindex, catalogue, recommendations, preferences, savePreferences, syncCompletions, belowThreshold, term, bookCounts };
+  return { profile, familiarity, section, record, reindex, reindexReading, catalogue, recommendations, preferences, savePreferences, syncCompletions, belowThreshold, term, bookCounts, saveBookCounts };
 }

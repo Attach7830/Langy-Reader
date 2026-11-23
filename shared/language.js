@@ -7,6 +7,11 @@ export function baseLanguage(value, fallback = 'en') {
   catch { return fallback; }
 }
 export const selectedLanguages = (value) => [...new Set((Array.isArray(value) ? value : []).map((code) => baseLanguage(code, '')).filter(Boolean))];
+// Passage detection is opt-in for books. An empty selection means one language.
+export function bookLanguages(book) {
+  const selection = selectedLanguages(book?.languages);
+  return selection.length ? selection : [baseLanguage(book?.language)];
+}
 const scripts = new Map();
 function scriptMatches(text, code) {
   if (!scripts.has(code)) {

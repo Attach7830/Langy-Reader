@@ -27,7 +27,7 @@ test('a mixed book keeps Mandarin totals separate, categorizes with characters, 
   await run('ffmpeg', ['-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=330:duration=1', '-ar', '24000', wav]);
   const speech = await readFile(wav), analysisLanguages = [], voices = [], alignmentLanguages = [], transcriptionLanguages = [];
   let sample;
-  const book = { id: 'mixed', title: 'Mixed book', language: 'zh' };
+  const book = { id: 'mixed', title: 'Mixed book', language: 'zh', languages: ['zh', 'en', 'pt', 'es'] };
   globalThis.fetch = async (url, options) => {
     const body = JSON.parse(options.body), path = new URL(url).pathname;
     if (path === '/analyze') {

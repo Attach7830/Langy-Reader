@@ -9,7 +9,8 @@ import { RequestError } from './books.js';
 import { extractBook, languageChunks } from './book-text.js';
 import { narrationOptions, sectionLanguages } from './language-voices.js';
 import { addVocabulary, vocabularySummary } from './vocabulary.js';
-import { selectedLanguages } from '../shared/language.js';
+import { bookLanguages } from '../shared/language.js';
+import { bookCountSignature } from './reading-counts.js';
 import { readerVocabulary } from './reader-vocabulary.js';
 import { readingEstimates } from './reading-estimates.js';
 import { bookNarration } from './book-audio.js';
@@ -178,16 +179,65 @@ export async function openLearning(dir, library, demo, ai) {
     return { voices: [...new Set(ids)] };
   }
 
+  const textJobs = new Map(), textLanes = { epub: Promise.resolve(), pdf: Promise.resolve() };
+  const selectionOf = (book) => JSON.stringify(bookLanguages(book).sort());
+  function prepareText(book, retry = false) {
+    if (vocabulary.bookCounts(book)) return Promise.resolve(true);
+    const signature = bookCountSignature(book), previous = textJobs.get(book.id);
+    if (previous?.signature === signature) {
+      if (previous.promise) return previous.promise;
+      if (!retry && previous.state === 'error') return Promise.reject(previous.error);
+    }
+    const job = { signature, state: 'queued' }, lane = book.format === 'pdf' ? 'pdf' : 'epub';
+    textJobs.set(book.id, job);
+    const current = () => db.prepare('SELECT book FROM analyses WHERE book=? AND language=? AND languageSelection=?')
+      .get(book.id, book.language, selectionOf(book));
+    job.promise = textLanes[lane].then(async () => {
+      if (!current()) return false;
+      job.state = 'running';
+      const sections = await extractBook(book, library.filePath(book), languageCall);
+      if (!current()) return false;
+      // Persist selectable text before calling NLP. Illustrations and a failed
+      // lemma service must not prevent counting or recording reading progress.
+      db.exec('BEGIN');
+      try {
+        const save = db.prepare(`INSERT INTO chapters(book,key,ordinal,title,text,digest,markers,languages) VALUES(?,?,?,?,?,?,?,?)
+          ON CONFLICT(book,key) DO UPDATE SET ordinal=excluded.ordinal,title=excluded.title,text=excluded.text,
+          tokens=CASE WHEN chapters.digest=excluded.digest THEN chapters.tokens ELSE NULL END,
+          lemmas=CASE WHEN chapters.digest=excluded.digest THEN chapters.lemmas ELSE NULL END,
+          metrics=CASE WHEN chapters.digest=excluded.digest THEN chapters.metrics ELSE NULL END,
+          digest=excluded.digest,markers=excluded.markers,languages=excluded.languages`);
+        for (const [ordinal, section] of sections.entries()) save.run(book.id, section.key, ordinal, section.title, section.text,
+          hash(section.text), JSON.stringify(section.markers || [{ title: section.title, from: 0 }]), JSON.stringify(section.languages || []));
+        vocabulary.saveBookCounts(book, sections);
+        db.exec('COMMIT');
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+      vocabulary.reindexReading(book);
+      job.state = 'ready';
+      return true;
+    }).catch((error) => {
+      job.state = 'error';
+      job.error = error instanceof RequestError ? error : new RequestError(502, book.format === 'pdf'
+        ? 'The PDF text could not be extracted. Check the language service and retry analysis. Scanned pages need OCR.'
+        : 'The EPUB text could not be extracted. Check the file and retry analysis.');
+      throw job.error;
+    }).finally(() => { job.promise = null; if (job.state === 'ready' && textJobs.get(book.id) === job) textJobs.delete(book.id); });
+    textLanes[lane] = job.promise.catch(() => {});
+    return job.promise;
+  }
+
   function ensure(book, retry = false) {
     const previous = db.prepare('SELECT * FROM analyses WHERE book=?').get(book.id);
-    const selection = JSON.stringify(selectedLanguages(book.languages).sort());
+    const selection = selectionOf(book);
     if (!previous || previous.language !== book.language || previous.languageSelection !== selection || (retry && !['queued', 'running'].includes(previous.state))) {
       db.prepare(`INSERT INTO analyses(book, owner, language, languageSelection, state) VALUES(?,?,?,?,'queued')
         ON CONFLICT(book) DO UPDATE SET language=excluded.language,languageSelection=excluded.languageSelection,state='queued',error=NULL,
         metrics=NULL,lemmas=NULL,wordCount=NULL,method=NULL`)
         .run(book.id, book.owner || '', book.language, selection);
       estimates.invalidate(book.id);
+      db.prepare('DELETE FROM reading_book_counts WHERE book=?').run(book.id);
     }
+    void prepareText(book, retry).catch(() => {});
     void work();
   }
 
@@ -197,7 +247,9 @@ export async function openLearning(dir, library, demo, ai) {
     const count = row.lemmas ? JSON.parse(row.lemmas).length : null;
     if (row.state === 'ready' && !estimates.status(book)) estimates.queue(book);
     const reading = estimates.status(book);
-    return { state: row.state, lemmaCount: count, wordCount: row.wordCount, counts: vocabulary.bookCounts(book), reading, method: row.method, error: row.error,
+    const counts = vocabulary.bookCounts(book), textJob = textJobs.get(book.id);
+    const counting = { state: counts ? 'ready' : textJob?.state || 'queued', error: textJob?.error?.message || null };
+    return { state: row.state, lemmaCount: count, wordCount: row.wordCount, counts, counting, reading, method: row.method, error: row.error,
       vocabulary: row.metrics ? JSON.parse(row.metrics) : null };
   }
 
@@ -266,7 +318,9 @@ export async function openLearning(dir, library, demo, ai) {
   async function analyze(row) {
     db.prepare("UPDATE analyses SET state='running', error=NULL WHERE book=?").run(row.book);
     const book = library.getBook(row.book, { id: row.owner });
-    const sections = await extractBook(book, library.filePath(book), languageCall);
+    if (!await prepareText(book)) return;
+    const sections = db.prepare('SELECT * FROM chapters WHERE book=? ORDER BY ordinal').all(book.id)
+      .map((section) => ({ ...section, languages: JSON.parse(section.languages || '[]'), markers: JSON.parse(section.markers || '[]') }));
     const stillCurrent = () => db.prepare("SELECT book FROM analyses WHERE book=? AND language=? AND languageSelection=? AND state='running'").get(book.id, row.language, row.languageSelection);
     if (!stillCurrent()) return;
     const unique = new Set();
@@ -419,6 +473,7 @@ export async function openLearning(dir, library, demo, ai) {
   timer.unref();
 
   async function remove(id) {
+    textJobs.delete(id);
     estimates.invalidate(id);
     ivoox?.cancel({ id });
     const sectionRecordings = db.prepare('SELECT id FROM audio WHERE book=?').all(id);

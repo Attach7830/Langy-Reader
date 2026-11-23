@@ -51,7 +51,7 @@ export function readingVocabulary({ book, renderer, request, dwell = 1500 }) {
       try {
         if (!source) source = await request(`/api/books/${encodeURIComponent(current.id)}/vocabulary/sections/${encodeURIComponent(page.key)}`);
         if (version !== epoch || book()?.id !== current.id || document.hidden) return;
-        if (source.analysisState !== 'ready') { clearTimeout(retry); retry = setTimeout(refresh, 5000); continue; }
+        if (!(source.textReady ?? source.analysisState === 'ready')) { clearTimeout(retry); retry = setTimeout(refresh, 5000); continue; }
         chapters.set(key, source);
         if (chapters.size > 8) chapters.delete(chapters.keys().next().value);
         const ranges = displayedRanges(page.track(), source.text, current.language);

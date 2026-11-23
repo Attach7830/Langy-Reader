@@ -31,7 +31,7 @@ export function bookLanguagePicker(form) {
   input.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); attempt(); } });
   limit.addEventListener('change', () => { input.setCustomValidity(''); render(); });
   return {
-    set(languages = []) { selected = [...languages]; limit.checked = selected.length > 0; input.value = ''; input.setCustomValidity(''); render(); },
+    set(languages = []) { selected = [...languages]; limit.checked = selected.length > 1; input.value = ''; input.setCustomValidity(''); render(); },
     value() {
       if (!limit.checked) return [];
       if (input.value.trim()) add();

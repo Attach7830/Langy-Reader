@@ -346,6 +346,20 @@ export async function openLibrary(dir, limits = null) {
         }
       }
     },
+    async resolveBookDetails(id, body, visitor) {
+      const book = getBook(id, visitor);
+      if (book.owner !== editable(visitor)) throw new RequestError(403, 'The sample book is read-only.');
+      const blank = (name) => !asText(body[name], name === 'title' ? 250 : 200);
+      if (!['title', 'author', 'language'].some(blank)) return body;
+      let metadata = {};
+      try { metadata = await readMetadata(filePath(book), book.format); }
+      catch { /* Retain saved details if the file has no readable metadata. */ }
+      return { ...body,
+        title: blank('title') ? metadata.title || book.title : body.title,
+        author: blank('author') ? metadata.author || book.author : body.author,
+        language: blank('language') ? metadata.language || book.language || 'es' : body.language,
+      };
+    },
     editBook(id, body, visitor) {
       const book = getBook(id, visitor);
       if (book.owner !== editable(visitor)) throw new RequestError(403, 'The sample book is read-only.');

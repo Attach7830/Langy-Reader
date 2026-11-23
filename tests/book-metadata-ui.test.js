@@ -82,8 +82,16 @@ test('real library import waits for metadata, submits manual overrides once, and
   assert.equal(imports[0].get('language'), 'pt'); assert.equal(imports[0].get('languages'), '[]'); assert.equal(imports[0].get('file').name, file.name);
   assert.equal([...imports[0].keys()].filter((name) => name !== 'file').length, 5, 'metadata preview does not exceed the multipart field limit');
   document.querySelector('[aria-label="Edit Detected book"]').click();
+  assert.equal(form.elements.title.required, false); assert.equal(form.elements.language.required, false);
+  assert.equal(document.querySelector('#book-language-note').hidden, false);
   form.elements.title.value = 'Corrected title'; form.elements.author.value = 'Corrected author'; form.elements.language.value = 'Spanish';
   submit(); await until(() => edits.length === 1);
   assert.equal(edits[0].title, 'Corrected title'); assert.equal(edits[0].author, 'Corrected author'); assert.equal(edits[0].language, 'es');
+  await until(() => !document.querySelector('#book-dialog').open);
+  document.querySelector('[aria-label="Edit Corrected title"]').click();
+  for (const name of ['title', 'author', 'language']) form.elements[name].value = '';
+  assert.equal(form.checkValidity(), true, 'blank details can reach automatic detection on the server');
+  submit(); await until(() => edits.length === 2);
+  assert.equal(edits[1].title, ''); assert.equal(edits[1].author, ''); assert.equal(edits[1].language, '');
   assert.equal(detections, 2, 'opening saved details never reruns file detection');
 });

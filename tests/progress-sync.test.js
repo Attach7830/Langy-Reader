@@ -293,7 +293,7 @@ test('authenticated book word counts and reading totals persist across saved vie
     { language: 'es', unit: 'lemmas', count: 2, total: 3 }, { language: 'zh', unit: 'characters', count: 2, total: 2 },
   ] });
   db.prepare(`INSERT INTO analyses(book,owner,language,state,lemmas,wordCount,method,metrics,languageSelection)
-    VALUES(?,?,?,'ready',?,3,'contextual',?,'[]')`).run('sync-book', '', 'es', lemmas, metrics);
+    VALUES(?,?,?,'ready',?,3,'contextual',?,'["es"]')`).run('sync-book', '', 'es', lemmas, metrics);
   db.prepare(`INSERT INTO chapters(book,key,ordinal,title,text,digest,tokens,lemmas,markers,languages)
     VALUES(?,?,0,?,?,?,?,?,'[]',?)`).run('sync-book', 'epub:0', 'Test chapter', text, digest, JSON.stringify(tokens), lemmas,
       JSON.stringify([{ from: 0, to: text.indexOf('中'), language: 'es' }, { from: text.indexOf('中'), to: text.length, language: 'zh' }]));

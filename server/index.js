@@ -186,8 +186,9 @@ app.post('/api/books', ...demoUploads, (req, _res, next) => {
   learning.ensure(library.getBook(imported.id, req.visitor));
   res.status(201).json(imported);
 });
-app.patch('/api/books/:id', (req, res) => {
-  const book = library.editBook(req.params.id, req.body ?? {}, req.visitor);
+app.patch('/api/books/:id', async (req, res) => {
+  const details = await library.resolveBookDetails(req.params.id, req.body ?? {}, req.visitor);
+  const book = library.editBook(req.params.id, details, req.visitor);
   learning.ensure(library.getBook(book.id, req.visitor));
   res.json(book);
 });

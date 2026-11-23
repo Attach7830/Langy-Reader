@@ -18,6 +18,7 @@ import { pinyinOverlay } from './pinyin.js';
 import { readingVocabulary } from './reading-vocabulary.js';
 import { renderSummaryDetail } from './summary-detail.js';
 import { pageNavigation } from './page-navigation.js';
+import { bookLanguages } from '../shared/language.js';
 import { eventKey, getProgress, getSettings, keyLabel, languageName, modes, saveProgress, saveSettings, syncDeviceId, updateAppearance } from './settings.js';
 
 const viewer = $('#viewer');
@@ -48,7 +49,7 @@ viewer.addEventListener('scroll', () => vocabulary.refresh(), { passive: true })
 
 const words = wordHelp({
   preferences: () => settings, request: api,
-  languages: () => activeBook?.languages || [],
+  languages: () => bookLanguages(activeBook),
   lemmaAt: (node, offset) => audio.lemmaAt(node, offset),
   seekWord: (node, offset) => audio.seekWord(node, offset),
 });
