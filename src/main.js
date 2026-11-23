@@ -17,6 +17,7 @@ import { readingProgressSync } from './reading-sync.js';
 import { pinyinOverlay } from './pinyin.js';
 import { readingVocabulary } from './reading-vocabulary.js';
 import { renderSummaryDetail } from './summary-detail.js';
+import { pageNavigation } from './page-navigation.js';
 import { eventKey, getProgress, getSettings, keyLabel, languageName, modes, saveProgress, saveSettings, syncDeviceId, updateAppearance } from './settings.js';
 
 const viewer = $('#viewer');
@@ -36,6 +37,11 @@ let activeBook, renderer, loadController, activePosition, summaryController, act
 let moving = false, summaryQueued = false, fallbackFullscreen = false;
 let zoom = 1;
 let statusCheck = 0;
+const pageGestures = pageNavigation({ host: $('.reading-main'),
+  enabled: () => Boolean(activeBook && renderer && !moving && !document.querySelector('dialog[open]')),
+  canSwipe: () => !viewer.classList.contains('pdf-panning'),
+  turn: (direction) => { viewer.focus({ preventScroll: true }); void move(direction); },
+});
 const pinyin = pinyinOverlay({ host: viewer, preferences: () => settings, renderer: () => renderer, book: () => activeBook, request: api });
 const vocabulary = readingVocabulary({ book: () => activeBook, renderer: () => renderer, request: api });
 viewer.addEventListener('scroll', () => vocabulary.refresh(), { passive: true });
@@ -381,6 +387,7 @@ async function toggleFullscreen() {
 }
 
 function closeReader() {
+  pageGestures.reset();
   vocabulary.stop();
   pinyin.clear();
   readingSync.stop();
@@ -435,7 +442,7 @@ async function openBook(book) {
       host: viewer, url: `/api/books/${book.id}/file`, position: progress[book.id]?.target,
       language: book.language, settings, signal,
       hooks: {
-        keydown, bindWords: words.bind,
+        keydown, bindWords: words.bind, bindPageNavigation: pageGestures.bind,
         layout: () => { pinyin.refresh(); vocabulary.refresh(); },
         position: (position) => { if (!signal.aborted) positionChanged(position); },
         error: (error) => { if (!signal.aborted) reportError(error); },

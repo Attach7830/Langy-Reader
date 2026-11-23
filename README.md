@@ -26,6 +26,8 @@ The stack also includes a local `language` service for lemma analysis and audio 
 
 ## Reading controls
 
+Click or tap the left edge of the reading area to go back, or the right edge to go forward. On mobile, swipe left across the page to go forward or right to go back. Both work with EPUBs and PDFs. Center taps retain word help and audio seeking; links, controls, text selections, long presses and pinch gestures do not turn pages. Vertical scrolling stays available, and zoomed PDFs use horizontal dragging to pan rather than turn pages. The same page-turning logic updates progress, summaries and audio following.
+
 Each library card and **Analysis & audio** shows the book's **word count**, including repeated words, names and numbers. This counts surface word occurrences in readable text using Unicode word segmentation, independently of unique lemmas and vocabulary filters. Mandarin Han-character occurrences are shown separately. Counts appear after text analysis and fill in for existing books automatically.
 
 **Total words read** at the top of the library estimates reading volume from displayed passages and books marked read. Saved page-view history is included automatically. Overlapping views and layout changes within a reading session count once; reopening a book starts a new session, so rereading counts again. Marking a book read fills only the source positions not already tracked, and marking it unread removes that inferred contribution while retaining tracked reading. Mandarin characters have their own total. Pending completed books contribute when analysis finishes. Counting runs locally without AI API calls, and totals refresh when you return to the library.

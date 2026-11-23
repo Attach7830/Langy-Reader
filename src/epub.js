@@ -276,6 +276,7 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       const doc = contents.document;
       void doc.fonts?.ready.then(() => hooks.layout?.());
       doc.defaultView.frameElement?.setAttribute('title', 'EPUB page');
+      hooks.bindPageNavigation?.(doc);
       doc.addEventListener('keydown', hooks.keydown);
       doc.addEventListener('click', (event) => {
         const href = event.target.closest?.('a[href]')?.getAttribute('href');

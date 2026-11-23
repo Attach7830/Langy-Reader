@@ -58,6 +58,7 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
     active?.cancel();
     render?.cancel();
     unbind?.();
+    host.classList.remove('pdf-panning');
     void loading.destroy().catch(() => {});
   }
 
@@ -84,6 +85,7 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
     layer.className = 'textLayer';
     shell.style.width = `${viewport.width}px`;
     shell.style.height = `${viewport.height}px`;
+    host.classList.toggle('pdf-panning', viewport.width + 32 > host.clientWidth + 1);
     shell.style.setProperty('--total-scale-factor', viewport.scale * viewport.userUnit);
     shell.replaceChildren(canvas, layer);
     if (resetScroll) {
