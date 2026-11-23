@@ -168,6 +168,18 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .demo-note p { margin-top: 4px; line-height: 1.45; }
 .demo-note a { color: var(--brand); text-decoration: underline; text-underline-offset: 2px; }
 .about-page { max-width: 780px; margin: 0 auto; padding: 32px clamp(16px, 6vw, 52px) 64px; }
+.discovery-page { max-width: 1100px; margin: 0 auto; padding: 32px clamp(16px, 5vw, 52px) 64px; }
+.discovery-page > h1 { margin-top: 22px; }
+.discovery-page > p { max-width: 85ch; line-height: 1.6; }
+.discovery-form { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(180px, 2fr); gap: 18px; margin: 24px 0 14px; }
+.discovery-actions { grid-column: 1 / -1; display: flex; gap: 12px; flex-wrap: wrap; }
+.discovery-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 18px; margin: 24px 0; }
+.discovery-card { padding: 22px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow-wrap: anywhere; }
+.discovery-card h2 { font-size: 23px; line-height: 1.25; margin: 0 0 9px; }
+.discovery-card p { line-height: 1.6; }
+.discovery-sources { display: flex; flex-direction: column; gap: 9px; font-size: 13px; }
+.discovery-status { margin-block: 18px; }
+@media (max-width: 560px) { .discovery-form { grid-template-columns: minmax(0, 1fr); } }
 .about-page h1 { margin: 20px 0 17px; }
 .about-page h1:focus { outline: none; }
 .about-page h2 { margin-bottom: 9px; }

@@ -16,6 +16,7 @@
     <div class="header-actions">
       <button class="ai-status" id="ai-status" type="button" title="Check local AI"><span class="status-dot"></span><span>Checking AI</span></button>
       <a class="button quiet" id="about-link" href="#about" aria-label="About Langy Reader" title="About Langy Reader" hidden><i data-lucide="info"></i><span>About</span></a>
+      <a class="button quiet" href="#discover" aria-label="Discover books"><i data-lucide="sparkles"></i><span>Discover</span></a>
       <button class="button quiet" type="button" data-settings="reading" aria-label="Settings"><i data-lucide="settings-2"></i><span>Settings</span></button>
     </div>
   </header>
@@ -24,6 +25,7 @@
     <aside class="library-rail" aria-label="Library categories">
       <nav class="library-nav">
         <button class="rail-item" type="button" id="all-books"><i data-lucide="library-big"></i><span>All books</span><span class="count" id="all-count"></span></button>
+        <a class="rail-item" href="#discover"><i data-lucide="sparkles"></i><span>Discover books</span></a>
         <div class="rail-heading">
           <span>Categories</span>
           <button class="icon-button small" id="add-category" title="New category" aria-label="New category" type="button"><i data-lucide="plus"></i></button>
@@ -71,6 +73,28 @@
         <i data-lucide="book-open"></i><h2 id="empty-title"></h2><p id="empty-detail"></p>
       </div>
       <p class="screen-error" id="library-error" role="alert" hidden></p>
+    </section>
+  </main>
+
+  <main id="discovery-screen" class="discovery-page" aria-labelledby="discovery-title" hidden>
+    <a class="button quiet" href="#library"><i data-lucide="arrow-left"></i>Library</a>
+    <h1 id="discovery-title" tabindex="-1">Discover books</h1>
+    <p>Find your next read from the books already in your library. Your configured AI looks for connections, searches the web, and recommends titles checked against Open Library records.</p>
+    <form id="discovery-form" class="discovery-form">
+      <label>Book language<input id="discovery-language" type="text" list="languages" placeholder="Automatic from your library" maxlength="35" autocomplete="off"><small class="field-note">Leave blank to use your library’s main language.</small></label>
+      <label>What would you like to read?<input id="discovery-focus" type="text" maxlength="300" placeholder="Optional: shorter novels, history, authors like Juan Rulfo…"></label>
+      <div class="discovery-actions"><button id="generate-discovery" class="button primary" type="submit">Find recommendations</button><button id="cancel-discovery" class="button quiet" type="button" hidden>Cancel</button></div>
+    </form>
+    <p id="discovery-connection" class="field-note"></p>
+    <p class="field-note">Runs when you request it. Web searches use book titles, author names and literary topics; book contents and your vocabulary catalogue stay on your server. Recommendations use the model selected in Settings → AI connection. Bundled/local models and web search need no paid API.</p>
+    <p id="discovery-status" class="discovery-status" role="status" aria-live="polite"></p>
+    <p id="discovery-error" class="screen-error" role="alert" hidden></p>
+    <div id="discovery-warnings" class="field-note"></div>
+    <section id="discovery-results" aria-label="Book recommendations" hidden>
+      <p id="discovery-summary"></p>
+      <div id="discovery-books" class="discovery-grid"></div>
+      <details><summary>How these books were found</summary><p id="discovery-interests" class="field-note"></p><ul id="discovery-queries"></ul></details>
+      <p class="field-note">Connections are AI suggestions grounded in the linked records and search results. Vocabulary difficulty requires importing and analyzing the book. Source links do not guarantee a downloadable edition.</p>
     </section>
   </main>
 

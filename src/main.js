@@ -18,6 +18,7 @@ import { pinyinOverlay } from './pinyin.js';
 import { readingVocabulary } from './reading-vocabulary.js';
 import { renderSummaryDetail } from './summary-detail.js';
 import { pageNavigation } from './page-navigation.js';
+import { discoveryScreen } from './ui-discovery.js';
 import { bookLanguages } from '../shared/language.js';
 import { eventKey, getProgress, getSettings, keyLabel, languageName, modes, saveProgress, saveSettings, syncDeviceId, updateAppearance } from './settings.js';
 
@@ -32,6 +33,7 @@ const summaryActions = $('#summary-actions');
 const summaryDetail = $('#summary-detail');
 const summaryDetailBody = $('#summary-detail-body');
 const progress = getProgress();
+const discovery = discoveryScreen({ request: api });
 const summaries = new Map();
 let settings = getSettings();
 let activeBook, renderer, loadController, activePosition, summaryController, activeSummary;
@@ -173,6 +175,8 @@ function showScreen(screen) {
   readerScreen.hidden = screen !== 'reader';
   $('#library-screen').hidden = screen !== 'library';
   $('#about-screen').hidden = screen !== 'about';
+  $('#discovery-screen').hidden = screen !== 'discovery';
+  if (screen !== 'discovery') discovery.leave();
   $('#library-header').hidden = screen === 'reader';
   if (screen === 'about') $('#about-link').setAttribute('aria-current', 'page');
   else $('#about-link').removeAttribute('aria-current');
@@ -471,6 +475,13 @@ async function openBook(book) {
 }
 
 async function route() {
+  if (location.hash === '#discover') {
+    if (activeBook) { closeReader(); await vocabulary.flush(); }
+    showScreen('discovery'); document.title = 'Discover books · Langy Reader';
+    $('#discovery-title').focus({ preventScroll: true });
+    await discovery.open();
+    return;
+  }
   if (location.hash === '#about' && library.state.demo) {
     if (activeBook) closeReader();
     showScreen('about');

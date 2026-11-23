@@ -20,6 +20,7 @@ services:
       READER_KOKORO_URL: ${READER_KOKORO_URL:-}
       READER_KOKORO_VOICE: ${READER_KOKORO_VOICE:-ef_dora}
       READER_KOKORO_API_KEY: ${READER_KOKORO_API_KEY:-}
+      READER_SEARCH_URL: ${READER_SEARCH_URL:-http://search:8080}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -50,6 +51,23 @@ services:
       timeout: 5s
       retries: 3
 
+  search:
+    build: ./search
+    init: true
+    restart: unless-stopped
+    volumes:
+      - search_config:/etc/searxng
+      - search_cache:/var/cache/searxng
+    networks: [default]
+    environment:
+      SEARXNG_LIMITER: "false"
+      SEARXNG_PUBLIC_INSTANCE: "false"
+      GRANIAN_WORKERS: "1"
+    logging:
+      options:
+        max-size: "5m"
+        max-file: "2"
+
   ollama:
     build:
       context: ./ollama
@@ -73,6 +91,8 @@ services:
 
 volumes:
   library:
+  search_config:
+  search_cache:
 
 networks:
   inference:

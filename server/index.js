@@ -15,6 +15,7 @@ import { openProgressSync } from './progress-sync.js';
 import { chapterStorage } from './audio-upload.js';
 import { chapterFileLimit } from './chapter-audio.js';
 import { verifyStorage } from './storage-location.js';
+import { openBookDiscovery } from './book-discovery.js';
 import { openMandarin } from './mandarin.js';
 import { demoUploadLimit, demoBookLimit, demoStorageLimit, limitJobs, visitorMiddleware } from './demo.js';
 
@@ -30,6 +31,7 @@ const progressSync = openProgressSync(dir, { library, demo,
   password: process.env.READER_SYNC_PASSWORD || password,
 });
 const ai = await openAISettings(dir, demo);
+const discovery = openBookDiscovery(dir, { library, ai, demo });
 const lookupSynonyms = openThesaurus();
 const mandarin = openMandarin();
 const learning = await openLearning(dir, library, demo, ai);
@@ -89,7 +91,7 @@ app.use('/api', (req, res, next) => {
 
 if (demo) {
   const identifyVisitor = await visitorMiddleware(dir);
-  app.use(['/api/library', '/api/categories', '/api/books', '/api/storage', '/api/vocabulary'], identifyVisitor);
+  app.use(['/api/library', '/api/categories', '/api/books', '/api/storage', '/api/vocabulary', '/api/discovery'], identifyVisitor);
   app.post(['/api/ai/word', '/api/ai/summary', '/api/mandarin/word', '/api/mandarin/readings', '/api/mandarin/pinyin'], identifyVisitor);
   await library.pruneDemoBooks();
   await learning.prune();
@@ -120,6 +122,9 @@ app.get('/api/settings/opds', (_, res) => res.json({
   authenticated: !demo && Boolean(password), pageSize: opdsPageSize,
 }));
 app.get('/api/storage', async (req, res) => res.json(await library.storage(req.visitor)));
+app.get('/api/discovery', (req, res) => res.json(discovery.status(req.visitor)));
+app.post('/api/discovery', ...(demo ? [limitJobs({ perMinute: 6, perVisitor: 2 })] : []), (req, res) => res.status(202).json(discovery.queue(req.body ?? {}, req.visitor)));
+app.delete('/api/discovery', (req, res) => res.json(discovery.cancel(req.visitor)));
 app.get('/api/library', async (req, res) => {
   const snapshot = library.snapshot(req.visitor);
   const books = snapshot.books.map((book) => ({ ...book, learning: learning.info(library.getBook(book.id, req.visitor)) }));

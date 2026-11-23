@@ -1,0 +1,14 @@
+use_default_settings: true
+general:
+  instance_name: Langy book search
+search:
+  autocomplete: ''
+  formats: [html, json]
+server:
+  secret_key: ultrasecretkey
+  limiter: false
+  public_instance: false
+  image_proxy: false
+outgoing:
+  request_timeout: 5.0
+  max_request_timeout: 10.0

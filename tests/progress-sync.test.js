@@ -315,6 +315,17 @@ test('authenticated book word counts and reading totals persist across saved vie
   base = await f.start(); assert.equal((await snapshot()).vocabulary.reading.words, 2);
 });
 
+test('book discovery uses the existing login and validates preferences before making AI or search requests', async (t) => {
+  const f = await fixture(t), base = await f.start();
+  assert.equal((await fetch(base + '/api/discovery')).status, 401);
+  const status = await response(base, '/api/discovery', { headers: json });
+  assert.equal(status.state, 'idle'); assert.equal(status.result, null); assert.ok(status.libraryCount > 0);
+  const invalid = await response(base, '/api/discovery', { method: 'POST', headers: json, body: JSON.stringify({ language: 'not a language' }), status: 422 });
+  assert.match(invalid.error, /valid book language/);
+  assert.equal((await response(base, '/api/discovery', { headers: json })).state, 'idle');
+  assert.equal((await response(base, '/api/discovery', { method: 'DELETE', headers: json })).state, 'idle');
+});
+
 test('demo mode never exposes shared progress, external audio imports, chapter uploads or rescans', async (t) => {
   const f = await fixture(t, { demo: true, password: '' });
   const base = await f.start();
