@@ -153,7 +153,7 @@
           <input id="narration-seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="Book audio position" disabled>
           <div id="narration-markers" class="narration-markers"></div>
         </div>
-        <span id="narration-time">0:00 / 0:00</span>
+        <span id="narration-time" role="timer" aria-live="off" aria-label="Listening time">0:00 / 0:00</span>
         <label class="podcast-speed" data-podcast-control hidden>Speed
           <select id="narration-rate" aria-label="Podcast playback speed">
             <option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option>

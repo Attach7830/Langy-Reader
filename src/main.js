@@ -16,6 +16,7 @@ import { narration } from './narration.js';
 import { readingProgressSync } from './reading-sync.js';
 import { pinyinOverlay } from './pinyin.js';
 import { readingVocabulary } from './reading-vocabulary.js';
+import { renderSummaryDetail } from './summary-detail.js';
 import { eventKey, getProgress, getSettings, keyLabel, languageName, modes, saveProgress, saveSettings, syncDeviceId, updateAppearance } from './settings.js';
 
 const viewer = $('#viewer');
@@ -265,8 +266,7 @@ function showSummaryResult(entry) {
 }
 
 function detailState(state, text) {
-  summaryDetailBody.dataset.state = state;
-  summaryDetailBody.textContent = text;
+  renderSummaryDetail(summaryDetailBody, state, text);
 }
 
 async function explainSummary(mode, label, selected) {
@@ -293,13 +293,13 @@ async function explainSummary(mode, label, selected) {
   detailState('loading', 'Generating an explanation…');
   summaryDetail.scrollIntoView({ block: 'nearest' });
   try {
-    const { text } = await api('/api/ai/summary', {
+    const result = await api('/api/ai/summary', {
       method: 'POST', signal: controller.signal,
       body: { ...entry.body, mode, question, brief: entry.text },
     });
     if (summaryController !== controller) return;
-    entry.details.set(key, text);
-    detailState('complete', text);
+    entry.details.set(key, result);
+    detailState('complete', result);
   } catch (error) {
     if (summaryController === controller && error.name !== 'AbortError') detailState('error', error.message);
   } finally {

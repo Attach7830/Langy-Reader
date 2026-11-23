@@ -24,12 +24,13 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   const previousChapter = $('#narration-previous-chapter'), nextChapter = $('#narration-next-chapter');
   const rate = $('#narration-rate'), podcastToggle = $('#podcast-toggle');
   const recordingChoice = $('#narration-recording');
-  let recordingCount = 0;
+  let recordingCount = 0, markerRate;
   let recording, recordingBook, connection = false, previewAudio = false, unit, local, descriptor, timed = [], timingMap = new Map();
   let lifecycle = 0, controller, poll, animation, bookRequest, following = false, followAgain = false, forceFollow = false;
   let wantPlaying = false, enabled = false, initialSeek = true, highlighted, highlightedWindow;
   const cache = new Map();
   const ready = () => recording?.state === 'ready';
+  const playbackSpeed = () => Number.isFinite(audio.playbackRate) && audio.playbackRate > 0 ? audio.playbackRate : 1;
   const segmentFor = (key) => recording?.segments?.find((part) => part.key === key);
   const segmentAt = (time) => recording?.segments?.[Math.max(0, atTime(recording.segments, time))];
   // Media clocks can round a chapter's exact start down by a fraction of a millisecond.
@@ -52,9 +53,15 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     play.textContent = audio.paused ? 'Play' : 'Pause';
     play.setAttribute('aria-label', audio.paused ? 'Play narration' : 'Pause narration');
     const time = audio.currentTime || 0;
+    const speed = playbackSpeed(), duration = recording?.duration || 0;
+    const elapsed = timeLabel(time / speed), total = timeLabel(duration / speed), remaining = timeLabel((duration - time) / speed);
     seek.max = String(recording?.duration || 1);
     seek.value = String(time);
-    $('#narration-time').textContent = `${timeLabel(time)} / ${timeLabel(recording?.duration)}`;
+    const clock = $('#narration-time');
+    clock.textContent = `${elapsed} / ${total}`;
+    clock.setAttribute('aria-label', `Listening time at ${speed}×: ${elapsed} of ${total}; ${remaining} remaining.`);
+    clock.title = `${remaining} remaining at ${speed}×. Recording position: ${timeLabel(time)} / ${timeLabel(duration)}.`;
+    if (markerRate !== speed) renderMarkers();
     const index = chapterIndex();
     rewind.disabled = !loaded || time <= 0;
     forward.disabled = !loaded || time >= recording.duration;
@@ -62,7 +69,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     nextChapter.disabled = !loaded || index >= recording.markers.length - 1;
     if (index >= 0) chapters.value = String(index);
     const title = index >= 0 ? recording.markers[index].title : segmentAt(time)?.title;
-    seek.setAttribute('aria-valuetext', `${timeLabel(time)} of ${timeLabel(recording?.duration)}${title ? ` · ${title}` : ''}`);
+    seek.setAttribute('aria-valuetext', `${elapsed} of ${total} at ${speed}×${title ? ` · ${title}` : ''}`);
     if (ready() && title) status.textContent = title
       + (recording.quality ? ` · ${recording.quality.textPercent}% of text matched` : '')
       + (recording.approximateSections ? ' · Some page timing is approximate.' : '');
@@ -176,11 +183,12 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   function pausePlayback() { wantPlaying = false; audio.pause(); }
   function renderMarkers() {
     const entries = recording?.markers || [];
+    markerRate = playbackSpeed();
     chapters.replaceChildren(...entries.map((marker, index) => new Option(marker.title, String(index))));
     markers.replaceChildren(...entries.map((marker) => {
       const tick = element('button', 'narration-marker');
       tick.type = 'button'; tick.tabIndex = -1;
-      tick.title = `${marker.title} · ${timeLabel(marker.time)}`;
+      tick.title = `${marker.title} · ${timeLabel(marker.time / markerRate)} at ${markerRate}×`;
       tick.setAttribute('aria-label', tick.title);
       tick.style.left = `${marker.time / recording.duration * 100}%`;
       tick.addEventListener('click', () => seekTo(marker.time));
@@ -298,6 +306,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     if (!enabled) { audio.pause(); wantPlaying = false; clearHighlight(); }
     else if (recording) void updateRecording({ connected: connection, previewAudio, audio: recording }).catch((error) => { status.textContent = error.message; });
     if (!preferences().audioHighlight) clearHighlight();
+    controls();
   }
   function toggle() {
     if (!enabled || !ready()) return;

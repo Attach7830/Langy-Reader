@@ -319,6 +319,9 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 #summary-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font: 400 17px/1.55 "Spectral", Georgia, "Noto Sans SC", "Noto Sans TC", serif; }
 #summary-detail-body[data-state="loading"] { color: var(--muted); }
 #summary-detail-body[data-state="error"] { color: var(--danger); }
+.summary-explanation-section + .summary-explanation-section { margin-top: 16px; }
+.summary-explanation-section h4 { margin: 0 0 5px; font: 600 13px/1.4 "DM Sans", sans-serif; color: var(--muted); }
+.summary-explanation-section p { margin: 0; }
 .reader-footer {
   display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 10px;
   min-height: 61px; padding: 7px 20px; background: var(--surface); border-top: 1px solid var(--border);
