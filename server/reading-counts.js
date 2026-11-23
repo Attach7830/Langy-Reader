@@ -18,10 +18,10 @@ export function readingUnits(section, fallback) {
     const locale = baseLanguage((span?.from <= word.from && span.to > word.from ? span.language : null)
       || (token?.from <= word.from && token.to > word.from ? token.language : null) || language);
     const characters = !['ja', 'ko'].includes(locale) ? [...word.word.matchAll(new RegExp(hanPattern, 'gu'))] : [];
-    if (!characters.length) { units.push({ from: word.from, to: word.to, unit: 'words' }); continue; }
-    for (const match of characters) units.push({ from: word.from + match.index, to: word.from + match.index + match[0].length, unit: 'characters' });
+    if (!characters.length) { units.push({ from: word.from, to: word.to, unit: 'words', language: locale }); continue; }
+    for (const match of characters) units.push({ from: word.from + match.index, to: word.from + match.index + match[0].length, unit: 'characters', language: 'zh' });
     const rest = word.word.replace(new RegExp(hanPattern, 'gu'), (match) => ' '.repeat(match.length));
-    for (const part of textWords(rest, language)) units.push({ from: word.from + part.from, to: word.from + part.to, unit: 'words' });
+    for (const part of textWords(rest, language)) units.push({ from: word.from + part.from, to: word.from + part.to, unit: 'words', language: locale });
   }
   return units.sort((a, b) => a.from - b.from);
 }

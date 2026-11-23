@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { readerVocabulary } from '../server/reader-vocabulary.js';
+import { compareVocabularyDensity } from '../shared/vocabulary-ranking.js';
 
 function fixture(t) {
   const db = new DatabaseSync(':memory:'); t.after(() => db.close());
@@ -154,6 +155,67 @@ test('language corrections reclassify previously seen passages without erasing o
   const mixed = f.vocabulary.recommendations(source, [close, hybrid], f.vocabulary.profile());
   assert.deepEqual(mixed.map((book) => book.id), ['close', 'hybrid'], 'an additional unseen language is included in the similarity comparison');
   assert.deepEqual(mixed[1].familiarity.byLanguage.map(({ language, unfamiliar }) => ({ language, unfamiliar })), [{ language: 'en', unfamiliar: 1 }, { language: 'zh', unfamiliar: 1 }]);
+  const repeated = f.book('repeated', 'Z repeated', 'read books learn read books learn', ['read', 'books', 'learn', 'read', 'books', 'learn'].map((word) => [word, word === 'books' ? 'book' : word, 'en']));
+  assert.deepEqual(f.vocabulary.recommendations(source, [close, repeated], f.vocabulary.profile()).map((book) => book.id), ['repeated', 'close'],
+    'equally similar recommendations prefer the lower unfamiliar-lemma rate');
+});
+
+test('unfamiliar vocabulary ranks by distinct unknown lemmas per surface word, including names and numbers in book length', (t) => {
+  const f = fixture(t), known = ['uno', 'dos', 'tres', 'cuatro'];
+  const seed = f.book('known-seed', 'Already read', known.join(' '), known.map((word) => [word, word, 'es']));
+  f.vocabulary.savePreferences({ threshold: 2 });
+  f.record(seed, known, undefined, 'first'); f.record(seed, known, undefined, 'second');
+  const short = f.book('short', 'Short', 'uno dos tres cuatro nuevo uno dos tres Ana 2026', [
+    ...[...known, 'nuevo', 'uno', 'dos', 'tres'].map((word) => [word, word, 'es']), ['Ana', 'ana', 'es', true],
+  ]);
+  const repeated = Array.from({ length: 300 }, (_, n) => ['rarea', 'rareb', 'rarec'][n % 3]);
+  const long = f.book('long', 'Long', repeated.join(' '), repeated.map((word) => [word, word, 'es']));
+  let reader = f.vocabulary.profile(), brief = f.vocabulary.familiarity(short, reader), novel = f.vocabulary.familiarity(long, reader);
+  assert.equal(brief.byLanguage[0].unfamiliar, 1); assert.equal(novel.byLanguage[0].unfamiliar, 3);
+  assert.equal(brief.byLanguage[0].textTotal, 10, 'book length includes names and numbers omitted from the lemma inventory');
+  assert.equal(brief.unfamiliarDensity, 100); assert.equal(novel.unfamiliarDensity, 10);
+  assert.ok(brief.score > novel.score, 'the old inventory-coverage order conflicts with the requested word-count ratio');
+  assert.ok(compareVocabularyDensity(novel, brief) < 0, 'three unfamiliar lemmas in 300 words precede one in ten words');
+  assert.ok(compareVocabularyDensity(novel, brief, true) < 0, 'the threshold-based sort also uses surface word count');
+  f.vocabulary.record(long, { key: 'epub:0', digest: long.digest, session: 'peek', ranges: long.tokens.slice(0, 3).map(({ from, to }) => ({ from, to })) });
+  reader = f.vocabulary.profile(); novel = f.vocabulary.familiarity(long, reader);
+  assert.equal(novel.unfamiliarDensity, 0); assert.equal(novel.belowThresholdDensity, 10, 'seen once remains below the saved threshold');
+  f.vocabulary.savePreferences({ threshold: 1 });
+  assert.equal(f.vocabulary.familiarity(long, f.vocabulary.profile()).belowThresholdDensity, 0, 'changing the exposure threshold updates the rate immediately');
+});
+
+test('Mandarin density uses character occurrences, and extra English text cannot dilute the Mandarin rate', (t) => {
+  const f = fixture(t), seed = f.book('bilingual-seed', 'Seed', '中 hello', [['中', '中', 'zh'], ['hello', 'hello', 'en']]);
+  f.record(seed, ['中', 'hello']);
+  const mixed = (id, size) => {
+    const words = Array(size).fill('hello');
+    return f.book(id, id, '中文文 ' + words.join(' '), [
+      ...['中', '文', '文'].map((character) => [character, character, 'zh']), ...words.map((word) => [word, word, 'en']),
+    ]);
+  };
+  const reader = f.vocabulary.profile(), short = f.vocabulary.familiarity(mixed('short-mixed', 1), reader), long = f.vocabulary.familiarity(mixed('long-mixed', 300), reader);
+  for (const value of [short, long]) {
+    const chinese = value.byLanguage.find((item) => item.language === 'zh');
+    assert.equal(chinese.unfamiliar, 1); assert.equal(chinese.textTotal, 3); assert.equal(chinese.textUnit, 'characters');
+    assert.equal(chinese.unfamiliarPer1000, 1000 / 3);
+    assert.equal(value.byLanguage.find((item) => item.language === 'en').unfamiliarPer1000, 0);
+  }
+  assert.equal(compareVocabularyDensity(short, long), 0, 'mixed books average language rates instead of combining character and word counts');
+});
+
+test('existing count caches backfill language denominators without changing reading totals or requiring reanalysis', (t) => {
+  const f = fixture(t), book = f.book('cached', 'Cached', 'lee libros libros Ana 2026', [['lee', 'leer', 'es'], ['libros', 'libro', 'es'], ['libros', 'libro', 'es'], ['Ana', 'ana', 'es', true]]);
+  f.record(book, ['lee']);
+  assert.deepEqual(f.vocabulary.bookCounts(book), { words: 5, characters: 0 });
+  f.db.exec('ALTER TABLE reading_book_counts DROP COLUMN byLanguage');
+  const upgraded = readerVocabulary(f.db, { completedBooks: f.completedBooks });
+  const demand = upgraded.familiarity(book, upgraded.profile());
+  assert.equal(demand.unfamiliarDensity, 200); assert.equal(demand.byLanguage[0].textTotal, 5);
+  assert.deepEqual(JSON.parse(f.db.prepare('SELECT byLanguage FROM reading_book_counts WHERE book=?').get(book.id).byLanguage), [{ language: 'es', unit: 'words', total: 5 }]);
+  assert.equal(upgraded.profile().reading.words, 1);
+  const zero = { unfamiliarDensity: 0 }, pending = { unfamiliarDensity: null }, missing = {};
+  assert.ok(compareVocabularyDensity(zero, pending) < 0); assert.equal(compareVocabularyDensity(pending, missing), 0);
+  assert.ok(compareVocabularyDensity({ unfamiliarDensity: 1.00001 }, { unfamiliarDensity: 1.00002 }) < 0, 'ranking retains precision beyond rounded display values');
 });
 
 test('likely known vocabulary uses reading exposures alone, deduplicates overlapping pages, and changes immediately with the saved threshold', (t) => {

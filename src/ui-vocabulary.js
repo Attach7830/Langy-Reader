@@ -4,7 +4,12 @@ import { languageName } from './settings.js';
 const language = (code) => code === 'zh' ? 'Mandarin' : languageName(code);
 export const bookCountLabel = (counts) => counts ? [counts.words || !counts.characters ? `${counts.words.toLocaleString()} words` : '',
   counts.characters ? `${counts.characters.toLocaleString()} Mandarin characters` : ''].filter(Boolean).join(' · ') : '';
-export const unfamiliarLabel = (value) => value?.byLanguage?.map((item) => `${item.unfamiliar.toLocaleString()} ${language(item.language)} ${item.unit}`).join(' · ') || '';
+export const unfamiliarLabel = (value, belowThreshold = false) => value?.byLanguage?.map((item) => {
+  const count = belowThreshold ? item.belowThreshold : item.unfamiliar;
+  const rate = belowThreshold ? item.belowThresholdPer1000 : item.unfamiliarPer1000;
+  const density = Number.isFinite(rate) ? ` (${rate > 0 && rate < .01 ? '<0.01' : rate.toLocaleString(undefined, { maximumFractionDigits: 2 })} per 1,000 ${item.textUnit})` : '';
+  return `${count.toLocaleString()} ${language(item.language)} ${item.unit}${density}`;
+}).join(' · ') || '';
 
 export function vocabularyLibrary({ changed = () => {} } = {}) {
   const dialog = $('#vocabulary-dialog');

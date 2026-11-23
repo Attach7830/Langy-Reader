@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { RequestError } from './books.js';
 import { baseLanguage, hanPattern } from '../shared/language.js';
 import { readingUnits, countReadingUnits, mergeReadingRanges, bookCountSignature } from './reading-counts.js';
+import { compareVocabularyDensity } from '../shared/vocabulary-ranking.js';
 
 const identity = (language, unit, term) => JSON.stringify([language, unit, term]);
 const ownerOf = (visitor) => visitor?.id || '';
@@ -65,6 +66,8 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
   for (const name of ['words', 'characters']) if (!db.prepare('PRAGMA table_info(vocabulary_completions)').all().some((column) => column.name === name)) {
     db.exec(`ALTER TABLE vocabulary_completions ADD COLUMN ${name} INTEGER NOT NULL DEFAULT 0`); readingUpgrade = true;
   }
+  if (!db.prepare('PRAGMA table_info(reading_book_counts)').all().some(({ name }) => name === 'byLanguage'))
+    db.exec("ALTER TABLE reading_book_counts ADD COLUMN byLanguage TEXT NOT NULL DEFAULT '[]'");
   const inventories = new Map(), completionSources = new Map(), readingSources = new WeakMap();
   function inventory(book) {
     const row = db.prepare('SELECT state,metrics,lemmas FROM analyses WHERE book=?').get(book.id);
@@ -146,15 +149,25 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
   function familiarity(book, reader) {
     const groups = inventory(book);
     if (!groups) return null;
+    const counts = bookCounts(book, true);
     const byLanguage = [...groups.values()].map(({ language, unit, terms }) => {
       const seen = [...terms].filter((term) => reader.seen.has(identity(language, unit, term))).length;
       const likelyKnown = [...terms].filter((term) => reader.known?.has(identity(language, unit, term))).length;
-      return { language, unit, total: terms.size, seen, likelyKnown, unfamiliar: terms.size - seen,
+      const textUnit = unit === 'characters' ? 'characters' : 'words';
+      const textTotal = counts?.byLanguage.find((item) => item.language === language && item.unit === textUnit)?.total ?? 0;
+      const unfamiliar = terms.size - seen, belowThreshold = terms.size - likelyKnown;
+      return { language, unit, total: terms.size, seen, likelyKnown, unfamiliar, belowThreshold, textTotal, textUnit,
+        unfamiliarPer1000: textTotal > 0 ? unfamiliar * 1000 / textTotal : null,
+        belowThresholdPer1000: textTotal > 0 ? belowThreshold * 1000 / textTotal : null,
         knownCoverage: terms.size ? Math.round(likelyKnown / terms.size * 1000) / 10 : null,
         coverage: terms.size ? Math.round(seen / terms.size * 1000) / 10 : null };
     });
     const available = byLanguage.filter((item) => item.coverage != null);
-    return { byLanguage, score: available.length ? available.reduce((sum, item) => sum + item.coverage, 0) / available.length : 0,
+    // Average language-specific rates; never add lemma and character counts.
+    const density = (key) => byLanguage.length && byLanguage.every((item) => item[key] != null)
+      ? byLanguage.reduce((sum, item) => sum + item[key], 0) / byLanguage.length : null;
+    return { byLanguage, unfamiliarDensity: density('unfamiliarPer1000'), belowThresholdDensity: density('belowThresholdPer1000'),
+      score: available.length ? available.reduce((sum, item) => sum + item.coverage, 0) / available.length : 0,
       knownScore: available.length ? available.reduce((sum, item) => sum + item.knownCoverage, 0) / available.length : 0 };
   }
   function termsFor(token, groups) {
@@ -199,21 +212,28 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
     return result;
   }
   function saveBookCounts(book, sections) {
-    const counts = { words: 0, characters: 0 };
-    for (const section of sections) {
-      const total = countReadingUnits(readingUnits(section, book.language));
-      counts.words += total.words; counts.characters += total.characters;
+    const counts = { words: 0, characters: 0 }, byLanguage = new Map();
+    for (const section of sections) for (const item of readingUnits(section, book.language)) {
+      counts[item.unit]++;
+      const key = identity(item.language, item.unit, '');
+      if (!byLanguage.has(key)) byLanguage.set(key, { language: item.language, unit: item.unit, total: 0 });
+      byLanguage.get(key).total++;
     }
-    db.prepare(`INSERT INTO reading_book_counts VALUES(?,?,?,?) ON CONFLICT(book)
-      DO UPDATE SET signature=excluded.signature,words=excluded.words,characters=excluded.characters`)
-      .run(book.id, bookCountSignature(book), counts.words, counts.characters);
+    counts.byLanguage = [...byLanguage.values()];
+    db.prepare(`INSERT INTO reading_book_counts(book,signature,words,characters,byLanguage) VALUES(?,?,?,?,?) ON CONFLICT(book)
+      DO UPDATE SET signature=excluded.signature,words=excluded.words,characters=excluded.characters,byLanguage=excluded.byLanguage`)
+      .run(book.id, bookCountSignature(book), counts.words, counts.characters, JSON.stringify(counts.byLanguage));
     return counts;
   }
-  function bookCounts(book) {
-    const saved = db.prepare('SELECT signature,words,characters FROM reading_book_counts WHERE book=?').get(book.id);
-    if (saved?.signature === bookCountSignature(book)) return { words: saved.words, characters: saved.characters };
-    if (db.prepare('SELECT state FROM analyses WHERE book=?').get(book.id)?.state !== 'ready') return null;
-    return saveBookCounts(book, db.prepare('SELECT * FROM chapters WHERE book=?').all(book.id));
+  function bookCounts(book, includeLanguages = false) {
+    let saved = db.prepare('SELECT signature,words,characters,byLanguage FROM reading_book_counts WHERE book=?').get(book.id);
+    const cached = saved?.signature === bookCountSignature(book);
+    if (!cached || includeLanguages && saved.byLanguage === '[]' && saved.words + saved.characters > 0) {
+      if (db.prepare('SELECT state FROM analyses WHERE book=?').get(book.id)?.state !== 'ready') return null;
+      saved = saveBookCounts(book, db.prepare('SELECT * FROM chapters WHERE book=?').all(book.id));
+    }
+    return { words: saved.words, characters: saved.characters,
+      ...(includeLanguages ? { byLanguage: Array.isArray(saved.byLanguage) ? saved.byLanguage : JSON.parse(saved.byLanguage) } : {}) };
   }
   function readingTotals(visitor) {
     const owner = ownerOf(visitor);
@@ -412,7 +432,7 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
       if (!shared.length) return null;
       return { id: other.id, title: other.title, byLanguage: shared, familiarity: familiarity(other, reader),
         score: byLanguage.reduce((sum, item) => sum + item.similarity, 0) / byLanguage.length };
-    }).filter(Boolean).sort((a, b) => b.score - a.score || b.familiarity.score - a.familiarity.score || a.title.localeCompare(b.title)).slice(0, 8);
+    }).filter(Boolean).sort((a, b) => b.score - a.score || compareVocabularyDensity(a.familiarity, b.familiarity) || a.title.localeCompare(b.title)).slice(0, 8);
   }
   if (backfill || completionUpgrade || readingUpgrade) for (const row of db.prepare('SELECT book AS id FROM reading_exposures UNION SELECT book AS id FROM vocabulary_completions').all()) reindex(row);
   return { profile, familiarity, section, record, reindex, reindexReading, catalogue, recommendations, preferences, savePreferences, syncCompletions, belowThreshold, term, bookCounts, saveBookCounts };

@@ -22,6 +22,10 @@ test('library read controls show saved status, filter books, prevent duplicate s
     { id: 'one', title: 'One book', author: '', language: 'es', languages: [], format: 'epub', addedAt: 2, readAt: null, learning: { counts: { words: 3000, characters: 0 } } },
     { id: 'two', title: 'Two book', author: '', language: 'es', languages: [], format: 'pdf', addedAt: 1, readAt: 1000, learning: { counts: { words: 2000, characters: 20 } } },
   ];
+  books[0].familiarity = { score: 0, knownScore: 0, unfamiliarDensity: 10, belowThresholdDensity: 40,
+    byLanguage: [{ language: 'es', unit: 'lemmas', unfamiliar: 30, belowThreshold: 120, unfamiliarPer1000: 10, belowThresholdPer1000: 40, textUnit: 'words' }] };
+  books[1].familiarity = { score: 90, knownScore: 90, unfamiliarDensity: 12.5, belowThresholdDensity: 30,
+    byLanguage: [{ language: 'es', unit: 'lemmas', unfamiliar: 25, belowThreshold: 60, unfamiliarPer1000: 12.5, belowThresholdPer1000: 30, textUnit: 'words' }] };
   let fail = false, release, saves = 0;
   const held = new Promise((resolve) => { release = resolve; });
   globalThis.fetch = async (path, options) => {
@@ -41,6 +45,15 @@ test('library read controls show saved status, filter books, prevent duplicate s
   assert.equal(card('one').querySelector('.book-word-count').textContent, '3,000 words');
   assert.equal(card('two').querySelector('.book-word-count').textContent, '2,000 words · 20 Mandarin characters');
   assert.equal(document.querySelector('#reading-summary').textContent, 'Total words read: 2,000 · Mandarin characters read: 20');
+  const sort = document.querySelector('#book-sort');
+  const links = () => [...document.querySelectorAll('#books a[href^="#read/"]')].map((link) => link.getAttribute('href'));
+  sort.value = 'known'; sort.dispatchEvent(new dom.window.Event('change'));
+  assert.deepEqual(links(), ['#read/two', '#read/one']);
+  assert.match(card('two').textContent, /Below threshold: 60 Spanish lemmas \(30 per 1,000 words\)/);
+  sort.value = 'familiar'; sort.dispatchEvent(new dom.window.Event('change'));
+  assert.deepEqual(links(), ['#read/one', '#read/two'], 'the longer book ranks first despite having more unfamiliar lemmas and worse inventory coverage');
+  assert.match(card('one').textContent, /Not yet seen: 30 Spanish lemmas \(10 per 1,000 words\)/);
+  sort.value = 'recent'; sort.dispatchEvent(new dom.window.Event('change'));
   const toggle = card('one').querySelector('.book-read-toggle'); toggle.click();
   toggle.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
   assert.equal(toggle.disabled, true); assert.equal(saves, 1);
@@ -64,4 +77,8 @@ test('library read controls show saved status, filter books, prevent duplicate s
   await until(() => document.querySelector('#library-error').textContent === 'Unable to save status.');
   assert.equal(card('one').querySelector('.book-read-badge'), null);
   assert.equal(card('one').querySelector('.book-read-toggle').disabled, false);
+  books[0].familiarity = { unfamiliarDensity: null, belowThresholdDensity: null, byLanguage: [] };
+  books[1].familiarity = { ...books[1].familiarity, unfamiliarDensity: 0 };
+  await library.refresh(); sort.value = 'familiar'; sort.dispatchEvent(new dom.window.Event('change'));
+  assert.deepEqual(links(), ['#read/two', '#read/one'], 'zero unfamiliarity ranks before unavailable analysis');
 });

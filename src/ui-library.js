@@ -7,6 +7,7 @@ import { bookLanguagePicker } from './book-languages.js';
 import { vocabularyLibrary, unfamiliarLabel, recommendationRows, bookCountLabel } from './ui-vocabulary.js';
 import { bookVocabulary } from './ui-book-vocabulary.js';
 import { bookMetadataFields } from './book-metadata-fields.js';
+import { compareVocabularyDensity } from '../shared/vocabulary-ranking.js';
 
 const vocabularyLabel = (vocabulary) => vocabulary?.byLanguage?.map((item) => `${item.count.toLocaleString()} ${item.language === 'zh' ? 'Mandarin Han characters' : `${languageName(item.language)} ${item.unit}`}`).join(' · ');
 const wordCountLabel = (analysis) => bookCountLabel(analysis?.counts)
@@ -112,7 +113,10 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
     const vocabulary = vocabularyLabel(analysis?.vocabulary) || (count == null ? '' : `${count.toLocaleString()} ${analysis.vocabulary?.unit === 'characters' ? 'Han characters' : analysis.method === 'word forms' ? 'word forms' : 'lemmas'}`);
     const estimate = analysis?.reading?.band ? `Est. ${analysis.reading.band}` : '';
     detail.append(element('span', 'book-meta', [vocabulary, estimate].filter(Boolean).join(' · ')));
-    if (book.familiarity) detail.append(element('span', 'book-meta', 'Not yet seen: ' + unfamiliarLabel(book.familiarity)));
+    if (book.familiarity) {
+      const belowThreshold = $('#book-sort').value === 'known';
+      detail.append(element('span', 'book-meta', (belowThreshold ? 'Below threshold: ' : 'Not yet seen: ') + unfamiliarLabel(book.familiarity, belowThreshold)));
+    }
     const tools = element('button', 'button quiet small', 'Analysis & audio');
     tools.type = 'button';
     tools.setAttribute('aria-label', `Analysis and audio for ${book.title}`);
@@ -169,8 +173,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
       (!filter || `${book.title} ${book.author}`.toLocaleLowerCase().includes(filter)));
     $('#book-count').textContent = `${visible.length} ${visible.length === 1 ? 'book' : 'books'}`;
     if (['familiar', 'known'].includes($('#book-sort').value)) {
-      const score = $('#book-sort').value === 'known' ? 'knownScore' : 'score';
-      visible.sort((a, b) => (b.familiarity?.[score] ?? -1) - (a.familiarity?.[score] ?? -1) || b.addedAt - a.addedAt);
+      const belowThreshold = $('#book-sort').value === 'known';
+      visible.sort((a, b) => compareVocabularyDensity(a.familiarity, b.familiarity, belowThreshold) || b.addedAt - a.addedAt);
     }
     books.replaceChildren(...visible.map(bookCard));
     $('#empty-library').hidden = visible.length > 0;
