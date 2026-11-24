@@ -1,7 +1,8 @@
 import {
   createIcons, ArrowLeft, BookOpen, ChevronLeft, ChevronRight, Coffee, Folder, Info, Languages,
-  LibraryBig, List, Maximize, Minus, Pencil, Plus, RotateCcw, Search, Settings2, SkipBack, SkipForward, Sparkles, Upload, X, Headphones, Bookmark,
+  LibraryBig, List, Maximize, Minus, Pencil, Plus, RotateCcw, Search, Settings2, SkipBack, SkipForward, Sparkles, Star, Upload, X, Headphones, Bookmark,
 } from 'lucide';
+import { offlineRequest } from './offline.js';
 
 export const $ = (selector, root = document) => root.querySelector(selector);
 export const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -22,16 +23,19 @@ export function icon(name) {
 
 export function drawIcons() {
   createIcons({ icons: { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, Coffee, Folder, Info, Languages,
-    LibraryBig, List, Maximize, Minus, Pencil, Plus, RotateCcw, Search, Settings2, SkipBack, SkipForward, Sparkles, Upload, X, Headphones, Bookmark } });
+    LibraryBig, List, Maximize, Minus, Pencil, Plus, RotateCcw, Search, Settings2, SkipBack, SkipForward, Sparkles, Star, Upload, X, Headphones, Bookmark } });
 }
 
 export async function api(path, { body, method, signal, keepalive } = {}) {
   const form = body instanceof FormData;
-  const response = await fetch(path, {
+  let response;
+  try { response = await fetch(path, {
     method, signal, keepalive,
     headers: body && !form ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? form ? body : JSON.stringify(body) : undefined,
-  });
+  }); if (response.headers.get('X-Langy-Offline') === '1') throw new TypeError('Offline'); }
+  catch (error) { if (error.name === 'AbortError' || signal?.aborted) throw error; return offlineRequest(path, { body, method }); }
+  if (response.headers.get('X-Langy-Cached') === '1' && (path === '/api/library' || /\/bookmarks$/u.test(path))) return offlineRequest(path, { body, method });
   if (response.status === 204) return;
   const result = await response.json().catch(() => null);
   if (!response.ok || !result) {

@@ -41,6 +41,8 @@ export function discoveryScreen({ request, pollMs = 1800 }) {
       card.append(heading, element('p', 'book-meta', book.authors.join(', ') + (book.year != null ? ` · First published ${book.year}` : '')),
         element('p', '', book.reason), element('p', 'field-note', 'Connected to: ' + book.basedOn.map((item) => item.title).join(' · ')));
       const sources = element('div', 'discovery-sources');
+      const archive = element('a', 'button secondary small', 'Search Anna’s Archive');
+      archive.href = `/api/archive/search?${new URLSearchParams({ title: book.title, author: book.authors.join(' ') })}`; archive.target = '_blank'; archive.rel = 'noopener noreferrer'; sources.append(archive);
       for (const source of book.sources) { const link = sourceLink(source); if (link) sources.append(link); }
       card.append(sources); return card;
     }));

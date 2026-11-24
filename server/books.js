@@ -152,6 +152,16 @@ export async function openLibrary(dir, limits = null) {
       PRIMARY KEY(book,owner)
     ) STRICT;
     CREATE INDEX IF NOT EXISTS read_status_owner ON book_read_status(owner);
+    CREATE TABLE IF NOT EXISTS currently_reading (
+      book TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+      owner TEXT NOT NULL, starredAt INTEGER NOT NULL, expires INTEGER,
+      PRIMARY KEY(book,owner)
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS currently_reading_owner ON currently_reading(owner);
+    CREATE TABLE IF NOT EXISTS books_set_aside (
+      book TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,owner TEXT NOT NULL,setAsideAt INTEGER NOT NULL,expires INTEGER,
+      PRIMARY KEY(book,owner)
+    ) STRICT;
     CREATE TABLE IF NOT EXISTS bookmarks(
       id TEXT PRIMARY KEY,book TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,owner TEXT NOT NULL,
       target TEXT NOT NULL,label TEXT NOT NULL,note TEXT NOT NULL,created INTEGER NOT NULL,expires INTEGER,
@@ -197,11 +207,15 @@ export async function openLibrary(dir, limits = null) {
   const publicCategory = ({ id, name, language = null }) => ({ id, name, language });
   const readAt = (id, visitor) => db.prepare('SELECT readAt FROM book_read_status WHERE book=? AND owner=? AND (expires IS NULL OR expires>?)')
     .get(id, editable(visitor), Date.now())?.readAt ?? null;
+  const starredAt = (id, visitor) => db.prepare('SELECT starredAt FROM currently_reading WHERE book=? AND owner=? AND (expires IS NULL OR expires>?)')
+    .get(id, editable(visitor), Date.now())?.starredAt ?? null;
+  const setAsideAt = (id, visitor) => db.prepare('SELECT setAsideAt FROM books_set_aside WHERE book=? AND owner=? AND (expires IS NULL OR expires>?)')
+    .get(id, editable(visitor), Date.now())?.setAsideAt ?? null;
 
   function getBook(id, visitor) {
     const book = db.prepare(`SELECT * FROM books WHERE id = ? AND ${bookScope}`).get(id, editable(visitor));
     if (!book) throw new RequestError(404, 'Book not found.');
-    return { ...book, languages: JSON.parse(book.languages), readAt: readAt(id, visitor) };
+    return { ...book, languages: JSON.parse(book.languages), readAt: readAt(id, visitor), starredAt: starredAt(id, visitor), setAsideAt: setAsideAt(id, visitor) };
   }
 
   function categoryId(value, visitor) {
@@ -289,12 +303,15 @@ export async function openLibrary(dir, limits = null) {
       const owner = editable(visitor);
       const statuses = new Map(db.prepare('SELECT book,readAt FROM book_read_status WHERE owner=? AND (expires IS NULL OR expires>?)')
         .all(owner, Date.now()).map((row) => [row.book, row.readAt]));
+      const stars = new Map(db.prepare('SELECT book,starredAt FROM currently_reading WHERE owner=? AND (expires IS NULL OR expires>?)')
+        .all(owner, Date.now()).map((row) => [row.book, row.starredAt]));
+      const aside = new Map(db.prepare('SELECT book,setAsideAt FROM books_set_aside WHERE owner=? AND (expires IS NULL OR expires>?)').all(owner, Date.now()).map((row) => [row.book, row.setAsideAt]));
       return {
         demo: Boolean(limits), maxUpload: limits?.upload ?? maxUpload,
         updatedAt: Number(db.prepare("SELECT value FROM library_meta WHERE key = 'updatedAt'").get().value),
         categories: db.prepare(`SELECT id, name, language FROM categories WHERE ${categoryScope} ORDER BY name COLLATE NOCASE`).all(owner),
         books: db.prepare(`SELECT * FROM books WHERE ${bookScope} ORDER BY addedAt DESC, id`).all(owner)
-          .map((book) => publicBook({ ...book, readAt: statuses.get(book.id) ?? null })),
+          .map((book) => publicBook({ ...book, readAt: statuses.get(book.id) ?? null, starredAt: stars.get(book.id) ?? null, setAsideAt: aside.get(book.id) ?? null })),
       };
     },
     saveCategory(id, body, isNew, visitor) {
@@ -419,6 +436,28 @@ export async function openLibrary(dir, limits = null) {
       touch();
       return { id, readAt: readAt(id, visitor) };
     },
+    setCurrentlyReading(id, body, visitor) {
+      getBook(id, visitor);
+      if (typeof body.currentlyReading !== 'boolean') throw new RequestError(422, 'Choose whether this book is currently being read.');
+      if (limits && (!visitor || visitor.expires <= Date.now())) throw new RequestError(410, 'Your demo session expired. Reload and try again.');
+      if (body.currentlyReading) {
+        db.prepare('INSERT INTO currently_reading VALUES(?,?,?,?) ON CONFLICT(book,owner) DO NOTHING').run(id, editable(visitor), Date.now(), visitor?.expires ?? null);
+        db.prepare('DELETE FROM books_set_aside WHERE book=? AND owner=?').run(id, editable(visitor));
+      }
+      else db.prepare('DELETE FROM currently_reading WHERE book=? AND owner=?').run(id, editable(visitor));
+      touch();
+      return { id, starredAt: starredAt(id, visitor), setAsideAt: setAsideAt(id, visitor) };
+    },
+    setAside(id, body, visitor) {
+      getBook(id, visitor);
+      if (typeof body.setAside !== 'boolean') throw new RequestError(422, 'Choose whether to set this book aside.');
+      if (limits && (!visitor || visitor.expires <= Date.now())) throw new RequestError(410, 'Your demo session expired. Reload and try again.');
+      if (body.setAside) {
+        db.prepare('INSERT INTO books_set_aside VALUES(?,?,?,?) ON CONFLICT(book,owner) DO NOTHING').run(id, editable(visitor), Date.now(), visitor?.expires ?? null);
+        db.prepare('DELETE FROM currently_reading WHERE book=? AND owner=?').run(id, editable(visitor));
+      } else db.prepare('DELETE FROM books_set_aside WHERE book=? AND owner=?').run(id, editable(visitor));
+      touch(); return { id, setAsideAt: setAsideAt(id, visitor), starredAt: starredAt(id, visitor) };
+    },
     async removeBook(id, visitor) {
       const book = getBook(id, visitor);
       if (book.owner !== editable(visitor)) throw new RequestError(403, 'The sample book is read-only.');
@@ -433,6 +472,8 @@ export async function openLibrary(dir, limits = null) {
       db.prepare('DELETE FROM books WHERE expires <= ?').run(now);
       db.prepare('DELETE FROM categories WHERE expires <= ?').run(now);
       db.prepare('DELETE FROM book_read_status WHERE expires <= ?').run(now);
+      db.prepare('DELETE FROM currently_reading WHERE expires <= ?').run(now);
+      db.prepare('DELETE FROM books_set_aside WHERE expires <= ?').run(now);
       if (expired.length) touch();
       const paths = expired.flatMap((book) => [filePath(book), coverPath(book)]);
       const removed = await Promise.allSettled(paths.map((path) => rm(path, { force: true })));

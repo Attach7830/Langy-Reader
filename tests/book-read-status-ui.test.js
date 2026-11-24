@@ -12,6 +12,7 @@ test('library read controls show saved status, filter books, prevent duplicate s
   const names = ['window', 'document', 'Option', 'Node', 'Element', 'HTMLElement', 'CustomEvent'];
   const originals = new Map(names.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
   for (const name of names) Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: dom.window[name] });
+  dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   const originalFetch = globalThis.fetch, originalInterval = globalThis.setInterval, intervals = [];
   globalThis.setInterval = (...args) => { const handle = originalInterval(...args); intervals.push(handle); return handle; };
   t.after(() => {
@@ -38,7 +39,8 @@ test('library read controls show saved status, filter books, prevent duplicate s
     books[0].readAt = JSON.parse(options.body).read ? 2000 : null;
     return Response.json({ id: 'one', readAt: books[0].readAt });
   };
-  const library = libraryScreen({ progress: {}, onRemove() {} }); await library.refresh();
+  let preferences = { quietLibrary: false };
+  const library = libraryScreen({ progress: {}, onRemove() {}, preferences: () => preferences, changePreferences: (updated) => { preferences = { ...preferences, ...updated }; } }); await library.refresh();
   const card = (id) => document.querySelector(`#books a[href="#read/${id}"]`)?.closest('article');
   assert.equal(card('one').querySelector('.book-read-badge'), null);
   assert.equal(card('two').querySelector('.book-read-badge').textContent, 'Read');
@@ -81,4 +83,9 @@ test('library read controls show saved status, filter books, prevent duplicate s
   books[1].familiarity = { ...books[1].familiarity, unfamiliarDensity: 0 };
   await library.refresh(); sort.value = 'familiar'; sort.dispatchEvent(new dom.window.Event('change'));
   assert.deepEqual(links(), ['#read/two', '#read/one'], 'zero unfamiliarity ranks before unavailable analysis');
+  document.querySelector('#library-details-toggle').click();
+  assert.equal(document.querySelector('#reading-filter').hidden, false); assert.equal(document.querySelector('#book-sort').hidden, false);
+  assert.ok([...document.querySelectorAll('.book-learning')].every((detail) => !detail.open), 'quiet mode collapses book details');
+  document.querySelector('#open-reading-history').click(); assert.equal(document.querySelector('#reading-history-dialog').open, true);
+  assert.equal(document.querySelector('#reading-summary').closest('dialog').id, 'reading-history-dialog');
 });

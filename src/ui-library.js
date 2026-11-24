@@ -7,24 +7,27 @@ import { bookLanguagePicker } from './book-languages.js';
 import { vocabularyLibrary, unfamiliarLabel, recommendationRows, bookCountLabel } from './ui-vocabulary.js';
 import { bookVocabulary } from './ui-book-vocabulary.js';
 import { bookMetadataFields } from './book-metadata-fields.js';
-import { compareVocabularyDensity } from '../shared/vocabulary-ranking.js';
+import { compareLibraryBooks } from '../shared/library-order.js';
 import { bookCover, bookCoverPicker } from './book-covers.js';
 import { archiveBulk } from './archive-bulk.js';
 import { pdfOCR } from './pdf-ocr.js';
 import { bookLanguageSuggestions } from './reading-languages.js';
+import { showReadingTime } from './ui-reading-time.js';
+import { audiobookshelfBook } from './audiobookshelf-ui.js';
+import { offlineDownloads } from './offline-downloads.js';
 
 const vocabularyLabel = (vocabulary) => vocabulary?.byLanguage?.map((item) => `${item.count.toLocaleString()} ${item.language === 'zh' ? 'Mandarin Han characters' : `${languageName(item.language)} ${item.unit}`}`).join(' · ');
 const wordCountLabel = (analysis) => bookCountLabel(analysis?.counts)
   || (analysis?.counting?.state === 'error' ? 'Word count unavailable' : 'Counting words…');
 
-export function libraryScreen({ progress, onRemove, detectMetadata, readingLanguages = () => null }) {
+export function libraryScreen({ progress, onRemove, detectMetadata, readingLanguages = () => null, onSnapshot = () => {}, preferences = () => ({ quietLibrary: true }), changePreferences = () => {} }) {
   const search = $('#search');
   const books = $('#books');
   const bookDialog = $('#book-dialog');
   const bookForm = $('#book-form');
   const coverPicker = bookCoverPicker(bookForm, $('#book-cover-options'));
   const bulkImport = archiveBulk(bookForm);
-  const ocr = pdfOCR({ changed: refresh });
+  const ocr = pdfOCR({ changed: refresh, readingLanguages });
   const languagePicker = bookLanguagePicker(bookForm);
   const vocabularyUI = vocabularyLibrary({ changed: refresh });
   const bookVocabularyUI = bookVocabulary();
@@ -38,10 +41,15 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   const metadataFields = bookMetadataFields({ form: bookForm, status: $('#book-metadata-status'), detect: detectMetadata,
     active: () => !editingBook && bookDialog.open && $('#book-source').value === 'file' });
   const pendingReadStatus = new Set();
+  const pendingStars = new Set();
+  const pendingAside = new Set();
   let audioUploading = false;
+  let expandedDetails = new Set(), previousQuiet;
   const audioUI = audioTools({ book: () => learningBook, refresh: learningStatus });
+  const absBook = audiobookshelfBook({ book: () => learningBook, changed: learningStatus });
+  const offline = offlineDownloads();
   $('#refresh-storage').addEventListener('click', () => void refreshStorage());
-  setInterval(() => {
+  const storageTimer = setInterval(() => {
     if (!document.hidden && !$('#library-screen').hidden) void refreshStorage();
   }, 60_000);
   const archiveWorking = (job) => job && ['queued', 'downloading', 'importing'].includes(job.state);
@@ -75,6 +83,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
 
   function bookCard(book) {
     const card = element('article', 'book-card');
+    card.dataset.book = book.id;
     const link = element('a');
     link.href = `#read/${encodeURIComponent(book.id)}`;
     const saved = progress[book.id]?.syncDirty || !snapshot.progress?.[book.id]
@@ -84,6 +93,9 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     const info = element('div', 'book-info');
     const meta = [book.author, languageName(book.language)].filter(Boolean).join(' · ');
     info.append(element('span', 'book-title', book.title), element('span', 'book-meta', meta));
+    if (book.starredAt) info.append(element('span', 'book-read-badge', 'Currently reading'));
+    if (book.setAsideAt) info.append(element('span', 'book-read-badge', 'Set aside'));
+    if (saved && book.starredAt) info.append(element('span', 'button secondary small book-resume-label', 'Resume'));
     if (book.readAt) {
       const badge = element('span', 'book-read-badge', 'Read');
       badge.title = `Marked as read on ${new Date(book.readAt).toLocaleDateString()}`;
@@ -99,13 +111,34 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
       info.append(track);
     }
     card.append(link);
+    const star = element('button', 'icon-button book-star');
+    star.type = 'button';
+    star.title = book.starredAt ? 'Remove from Currently reading' : 'Mark as Currently reading';
+    star.setAttribute('aria-label', `${star.title}: ${book.title}`);
+    star.setAttribute('aria-pressed', String(Boolean(book.starredAt)));
+    star.disabled = pendingStars.has(book.id);
+    star.append(icon('star'));
+    star.addEventListener('click', async () => {
+      if (pendingStars.has(book.id) || pendingAside.has(book.id)) return;
+      pendingStars.add(book.id); star.disabled = true;
+      try {
+        const result = await api(`/api/books/${encodeURIComponent(book.id)}/currently-reading`, { method: 'PATCH', body: { currentlyReading: !book.starredAt } });
+        const current = snapshot.books.find((item) => item.id === book.id);
+        if (current) Object.assign(current, { starredAt: result.starredAt, setAsideAt: result.setAsideAt });
+        toast(result.starredAt ? 'Pinned to Currently reading' : 'Removed from Currently reading');
+        render();
+      } catch (error) { message('#library-error', error.message); }
+      finally { pendingStars.delete(book.id); render(); }
+    });
+    card.append(star);
     const analysis = book.learning;
-    const detail = element('div', 'book-learning');
+    const detail = element('details', 'book-learning'); detail.open = preferences().quietLibrary === false || expandedDetails.has(book.id);
+    detail.append(element('summary', '', 'Book options'));
     const wordCount = element('span', 'book-meta book-word-count', wordCountLabel(analysis));
     wordCount.title = analysis?.counting?.error || '';
     detail.append(wordCount);
     const count = analysis?.vocabulary?.count ?? analysis?.lemmaCount;
-    const vocabulary = vocabularyLabel(analysis?.vocabulary) || (count == null ? '' : `${count.toLocaleString()} ${analysis.vocabulary?.unit === 'characters' ? 'Han characters' : analysis.method === 'word forms' ? 'word forms' : 'lemmas'}`);
+    const vocabulary = analysis?.nativeExcluded ? 'L1 vocabulary excluded' : vocabularyLabel(analysis?.vocabulary) || (count == null ? '' : `${count.toLocaleString()} ${analysis.vocabulary?.unit === 'characters' ? 'Han characters' : analysis.method === 'word forms' ? 'word forms' : 'lemmas'}`);
     const estimate = analysis?.reading?.band ? `Est. ${analysis.reading.band}` : '';
     detail.append(element('span', 'book-meta', [vocabulary, estimate].filter(Boolean).join(' · ')));
     if (book.familiarity) {
@@ -117,6 +150,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     tools.setAttribute('aria-label', `Analysis and audio for ${book.title}`);
     tools.addEventListener('click', () => void showLearning(book));
     detail.append(tools);
+    const download = element('button', 'button quiet small', 'Save offline'); download.type = 'button';
+    download.addEventListener('click', () => void offline.open(book)); detail.append(download);
     if (book.format === 'pdf' && !snapshot.demo) {
       const scan = element('button', 'button quiet small', 'Scan PDF with OCR'); scan.type = 'button';
       scan.setAttribute('aria-label', `Scan ${book.title} with OCR`); scan.addEventListener('click', () => ocr.show(book)); detail.append(scan);
@@ -139,19 +174,35 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
       finally { pendingReadStatus.delete(book.id); render(); }
     });
     detail.append(readToggle);
+    const aside = element('button', 'button quiet small', book.setAsideAt ? 'Return to shelf' : 'Set aside'); aside.type = 'button'; aside.disabled = pendingAside.has(book.id);
+    aside.addEventListener('click', async () => {
+      if (pendingAside.has(book.id) || pendingStars.has(book.id)) return; pendingAside.add(book.id); aside.disabled = true;
+      try {
+        const result = await api(`/api/books/${book.id}/set-aside`, { method: 'PATCH', body: { setAside: !book.setAsideAt } });
+        Object.assign(book, result); toast(result.setAsideAt ? 'Book set aside. You can find it with the Set aside filter.' : 'Book returned to shelf');
+      } catch (error) { message('#library-error', error.message); }
+      finally { pendingAside.delete(book.id); render(); }
+    }); detail.append(aside);
     card.append(detail);
     if (!snapshot.demo || book.id !== 'sample') card.append(editButton(`Edit ${book.title}`, () => showBook(book), 'book-edit'));
     return card;
   }
 
   function render() {
+    const quiet = preferences().quietLibrary !== false;
+    expandedDetails = previousQuiet !== undefined && previousQuiet !== quiet ? new Set()
+      : new Set([...books.querySelectorAll('.book-card details[open]')].map((detail) => detail.closest('.book-card').dataset.book));
+    previousQuiet = quiet;
+    books.dataset.quiet = String(quiet);
+    $('#library-details-toggle').textContent = quiet ? 'Show reading details' : 'Hide reading details';
+    $('#library-details-toggle').setAttribute('aria-pressed', String(!quiet));
     const current = snapshot.categories.find(({ id }) => id === category);
     if (!current && !['all', 'uncategorized'].includes(category)) category = 'all';
     $('#all-books').setAttribute('aria-current', String(category === 'all'));
     $('#all-count').textContent = String(snapshot.books.length);
     $('#library-title').textContent = current?.name || (category === 'uncategorized' ? 'Uncategorized' : 'Your library');
     $('#library-description').textContent = category === 'all'
-      ? 'Read your EPUBs and PDFs with language help on hand.'
+      ? 'Choose a book to read.'
       : current?.language ? `${languageName(current.language)} folder · Books added here inherit this language.` : current ? 'Books in this category.' : 'Books without a category.';
     $('#demo-note').hidden = !snapshot.demo;
     const categoryRows = snapshot.categories.map((entry) => {
@@ -168,16 +219,14 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     const visible = snapshot.books.filter((book) =>
       (category === 'all' || (book.categoryId ?? 'uncategorized') === category) &&
       (!$('#reading-filter').value || book.learning?.reading?.band === $('#reading-filter').value) &&
-      (!$('#book-status-filter').value || Boolean(book.readAt) === ($('#book-status-filter').value === 'read')) &&
+      (!$('#book-status-filter').value || $('#book-status-filter').value === 'shelf' && !book.setAsideAt || $('#book-status-filter').value === 'set-aside' && book.setAsideAt
+        || ['read', 'unread'].includes($('#book-status-filter').value) && Boolean(book.readAt) === ($('#book-status-filter').value === 'read')) &&
       (!filter || `${book.title} ${book.author}`.toLocaleLowerCase().includes(filter)));
     $('#book-count').textContent = `${visible.length} ${visible.length === 1 ? 'book' : 'books'}`;
-    if (['familiar', 'known'].includes($('#book-sort').value)) {
-      const belowThreshold = $('#book-sort').value === 'known';
-      visible.sort((a, b) => compareVocabularyDensity(a.familiarity, b.familiarity, belowThreshold) || b.addedAt - a.addedAt);
-    }
+    visible.sort((a, b) => compareLibraryBooks(a, b, $('#book-sort').value));
     books.replaceChildren(...visible.map(bookCard));
     $('#empty-library').hidden = visible.length > 0;
-    const filtering = filter || $('#reading-filter').value || $('#book-status-filter').value;
+    const filtering = filter || $('#reading-filter').value || !['', 'shelf'].includes($('#book-status-filter').value);
     $('#empty-title').textContent = filtering ? 'No matching books' : 'No books here yet';
     $('#empty-detail').textContent = filtering ? 'Try a different search or filter.' : 'Import an EPUB or PDF to get started.';
     drawIcons();
@@ -188,6 +237,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
 
   async function refresh() {
     snapshot = await api('/api/library');
+    onSnapshot(snapshot);
+    showReadingTime(snapshot.readingTime);
     vocabularyUI.update(snapshot.vocabulary);
     showStorage(snapshot.storage);
     message('#library-error');
@@ -260,7 +311,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
       $('#learning-word-count').textContent = wordCountLabel(analysis);
       $('#learning-word-count').title = analysis.counting?.error || '';
       if (analysis.counting?.error) $('#learning-word-count').textContent += ` · ${analysis.counting.error}`;
-      $('#learning-stats').textContent = vocabulary?.byLanguage?.length
+      $('#learning-stats').textContent = analysis.nativeExcluded ? 'L1 vocabulary excluded' : vocabulary?.byLanguage?.length
         ? vocabularyLabel(vocabulary)
         : analysis.lemmaCount == null ? `Analysis ${analysis.state}…`
           : `${analysis.lemmaCount.toLocaleString()} ${analysis.method === 'word forms' ? 'word forms' : 'unique lemmas'} · ${analysis.wordCount.toLocaleString()} tokens${vocabulary?.characterCount ? ` · ${vocabulary.characterCount} unique Han characters` : ''}`;
@@ -315,7 +366,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
         const row = element('div', 'learning-chapter');
         const metadata = element('div');
         const availability = chapter.narratable ? '' : chapter.characters ? 'Above demo narration limit' : 'No selectable text';
-        const value = chapter.vocabulary?.count ?? chapter.lemmaCount;
+        const value = chapter.nativeExcluded ? null : chapter.vocabulary?.count ?? chapter.lemmaCount;
         const count = value == null ? '' : `${availability ? ' · ' : ''}${vocabularyLabel(chapter.vocabulary) || `${value} ${chapter.vocabulary?.unit || 'lemmas'}`}`;
         metadata.append(element('strong', '', chapter.title), element('span', 'book-meta', availability + count));
         row.append(metadata);
@@ -348,6 +399,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     $('#replace-book-audio').checked = false;
     message('#learning-error');
     learningDialog.showModal();
+    void absBook.show();
     await learningStatus();
   }
 
@@ -513,6 +565,9 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   $('#add-category').addEventListener('click', () => showCategory());
   $('#all-books').addEventListener('click', () => chooseCategory('all'));
   $('#import-book').addEventListener('click', () => showBook());
+  $('#open-reading-history').addEventListener('click', () => $('#reading-history-dialog').showModal());
+  $('#open-vocabulary').addEventListener('click', () => $('#reading-history-dialog').close(), true);
+  $('#library-details-toggle').addEventListener('click', () => { changePreferences({ quietLibrary: preferences().quietLibrary === false }); render(); });
   function showSlowImport(job) {
     slowImport = job;
     $('#archive-slow-download').hidden = false;
@@ -596,9 +651,11 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     const archiveImport = !editingBook && $('#book-source').value === 'anna';
     const reference = bookForm.elements.archiveReference.value.trim();
     const downloadMode = bookForm.elements.archiveDownloadMode.value, slowURL = bookForm.elements.archiveSlowURL.value.trim();
+    const queueUnavailable = bookForm.elements.archiveQueueUnavailable.checked;
     data.delete('source');
     data.delete('archiveReference');
     data.delete('archiveDownloadMode'); data.delete('archiveSlowURL');
+    data.delete('archiveQueueUnavailable');
     if (archiveImport && !bulkImport.enabled() && !reference) return message('#book-error', 'Paste an Anna’s Archive book link or MD5.');
     if (!editingBook && !archiveImport && !selectedFile) return message('#book-error', 'Choose an EPUB or PDF within the upload limit.');
     bookPending = true;
@@ -612,7 +669,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
       } else if (archiveImport) {
         data.delete('file');
         if (bulkImport.enabled()) {
-          const result = await api('/api/imports/anna/batch', { method: 'POST', body: { ...Object.fromEntries(data), downloadMode, sameAuthor: bulkImport.sameAuthor(), books: bulkImport.value() } });
+          const result = await api('/api/imports/anna/batch', { method: 'POST', body: { ...Object.fromEntries(data), downloadMode, queueUnavailable, sameAuthor: bulkImport.sameAuthor(), books: bulkImport.value() } });
           bookDialog.close(); toast(`${result.jobs.length} books queued`); await refresh(); return;
         }
         let job;
@@ -621,15 +678,10 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
             job = await api(`/api/imports/anna/${slowImport.id}/file`, { method: 'POST', body: upload }); }
           else if (slowURL) job = await api(`/api/imports/anna/${slowImport.id}/continue`, { method: 'POST', body: { url: slowURL, details: Object.fromEntries(data) } });
           else { message('#book-error', 'Open the slow download options, then choose the downloaded EPUB/PDF or paste its final file link.'); return; }
-        } else job = await api('/api/imports/anna', { method: 'POST', body: { ...Object.fromEntries(data), reference, downloadMode } });
-        while (archiveWorking(job)) {
-          message('#book-import-progress', importProgress(job));
-          message('#archive-import-status', importProgress(job));
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          job = await api(`/api/imports/anna/${job.id}`);
-        }
+        } else job = await api('/api/imports/anna', { method: 'POST', body: { ...Object.fromEntries(data), reference, downloadMode, queueUnavailable } });
         if (job.state === 'needs_action') { showSlowImport(job); await refresh(); return; }
-        if (job.state !== 'ready') throw new Error(job.error || 'The book could not be imported.');
+        if (job.state === 'error') throw new Error(job.error || 'The book could not be imported.');
+        bookDialog.close(); toast(job.state === 'ready' ? 'Book imported' : 'Book download queued'); await refresh(); return;
       } else {
         data.set('file', selectedFile);
         await api('/api/books', { method: 'POST', body: data });
@@ -695,5 +747,5 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   bookDialog.addEventListener('close', () => metadataFields.cancel());
   categoryDialog.addEventListener('cancel', (event) => { if (categoryPending) event.preventDefault(); });
 
-  return { refresh, render, get state() { return snapshot; } };
+  return { refresh, render, dispose() { clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
 }

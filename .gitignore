@@ -8,6 +8,13 @@ data/
 !.env.demo.example
 .secrets/
 archive-settings.json
+audiobookshelf-settings.json
+android/.gradle/
+android/local.properties
+android/**/build/
+*.keystore
+*.jks
+*.apk
 language/__pycache__/
 benchmarks/lemmas/__pycache__/
 benchmark-results/

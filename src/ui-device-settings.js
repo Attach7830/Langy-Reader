@@ -1,8 +1,11 @@
 import { $, api, message, toast } from './ui.js';
+import { audiobookshelfSettings } from './audiobookshelf-ui.js';
 
 export function deviceSettings() {
+  const audiobookshelf = audiobookshelfSettings();
   let loading = false, epoch = 0;
   async function load() {
+    void audiobookshelf.load();
     if (loading) return;
     const current = epoch;
     loading = true;

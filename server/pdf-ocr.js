@@ -38,7 +38,7 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
           job.state = 'running'; job.error = null; persist(job);
           if (job.outputBook) { try { job.result = library.getBook(job.outputBook); job.state = 'ready'; persist(job); continue; } catch {} }
           const book = library.getBook(job.source);
-          const url = new URL('/ocr', workerURL); url.search = new URLSearchParams({ languages: job.languages.join('+'), rotate: job.rotate ? '1' : '0' });
+          const url = new URL('/ocr', workerURL); url.search = new URLSearchParams({ languages: job.languages.join('+'), rotate: job.rotate ? '1' : '0', mode: job.mode || 'redo' });
           const response = await request(url, { method: 'POST', headers: { 'Content-Type': 'application/pdf' },
             body: createReadStream(library.filePath(book)), duplex: 'half', signal: AbortSignal.timeout(3_660_000) });
           if (!response.ok) {
@@ -67,11 +67,12 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
   function queue(book, body) {
     if (demo) throw new RequestError(403, 'PDF OCR is available on self-hosted installations.');
     if (book.format !== 'pdf') throw new RequestError(422, 'OCR is available for PDF books.');
+    if (body.mode !== undefined && !['redo', 'skip'].includes(body.mode)) throw new RequestError(422, 'Choose a supported OCR mode.');
     if (!Array.isArray(body.languages) || !body.languages.length || body.languages.length > 20 || body.languages.some((code) => typeof code !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_]{1,40}$/u.test(code))) throw new RequestError(422, 'Choose the OCR languages contained in the PDF.');
     const existing = [...jobs.values()].find((job) => job.source === book.id && ['queued', 'running', 'importing'].includes(job.state));
     if (existing) return publicJob(existing);
     if ([...jobs.values()].filter((job) => ['queued', 'running', 'importing'].includes(job.state)).length >= 10) throw new RequestError(409, 'Ten PDFs are already queued for OCR. Wait for some scans to finish.');
-    const job = { id: randomUUID(), source: book.id, languages: [...new Set(body.languages)], rotate: body.rotate !== false, state: 'queued' };
+    const job = { id: randomUUID(), source: book.id, languages: [...new Set(body.languages)], rotate: body.rotate !== false, mode: body.mode || 'redo', state: 'queued' };
     jobs.set(job.id, job); persist(job); void pump(); return publicJob(job);
   }
   if (!demo) void pump();

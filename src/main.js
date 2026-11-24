@@ -23,6 +23,13 @@ import { locationHistory } from './location-history.js';
 import { readingShortcut } from './reader-shortcuts.js';
 import { accountSettings } from './account-settings.js';
 import { readingBookmarks } from './bookmarks.js';
+import { readingTime as readingTimeTracker } from './reading-time.js';
+import { readingBookTools } from './book-tools.js';
+import { setOfflineAccount, setOfflineBook, flushOfflineChanges } from './offline.js';
+import { pageQuestions } from './page-question.js';
+import { audiobookshelfProgress } from './audiobookshelf-progress.js';
+import { setInterfaceLanguage } from './i18n.js';
+import { refreshOfflineReader } from './offline-downloads.js';
 import { bookLanguages } from '../shared/language.js';
 import { getProgress, getSettings, keyLabel, languageName, modes, saveProgress, saveSettings, subscribeSettings, syncDeviceId, updateAppearance } from './settings.js';
 
@@ -62,7 +69,12 @@ const pageGestures = pageNavigation({ host: $('.reading-main'),
   turn: (direction) => { viewer.focus({ preventScroll: true }); void move(direction); },
 });
 const pinyin = pinyinOverlay({ host: viewer, preferences: () => settings, renderer: () => renderer, book: () => activeBook, request: api });
-const vocabulary = readingVocabulary({ book: () => activeBook, renderer: () => renderer, request: api });
+const bookTools = readingBookTools({ book: () => activeBook, renderer: () => renderer, preferences: () => settings, request: api,
+  async go(target) { const moved = await returnHistory.follow(target); if (moved) await audio.seekSource(target.key, target.from); return moved; } });
+const questions = pageQuestions({ book: () => activeBook, renderer: () => renderer, preferences: () => settings, request: api });
+const readingTime = readingTimeTracker({ book: () => activeBook, renderer: () => renderer, request: api,
+  eligible: () => !document.hidden && document.hasFocus() && !readerScreen.hidden && !document.querySelector('dialog[open]') });
+const vocabulary = readingVocabulary({ book: () => activeBook, renderer: () => renderer, request: api, onDisplay: readingTime.evidence });
 viewer.addEventListener('scroll', () => vocabulary.refresh(), { passive: true });
 
 const words = wordHelp({
@@ -70,6 +82,7 @@ const words = wordHelp({
   languages: () => bookLanguages(activeBook),
   lemmaAt: (node, offset) => audio.lemmaAt(node, offset),
   seekWord: (node, offset) => audio.seekWord(node, offset),
+  onWord: readingTime.activity,
 });
 const audio = narration({
   preferences: () => settings, renderer: () => renderer, book: () => activeBook,
@@ -79,8 +92,10 @@ const audio = narration({
     audio.apply();
   },
 });
+const absProgress = audiobookshelfProgress({ audio, request: api });
 const library = libraryScreen({
-  progress, readingLanguages: () => settings.readingLanguages,
+  preferences: () => settings, changePreferences: (updated) => { applySettings({ ...settings, ...updated }); },
+  progress, readingLanguages: () => settings.readingLanguages, onSnapshot: (snapshot) => { readingTime.setAccount(snapshot.readingTime?.accountId); void setOfflineAccount(snapshot.readingTime?.accountId).catch(() => {}); },
   onRemove(id) { delete progress[id]; saveProgress(progress); },
 });
 const bookmarks = readingBookmarks({ book: () => activeBook, position: () => activePosition, go: (target) => returnHistory.follow(target), request: api });
@@ -144,6 +159,9 @@ document.addEventListener('pointerdown', (event) => { if (!event.target.closest(
 viewer.addEventListener('scroll', () => words.clear(), { passive: true });
 
 function applyAppearance() {
+  setInterfaceLanguage(settings.uiLanguage);
+  document.documentElement.dataset.immersion = String(settings.immersionMode);
+  $('#immersion-toggle').setAttribute('aria-pressed', String(settings.immersionMode));
   updateAppearance(settings);
   $('#word-mode-label').textContent = settings.mode === 'translation'
     ? `${languageName(settings.translationLanguage)} translation` : modes[settings.mode];
@@ -160,7 +178,11 @@ function applySettings(updated, aiChanged, notify = true) {
   if (JSON.stringify(settings) === JSON.stringify(updated) && !aiChanged) return;
   const relayout = ['size', 'font', 'line', 'width', 'summaryLanguage', 'showPinyin'].some((key) => settings[key] !== updated[key]);
   const syncChanged = settings.progressSyncEnabled !== updated.progressSyncEnabled;
+  const libraryChanged = settings.nativeLanguage !== updated.nativeLanguage || settings.quietLibrary !== updated.quietLibrary;
   settings = saveSettings(updated, { notify });
+  document.documentElement.dataset.immersion = String(settings.immersionMode);
+  $('#immersion-toggle').setAttribute('aria-pressed', String(settings.immersionMode));
+  if (libraryChanged && !activeBook) void library.refresh().catch((error) => message('#library-error', error.message));
   words.clear();
   applyAppearance();
   syncFullscreen();
@@ -222,6 +244,7 @@ function positionChanged(position) {
   if (!activeBook) return;
   const changed = position.target !== activePosition?.target;
   activePosition = position;
+  readingTime.refresh();
   const saved = { target: position.target, percent: position.percent };
   if (progress[activeBook.id]?.target !== saved.target || progress[activeBook.id]?.percent !== saved.percent) {
     progress[activeBook.id] = { ...progress[activeBook.id], ...saved };
@@ -268,6 +291,7 @@ function summaryState(state, text) {
 }
 
 function resetSummary() {
+  questions.reset();
   summaryController?.abort();
   summaryController = undefined;
   activeSummary = undefined;
@@ -417,6 +441,8 @@ async function toggleFullscreen() {
 }
 
 function closeReader() {
+  absProgress.stop();
+  readingTime.stop();
   returnHistory.reset();
   pageGestures.reset();
   vocabulary.stop();
@@ -430,6 +456,7 @@ function closeReader() {
   activeBook = undefined;
   activePosition = undefined;
   bookmarks.reset();
+  bookTools.reset();
   moving = false;
   words.clear();
   showSummary(false);
@@ -444,6 +471,7 @@ function closeReader() {
 async function openBook(book) {
   closeReader();
   activeBook = book;
+  setOfflineBook(book.id);
   loadController = new AbortController();
   const { signal } = loadController;
   showScreen('reader');
@@ -525,6 +553,7 @@ async function route() {
     document.title = 'Langy Reader';
     library.render();
     if (returning) {
+      await readingTime.flush();
       await vocabulary.flush();
       await library.refresh().catch((error) => message('#library-error', error.message));
     }
@@ -714,6 +743,7 @@ function toggleAudioToolbar() {
 $('#audio-toggle').addEventListener('click', toggleAudioToolbar);
 $('#summarize').addEventListener('click', summarize);
 $('#generate-summary').addEventListener('click', summarize);
+$('#immersion-toggle').addEventListener('click', () => applySettings({ ...settings, immersionMode: !settings.immersionMode }));
 $('#close-summary').addEventListener('click', closeSummary);
 $('#zoom-out').addEventListener('click', () => zoomPDF(zoom / 1.25));
 $('#zoom-in').addEventListener('click', () => zoomPDF(zoom * 1.25));
@@ -727,18 +757,22 @@ document.addEventListener('visibilitychange', () => {
   else { void readingSync.check(); void account.resume(); }
 });
 window.addEventListener('pagehide', () => { void readingSync.flush(); void account.flush({ keepalive: true }); });
-window.addEventListener('online', () => void account.resume());
+window.addEventListener('online', () => { void account.resume(); void flushOfflineChanges(); void readingSync.flushSaved(); void refreshOfflineReader(); });
 window.addEventListener('focus', () => void account.resume());
 $('#settings').addEventListener('close', () => void account.resume());
-setInterval(() => { if (!document.hidden) void account.resume(); }, 30_000);
+setInterval(() => { if (!document.hidden) { void account.resume(); void flushOfflineChanges(); void readingSync.flushSaved(); } }, 30_000);
 
 drawIcons();
+if ('serviceWorker' in navigator) void navigator.serviceWorker.register('/service-worker.js', { type: 'module' }).catch(() => {});
 applyAppearance();
 void checkAI();
 setInterval(checkAI, 30_000);
 try {
   await account.start();
   const snapshot = await library.refresh();
+  void flushOfflineChanges();
+  void readingSync.flushSaved();
+  void refreshOfflineReader();
   settingsUI.setDemo(snapshot.demo);
   $('#about-link').hidden = !snapshot.demo;
   window.addEventListener('hashchange', route);

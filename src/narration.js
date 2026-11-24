@@ -24,7 +24,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   const previousChapter = $('#narration-previous-chapter'), nextChapter = $('#narration-next-chapter');
   const rate = $('#narration-rate'), podcastToggle = $('#podcast-toggle');
   const recordingChoice = $('#narration-recording');
-  let recordingCount = 0, markerRate;
+  let recordingCount = 0, markerRate, absConnected = false;
   let recording, recordingBook, connection = false, previewAudio = false, unit, local, descriptor, timed = [], timingMap = new Map();
   let lifecycle = 0, controller, poll, animation, bookRequest, following = false, followAgain = false, forceFollow = false;
   let wantPlaying = false, enabled = false, initialSeek = true, highlighted, highlightedWindow;
@@ -200,7 +200,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     const epoch = lifecycle;
     const changed = recording?.id !== result.audio.id || recording?.state !== result.audio.state
       || recording?.alignmentRevision !== result.audio.alignmentRevision;
-    recording = result.audio; connection = result.connected; previewAudio = Boolean(result.previewAudio);
+    recording = result.audio; connection = result.connected; previewAudio = Boolean(result.previewAudio); absConnected = Boolean(result.absConnected);
     const isReady = ready();
     if (!isReady) play.disabled = seek.disabled = true;
     generate.hidden = !enabled || isReady || !['missing', 'error', 'cancelled'].includes(recording.state);
@@ -220,6 +220,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
       audio.onloadedmetadata = () => {
         if (epoch !== lifecycle) return;
         syncInitialPosition(); controls();
+        window.dispatchEvent(new CustomEvent('langy-recording-ready'));
         if (wantPlaying) void startPlayback();
       };
       audio.src = recording.url;
@@ -272,6 +273,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   window.addEventListener('langy-audio-updated', (event) => {
     if (book()?.id === event.detail?.book) void loadRecording();
   });
+  window.addEventListener('online', () => { if (book()) void loadRecording(); });
   function stop() {
     lifecycle++; controller?.abort(); clearTimeout(poll); cancelAnimationFrame(animation);
     audio.onloadedmetadata = null; audio.pause(); audio.removeAttribute('src'); audio.load(); clearHighlight();
@@ -357,6 +359,15 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   audio.addEventListener('error', () => { if (audio.getAttribute('src')) status.textContent = 'This book recording could not be played. Try generating it again.'; });
   return {
     refresh, apply, stop, toggle, skipBy,
+    playbackPosition() { return ready() && audio.getAttribute('src') === recording.url && Number.isFinite(audio.duration)
+      ? { book: book().id, recording: recording.id, time: audio.currentTime, duration: recording.duration, absConnected } : null; },
+    async resumeAt(time) { seekTo(time); await follow(true); },
+    async seekSource(key, from) {
+      if (!enabled || !ready()) return;
+      await loadCurrent(); if (unit?.key !== key) return;
+      const index = (unit.audio.timings || []).findIndex((stamp) => stamp.to > from && stamp.start != null);
+      const stamp = timed.find((item) => item.index === index); if (stamp) seekTo(stamp.start);
+    },
     lemmaAt(node, offset) { return unit?.method === 'word forms' ? null : local?.at(node, offset)?.token; },
     seekWord(node, offset) {
       if (!enabled || !ready()) return;

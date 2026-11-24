@@ -34,7 +34,9 @@ def ocr_languages():
     return {'languages': installed_languages()}
 
 
-def searchable_pdf(content, languages, correct_rotation=True):
+def searchable_pdf(content, languages, correct_rotation=True, mode='redo'):
+    if mode not in {'redo', 'skip'}:
+        raise HTTPException(422, 'Choose replace existing OCR or scan image-only pages.')
     if not 1 <= len(languages) <= 20 or any(code not in installed_languages() for code in languages):
         raise HTTPException(422, 'Choose installed OCR languages for this PDF.')
     if not content.startswith(b'%PDF-') or len(content) > LIMIT:
@@ -49,9 +51,12 @@ def searchable_pdf(content, languages, correct_rotation=True):
         reader = PdfReader(source)
         if reader.is_encrypted or not 0 < len(reader.pages) <= 2000:
             raise HTTPException(422, 'OCR needs an unencrypted PDF with 1 to 2,000 pages.')
-        command = ['ocrmypdf', '--skip-text', '--output-type', 'pdf', '--optimize', '0', '--jobs', '2',
-                   '--tesseract-timeout', '120', '--language', '+'.join(languages)]
-        if correct_rotation: command += ['--rotate-pages', '--deskew']
+        command = ['ocrmypdf', '--redo-ocr' if mode == 'redo' else '--skip-text', '--output-type', 'pdf', '--optimize', '0', '--jobs', '2',
+                   '--oversample', '300', '--tesseract-timeout', '120', '--language', '+'.join(languages)]
+        if correct_rotation:
+            command += ['--rotate-pages']
+            # OCRmyPDF cannot deskew losslessly while replacing a hidden text layer.
+            if mode == 'skip': command += ['--deskew']
         command += [str(source), str(output)]
         try:
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
@@ -83,7 +88,7 @@ async def ocr_pdf(request: Request):
         content.extend(chunk)
         if len(content) > LIMIT: raise HTTPException(413, 'PDFs must be at most 120 MiB.')
     languages = list(dict.fromkeys(request.query_params.get('languages', 'eng').split('+')))
-    folder, output, pages, text_pages = await run_in_threadpool(searchable_pdf, bytes(content), languages, request.query_params.get('rotate', '1') != '0')
+    folder, output, pages, text_pages = await run_in_threadpool(searchable_pdf, bytes(content), languages, request.query_params.get('rotate', '1') != '0', request.query_params.get('mode', 'redo'))
     return FileResponse(output, media_type='application/pdf', filename='searchable.pdf',
                         headers={'X-Langy-OCR-Pages': str(pages), 'X-Langy-OCR-Text-Pages': str(text_pages)},
                         background=BackgroundTask(shutil.rmtree, folder, ignore_errors=True))

@@ -36,8 +36,9 @@ test('the discovery page submits normalized preferences once, follows job stages
   const body = calls.find((call) => call.method === 'POST').body; assert.equal(body.language, 'es'); assert.equal(body.focus, 'Short novels');
   assert.equal(document.querySelectorAll('.discovery-card').length, 1); assert.equal(document.querySelector('.discovery-card img'), null);
   assert.equal(document.querySelector('.discovery-card h2').textContent, f.result.books[0].title);
-  const links = document.querySelectorAll('.discovery-sources a'); assert.equal(links.length, 1);
-  assert.equal(links[0].href, 'https://openlibrary.org/works/OL2W'); assert.equal(links[0].rel, 'noopener noreferrer');
+  const links = document.querySelectorAll('.discovery-sources a'); assert.equal(links.length, 2);
+  assert.equal(links[1].href, 'https://openlibrary.org/works/OL2W'); assert.equal(links[1].rel, 'noopener noreferrer');
+  const archive = new URL(links[0].href); assert.equal(archive.pathname, '/api/archive/search'); assert.equal(archive.searchParams.get('title'), f.result.books[0].title);
   assert.match(document.querySelector('.discovery-card').textContent, /Connected to: Pedro Páramo/);
   assert.equal(document.querySelector('#generate-discovery').textContent, 'Refresh recommendations');
 });

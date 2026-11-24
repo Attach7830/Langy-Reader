@@ -3,9 +3,11 @@ export const defaults = {
   font: 'spectral', size: 20, line: 1.65, width: 'balanced', pdfNight: true,
   audioEnabled: false, audioToolbarHidden: false, podcastMode: false, audioHighlight: true, audioRate: 1, audioRecordings: {},
   readingLanguages: ['es', 'en', 'pt', 'zh'],
+  uiLanguage: 'en', nativeLanguage: '',
   progressSyncEnabled: true, syncDeviceName: 'Langy browser',
   keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's', playback: 'p', audioToolbar: 'a', pinyin: 'y', returnLocation: 'b', rewindAudio: '[', forwardAudio: ']', bookmarks: 'm' },
   autoHideDocks: false,
+  immersionMode: false, quietLibrary: true,
 };
 
 export const accountFields = Object.keys(defaults).filter((key) => !['progressSyncEnabled', 'syncDeviceName'].includes(key));
@@ -32,7 +34,7 @@ export function preferenceChanges(before, after) {
 export function validatePreferences(value) {
   if (!isObject(value) || Object.keys(value).some((key) => !accountFields.includes(key))) throw new Error('Unknown reader preference.');
   const enums = { mode: ['translation', 'definition', 'synonyms', 'off'], theme: ['paper', 'sepia', 'dark', 'dusk', 'midnight'],
-    background: ['grain', 'plain', 'linen', 'grid'], font: ['spectral', 'georgia', 'sans', 'mono', 'chinese'], width: ['narrow', 'balanced', 'wide'] };
+    background: ['grain', 'plain', 'linen', 'grid'], font: ['spectral', 'georgia', 'sans', 'mono', 'chinese'], width: ['narrow', 'balanced', 'wide'], uiLanguage: ['en', 'es', 'pt', 'zh'] };
   for (const [key, setting] of Object.entries(value)) {
     let valid = true;
     if (enums[key]) valid = enums[key].includes(setting);
@@ -43,6 +45,7 @@ export function validatePreferences(value) {
     else if (key === 'readingLanguages') {
       try { valid = Array.isArray(setting) && setting.length >= 1 && setting.length <= 20 && setting.every((code) => typeof code === 'string' && code.length <= 35 && Intl.getCanonicalLocales(code).length === 1); } catch { valid = false; }
     }
+    else if (key === 'nativeLanguage' && setting === '') valid = true;
     else if (key.endsWith('Language')) {
       try { valid = typeof setting === 'string' && setting.length <= 35 && Boolean(Intl.getCanonicalLocales(setting)[0]); } catch { valid = false; }
     } else if (key === 'keys') valid = isObject(setting) && Object.entries(setting).every(([action, shortcut]) => Object.hasOwn(defaults.keys, action)

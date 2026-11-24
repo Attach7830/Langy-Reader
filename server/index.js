@@ -19,6 +19,11 @@ import { openBookDiscovery } from './book-discovery.js';
 import { openMandarin } from './mandarin.js';
 import { openReaderSettings } from './reader-settings.js';
 import { openPDFOCR } from './pdf-ocr.js';
+import { openReadingTime } from './reading-time.js';
+import { bookTools } from './book-tools.js';
+import { openAudiobookshelf } from './audiobookshelf.js';
+import { offlinePacks } from './offline-pack.js';
+import { learningLanguages } from '../shared/learning-languages.js';
 import { demoUploadLimit, demoBookLimit, demoStorageLimit, limitJobs, visitorMiddleware } from './demo.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -37,10 +42,16 @@ const ai = await openAISettings(dir, demo);
 const discovery = openBookDiscovery(dir, { library, ai, demo });
 const lookupSynonyms = openThesaurus();
 const mandarin = openMandarin();
-const learning = await openLearning(dir, library, demo, ai);
+const nativeLanguage = (visitor) => readerSettings.get(visitor).preferences.nativeLanguage || '';
+const learning = await openLearning(dir, library, demo, ai, { nativeLanguage });
+const readingTime = openReadingTime(dir, { section: (book, key) => learning.vocabulary.section(book, key) });
+const toolsForBook = bookTools({ learning, ai });
+const offlinePack = offlinePacks({ learning, mandarin, lookupSynonyms });
+const readingAccount = (visitor) => ({ id: readerSettings.get(visitor).accountId, expires: visitor?.expires ?? null });
 const vocabularyMeaning = vocabularyMeanings({ vocabulary: learning.vocabulary, ai, lookupSynonyms });
 const archive = await openArchive(dir, { library, demo, onImport: (book) => learning.ensure(library.getBook(book.id)) });
 const ocr = await openPDFOCR(dir, { library, demo, onImport: (book) => learning.ensure(library.getBook(book.id)) });
+const audiobookshelf = await openAudiobookshelf(dir, { library, learning, demo });
 const uploadLimit = limits?.upload ?? maxUpload;
 const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 6, fieldSize: 1024 } });
 const audioUpload = multer({ dest: library.uploads, limits: { fileSize: maxAudioUpload, files: 1, fields: 1, fieldSize: 1024 } });
@@ -95,7 +106,7 @@ app.use('/api', (req, res, next) => {
 
 if (demo) {
   const identifyVisitor = await visitorMiddleware(dir);
-  app.use(['/api/library', '/api/categories', '/api/books', '/api/storage', '/api/vocabulary', '/api/discovery', '/api/settings/reader'], identifyVisitor);
+  app.use(['/api/library', '/api/categories', '/api/books', '/api/storage', '/api/vocabulary', '/api/discovery', '/api/settings/reader', '/api/reading-time'], identifyVisitor);
   app.post(['/api/ai/word', '/api/ai/summary', '/api/mandarin/word', '/api/mandarin/readings', '/api/mandarin/pinyin'], identifyVisitor);
   await library.pruneDemoBooks();
   await learning.prune();
@@ -123,6 +134,18 @@ app.patch('/api/settings/reader', (req, res) => {
   res.status(result.conflict ? 409 : 200).json(result);
 });
 app.get('/api/settings/learning', (req, res) => res.json(learning.settings()));
+app.get('/api/settings/audiobookshelf', (_req, res) => res.json(audiobookshelf.settings()));
+app.put('/api/settings/audiobookshelf', async (req, res) => res.json(await audiobookshelf.save(req.body ?? {})));
+app.get('/api/audiobookshelf/libraries', async (_req, res) => res.json(await audiobookshelf.libraries()));
+app.get('/api/audiobookshelf/libraries/:id/items', async (req, res) => res.json(await audiobookshelf.items(req.params.id, Number(req.query.page || 0))));
+app.get('/api/books/:id/audiobookshelf', (req, res) => res.json(audiobookshelf.status(library.getBook(req.params.id, req.visitor))));
+app.post('/api/books/:id/audiobookshelf/export', (req, res) => res.status(202).json(audiobookshelf.queue(library.getBook(req.params.id, req.visitor), 'export', req.body ?? {})));
+app.post('/api/books/:id/audiobookshelf/import', (req, res) => res.status(202).json(audiobookshelf.queue(library.getBook(req.params.id, req.visitor), 'import', req.body ?? {})));
+app.post('/api/books/:id/audiobookshelf/link', async (req, res) => res.json(await audiobookshelf.attach(library.getBook(req.params.id, req.visitor), req.body ?? {})));
+app.get('/api/books/:id/audiobookshelf/progress', async (req, res) => res.json(await audiobookshelf.remote(library.getBook(req.params.id, req.visitor), req.query.recording)));
+app.put('/api/books/:id/audiobookshelf/progress', async (req, res) => {
+  const result = await audiobookshelf.push(library.getBook(req.params.id, req.visitor), req.body ?? {}); res.status(result.conflict ? 409 : 200).json(result);
+});
 app.get('/api/books/:id/ocr', async (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);
   let languages = [], error;
@@ -130,6 +153,23 @@ app.get('/api/books/:id/ocr', async (req, res) => {
   res.json({ available: !demo && book.format === 'pdf', job: ocr.status(book), languages, error });
 });
 app.get('/api/books/:id/bookmarks', (req, res) => res.json({ bookmarks: library.bookmarks(req.params.id, req.visitor) }));
+app.get('/api/books/:id/search', (req, res) => res.json(toolsForBook.search(library.getBook(req.params.id, req.visitor), req.query.q)));
+app.get('/api/books/:id/offline', async (req, res) => {
+  const pack = await offlinePack(library.getBook(req.params.id, req.visitor), req.query.recording);
+  pack.narration.absConnected = audiobookshelf.settings().connected; res.json(pack);
+});
+app.post('/api/books/:id/bookmarks/remove', (req, res) => {
+  const book = library.getBook(req.params.id, req.visitor), existing = library.bookmarks(book.id, req.visitor).find((item) => item.target === req.body?.target);
+  res.json(existing ? library.removeBookmark(book.id, existing.id, req.visitor) : { bookmarks: library.bookmarks(book.id, req.visitor) });
+});
+app.post('/api/books/:id/character-guide', ...demoGenerations, async (req, res) => {
+  const controller = new AbortController(); res.on('close', () => controller.abort());
+  res.json(await toolsForBook.guide(library.getBook(req.params.id, req.visitor), req.body ?? {}, controller.signal));
+});
+app.post('/api/books/:id/question', ...demoGenerations, async (req, res) => {
+  const controller = new AbortController(); res.on('close', () => controller.abort());
+  res.json(await toolsForBook.question(library.getBook(req.params.id, req.visitor), req.body ?? {}, controller.signal));
+});
 app.post('/api/books/:id/bookmarks', (req, res) => res.json(library.saveBookmark(req.params.id, req.body ?? {}, req.visitor)));
 app.delete('/api/books/:id/bookmarks/:bookmark', (req, res) => res.json(library.removeBookmark(req.params.id, req.params.bookmark, req.visitor)));
 app.post('/api/books/:id/ocr', (req, res) => res.status(202).json(ocr.queue(library.getBook(req.params.id, req.visitor), req.body ?? {})));
@@ -147,12 +187,18 @@ app.get('/api/settings/opds', (_, res) => res.json({
   authenticated: !demo && Boolean(password), pageSize: opdsPageSize,
 }));
 app.get('/api/storage', async (req, res) => res.json(await library.storage(req.visitor)));
+app.get('/api/reading-time', (req, res) => res.json(readingTime.summary(readingAccount(req.visitor))));
+app.post('/api/books/:id/reading-time', (req, res) => {
+  const book = library.getBook(req.params.id, req.visitor), account = readingAccount(req.visitor);
+  try { res.json(readingTime.record(book, req.body ?? {}, account)); }
+  catch (error) { if (error.accountChanged) return res.status(409).json({ error: error.message, accountChanged: true }); throw error; }
+});
 app.get('/api/discovery', (req, res) => res.json(discovery.status(req.visitor)));
 app.post('/api/discovery', ...(demo ? [limitJobs({ perMinute: 6, perVisitor: 2 })] : []), (req, res) => res.status(202).json(discovery.queue(req.body ?? {}, req.visitor)));
 app.delete('/api/discovery', (req, res) => res.json(discovery.cancel(req.visitor)));
 app.get('/api/library', async (req, res) => {
   const snapshot = library.snapshot(req.visitor);
-  const books = snapshot.books.map((book) => ({ ...book, learning: learning.info(library.getBook(book.id, req.visitor)) }));
+  const books = snapshot.books.map((book) => ({ ...book, learning: learningLanguages(learning.info(library.getBook(book.id, req.visitor)), nativeLanguage(req.visitor)) }));
   const reader = learning.vocabulary.profile(req.visitor);
   res.json({
     ...snapshot,
@@ -160,6 +206,7 @@ app.get('/api/library', async (req, res) => {
     storage: await library.storage(req.visitor),
     archive: { available: !demo, hasKey: archive.settings().hasKey, job: demo ? null : archive.latest(), jobs: demo ? [] : archive.list() },
     vocabulary: { byLanguage: reader.byLanguage, likelyKnown: reader.knownByLanguage, threshold: reader.threshold, reading: reader.reading },
+    readingTime: readingTime.summary(readingAccount(req.visitor)),
     books: books.map((book) => ({ ...book, familiarity: learning.vocabulary.familiarity(book, reader) })),
   });
 });
@@ -228,6 +275,13 @@ app.patch('/api/books/:id/read-status', (req, res) => {
   learning.vocabulary.syncCompletions(req.visitor);
   res.json(status);
 });
+app.patch('/api/books/:id/currently-reading', (req, res) => res.json(library.setCurrentlyReading(req.params.id, req.body ?? {}, req.visitor)));
+app.patch('/api/books/:id/set-aside', (req, res) => res.json(library.setAside(req.params.id, req.body ?? {}, req.visitor)));
+app.get('/api/archive/search', (req, res) => {
+  const title = typeof req.query.title === 'string' ? req.query.title.slice(0, 250) : '', author = typeof req.query.author === 'string' ? req.query.author.slice(0, 200) : '';
+  if (!title.trim()) throw new RequestError(422, 'Choose a book title to search.');
+  const url = new URL('/search', archive.settings().baseUrl || 'https://annas-archive.gl'); url.searchParams.set('q', [title.trim(), author.trim()].filter(Boolean).join(' ')); res.redirect(302, url.href);
+});
 app.delete('/api/books/:id', async (req, res) => {
   await library.removeBook(req.params.id, req.visitor);
   await learning.remove(req.params.id);
@@ -236,7 +290,9 @@ app.delete('/api/books/:id', async (req, res) => {
 });
 app.get('/api/books/:id/learning', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);
-  res.json({ ...learning.chapters(book), familiarity: learning.vocabulary.familiarity(book, learning.vocabulary.profile(req.visitor)) });
+  const result = learning.chapters(book), native = nativeLanguage(req.visitor);
+  res.json({ ...result, analysis: learningLanguages(result.analysis, native), chapters: result.chapters.map((chapter) => learningLanguages(chapter, native)),
+    familiarity: learning.vocabulary.familiarity(book, learning.vocabulary.profile(req.visitor)) });
 });
 app.post('/api/books/:id/learning', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);
@@ -255,7 +311,7 @@ app.get('/api/books/:id/chapters/:key', (req, res) => {
     typeof req.query.recording === 'string' ? req.query.recording : undefined));
 });
 app.get('/api/books/:id/narration', (req, res) => {
-  res.json(learning.narration(library.getBook(req.params.id, req.visitor), typeof req.query.recording === 'string' ? req.query.recording : undefined));
+  res.json({ ...learning.narration(library.getBook(req.params.id, req.visitor), typeof req.query.recording === 'string' ? req.query.recording : undefined), absConnected: audiobookshelf.settings().connected });
 });
 app.get('/api/books/:id/recordings', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);

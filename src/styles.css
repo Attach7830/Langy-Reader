@@ -188,10 +188,28 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .about-page section .button { margin-top: 14px; }
 .about-back { margin-left: -10px; }
 .library-toolbar {
-  margin-top: 32px; padding-block: 14px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px;
+  margin-top: 14px; padding-block: 10px; display: flex; flex-wrap: nowrap; align-items: center; gap: 7px;
   border-top: 1px solid var(--border);
 }
 .library-toolbar > span { font-size: 13px; }
+.library-toolbar .search-field { flex: 1 1 120px; width: auto; min-width: 55px; min-height: 34px; padding-inline: 8px; }
+.library-toolbar select { flex: 0 1 auto; width: auto; min-width: 0; min-height: 34px; max-width: 160px; padding: 5px 18px 5px 7px; font-size: 12px; text-overflow: ellipsis; }
+.library-toolbar #reading-filter { width: 108px; }
+.library-toolbar #book-sort { width: 150px; }
+.library-toolbar #book-status-filter { width: 103px; }
+.library-toolbar #book-count { flex: 0 0 auto; white-space: nowrap; }
+.library-view-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.book-learning > summary { color: var(--muted); font-size: 12px; cursor: pointer; padding-block: 7px; }
+html[data-immersion="true"] :is(#page-label, #position-detail, #narration-time, .reader-footer .footer-end .progress-track) { display: none; }
+html[data-immersion="true"] #abs-sync-status { display: none; }
+@media (max-width: 600px) {
+  .library-toolbar { gap: 5px; }
+  .library-toolbar #reading-filter { width: 74px; }
+  .library-toolbar #book-sort { width: 96px; }
+  .library-toolbar #book-status-filter { width: 80px; }
+  .library-toolbar #book-count { display: none; }
+  .library-toolbar .search-field input { width: 100%; font-size: 12px; }
+}
 .search-field {
   display: flex; align-items: center; gap: 8px; width: min(290px, 75%); min-height: 39px; padding: 0 11px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 7px; color: var(--muted);
@@ -259,7 +277,16 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .book-meta { margin-top: 3px; font-size: 12px; color: var(--muted); }
 .book-read-badge { display: inline-block; margin-top: 7px; padding: 2px 7px; border-radius: 4px; background: var(--brand-soft); color: var(--ink); font-size: 11px; font-weight: 600; }
 .book-edit { position: absolute; right: 0; bottom: 2px; }
+.book-star { position: absolute; top: 8px; right: 8px; background: var(--surface); box-shadow: var(--shadow); }
+.book-star[aria-pressed="true"] { color: var(--ink); background: var(--brand-soft); }
+.book-star[aria-pressed="true"] svg { fill: currentColor; }
+.book-resume-label { margin-top: 10px; }
+.book-search-result { display: grid; gap: 6px; border: 1px solid var(--border); border-radius: 7px; padding: 12px; text-align: start; background: var(--surface); color: var(--ink); }
+.book-search-result span { font-size: 14px; line-height: 1.6; }
+.book-guide-output { white-space: pre-wrap; font-size: 14px; line-height: 1.7; }
+.summary-question-form { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
 .book-card .progress-track { display: block; width: 100%; margin-top: 11px; }
+#books[data-quiet="true"] .progress-track { display: none; }
 .empty-state {
   display: flex; flex-direction: column; align-items: center; gap: 10px;
   padding: 72px 18px; border: 1px dashed var(--border); border-radius: 10px; text-align: center; color: var(--muted);
@@ -401,6 +428,7 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 .search-field input[type="search"] { border: 0; padding-inline: 0; background: transparent; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .field-note { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.settings-save-status { margin: 0; padding: 0 22px 14px; }
 .file-field {
   position: relative; display: grid; place-items: center; gap: 5px; padding: 20px 10px; text-align: center;
   border: 1px dashed var(--focus); border-radius: 8px; background: var(--well); cursor: pointer;
@@ -445,7 +473,7 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 .pdf-jump { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; }
 .pdf-jump + .toc-list { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 12px; }
 .settings-fields { display: grid; gap: 14px; }
-.book-learning { display: flex; align-items: center; flex-wrap: wrap; gap: 3px 8px; margin-top: 7px; }
+.book-learning { display: block; margin-top: 7px; }
 .book-learning .button { min-height: 28px; padding: 3px 5px; font-size: 12px; }
 .book-word-count { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; }
 .learning-chapter { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
@@ -584,6 +612,7 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
   .page-label { font-size: 12px; min-width: 66px; }
   .summary-panel { padding: 15px 18px; border-left: 0; border-top: 1px solid var(--border); }
   .modal-header, .modal-footer, .modal-body { padding-inline: 14px; }
+  .settings-save-status { padding-inline: 14px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; }

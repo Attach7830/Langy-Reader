@@ -86,6 +86,8 @@ export function recommendationRows(books, close) {
     link.href = `#read/${encodeURIComponent(book.id)}`; link.addEventListener('click', close);
     row.append(link, element('span', 'book-meta', book.byLanguage.map((item) => `${item.shared.toLocaleString()} shared ${language(item.language)} ${item.unit}`).join(' · ')),
       element('span', 'field-note', 'Not yet seen: ' + unfamiliarLabel(book.familiarity)));
+    const archive = element('a', 'button quiet small', 'Search Anna’s Archive');
+    archive.href = `/api/archive/search?${new URLSearchParams({ title: book.title, author: book.author || '' })}`; archive.target = '_blank'; archive.rel = 'noopener noreferrer'; row.append(archive);
     return row;
   });
 }

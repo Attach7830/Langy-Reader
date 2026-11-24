@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import { libraryScreen } from '../src/ui-library.js';
 
 async function until(check) { for (let n = 0; n < 150; n++) { if (check()) return; await delay(10); } throw new Error('Slow-import UI timed out'); }
-async function fixture(t) {
+async function fixture(t, { queued = false } = {}) {
   const dom = new JSDOM(await readFile(new URL('../index.html', import.meta.url), 'utf8'), { url: 'https://langy.test', pretendToBeVisual: true });
   const names = ['window', 'document', 'Option', 'Node', 'Element', 'HTMLElement', 'CustomEvent', 'FormData'];
   const previous = new Map(names.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
@@ -26,6 +26,7 @@ async function fixture(t) {
       const body = JSON.parse(options.body);
       job = { id: 'job', state: 'needs_action', source: 'slow', reference: md5, bookUrl: 'https://annas-archive.gl/md5/' + md5,
         notice: 'Fast-download allowance reached.', details: body };
+      if (queued) job = { ...job, state: 'downloading', source: 'fast', bytes: 3700000, total: 15200000 };
       return Response.json(job);
     }
     if (['/api/imports/anna/job/file', '/api/imports/anna/job/continue'].includes(path)) {
@@ -35,11 +36,12 @@ async function fixture(t) {
     assert.fail('Unexpected request: ' + path);
   };
   const ui = libraryScreen({ progress: {}, onRemove() {}, detectMetadata() { throw new Error('Slow imports do not use local-file preview'); } }); await ui.refresh();
+  t.after(() => ui.dispose());
   document.querySelector('#import-book').click(); const form = document.querySelector('#book-form');
   document.querySelector('#book-source').value = 'anna'; document.querySelector('#book-source').dispatchEvent(new dom.window.Event('change'));
   form.elements.archiveReference.value = md5; form.elements.title.value = 'Chosen title'; form.elements.coverStyle.value = 'forest';
   const submit = () => form.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
-  submit(); await until(() => !document.querySelector('#archive-slow-download').hidden && !document.querySelector('#book-submit').disabled);
+  submit(); await until(() => (queued ? !document.querySelector('#book-dialog').open : !document.querySelector('#archive-slow-download').hidden) && !document.querySelector('#book-submit').disabled);
   return { dom, form, calls, submit };
 }
 
@@ -56,6 +58,15 @@ test('quota fallback keeps the dialog and metadata, can be reopened, and uploads
   const upload = f.calls.find((call) => call.path.endsWith('/file'));
   assert.equal(upload.body.get('file').name, 'downloaded.epub'); assert.equal(JSON.parse(upload.body.get('details')).coverStyle, 'forest');
   assert.ok(document.querySelector('.book-cover[data-cover="forest"]'));
+});
+
+test('a single live download closes the import dialog immediately and allows another import with retry queuing on by default', async (t) => {
+  const f = await fixture(t, { queued: true });
+  assert.equal(document.querySelector('#book-dialog').open, false);
+  const request = f.calls.find((call) => call.path === '/api/imports/anna'); assert.equal(JSON.parse(request.body).queueUnavailable, true);
+  assert.match(document.querySelector('#archive-import-status').textContent, /Downloading book/u);
+  document.querySelector('#import-book').click(); assert.equal(document.querySelector('#book-dialog').open, true);
+  assert.equal(document.querySelector('#book-submit').disabled, false); assert.equal(f.form.elements.archiveQueueUnavailable.checked, true);
 });
 
 test('a final slow file link continues the existing job instead of consuming another fast download', async (t) => {

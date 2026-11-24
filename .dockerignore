@@ -6,5 +6,10 @@ server/thesaurus-data
 .env*
 .secrets/
 **/archive-settings.json
+**/audiobookshelf-settings.json
+android
+**/*.apk
+**/*.jks
+**/*.keystore
 benchmark-results
 **/__pycache__

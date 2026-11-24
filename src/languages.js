@@ -12,12 +12,17 @@ const codes = `
 const english = new Intl.DisplayNames('en', { type: 'language' });
 export const languageOptions = codes.map((code) => ({ code, label: english.of(code) }))
   .sort((a, b) => a.label.localeCompare(b.label));
+const localizedNames = new Map();
+for (const locale of ['en', 'es', 'pt', 'zh']) {
+  const names = new Intl.DisplayNames(locale, { type: 'language' });
+  for (const code of codes) if (!localizedNames.has(names.of(code).toLocaleLowerCase())) localizedNames.set(names.of(code).toLocaleLowerCase(), code);
+}
 
 export function parseLanguage(value) {
   const text = value.trim();
   const alias = { mandarin: 'zh', 'mandarin chinese': 'zh', 'simplified chinese': 'zh-Hans', 'traditional chinese': 'zh-Hant' }[text.toLowerCase()];
   if (alias) return alias;
-  const choice = languageOptions.find(({ label }) => label.toLowerCase() === text.toLowerCase());
-  try { return choice?.code ?? Intl.getCanonicalLocales(text.replaceAll('_', '-'))[0] ?? ''; }
+  const choice = localizedNames.get(text.toLocaleLowerCase());
+  try { return choice ?? Intl.getCanonicalLocales(text.replaceAll('_', '-'))[0] ?? ''; }
   catch { return ''; }
 }

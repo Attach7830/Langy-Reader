@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f7f5ef">
+  <link rel="manifest" href="/manifest.webmanifest">
   <title>Langy Reader</title>
   <link rel="icon" type="image/png" sizes="64x64" href="/src/assets/langy-icon.png?no-inline">
 </head>
@@ -38,6 +39,7 @@
         <div><h1 id="library-title">Your library</h1><p id="library-description"></p></div>
         <button class="button primary" id="import-book" type="button"><i data-lucide="plus"></i><span>Import book</span></button>
       </div>
+      <div class="library-view-actions"><button id="open-reading-history" class="button quiet small" type="button">Reading history</button><button id="library-details-toggle" class="button quiet small" type="button" aria-pressed="false">Show reading details</button></div>
       <div class="storage-status" id="library-storage" hidden>
         <span id="storage-summary"></span>
         <button class="button quiet small" id="refresh-storage" type="button" aria-label="Refresh available storage">Refresh</button>
@@ -55,18 +57,17 @@
       <div class="library-toolbar">
         <label class="search-field">
           <i data-lucide="search"></i>
-          <input type="search" id="search" placeholder="Search title or author" aria-label="Search title or author" autocomplete="off">
+          <input type="search" id="search" placeholder="Search…" aria-label="Search title or author" autocomplete="off">
         </label>
         <select id="reading-filter" aria-label="Estimated reading demand">
-          <option value="">All reading ranges</option><option>Novice</option><option>Intermediate</option>
+          <option value="">Any level</option><option>Novice</option><option>Intermediate</option>
           <option>Advanced</option><option>Superior</option><option>Distinguished</option>
         </select>
-        <select id="book-sort" aria-label="Sort books" title="Unique unfamiliar lemmas per 1,000 words, or Mandarin characters per 1,000 characters. Mixed books average each language’s rate; lower comes first."><option value="recent">Recently added</option><option value="familiar">Lowest unfamiliar vocabulary density</option><option value="known">Lowest below-threshold vocabulary density</option></select>
-        <select id="book-status-filter" aria-label="Reading status"><option value="">All books</option><option value="unread">Unread</option><option value="read">Read</option></select>
+        <select id="book-sort" aria-label="Sort books" title="Unique unfamiliar lemmas per 1,000 words, or Mandarin characters per 1,000 characters. Lower comes first."><option value="recent">Recent</option><option value="familiar">Unfamiliar ↓</option><option value="known">Below threshold ↓</option></select>
+        <select id="book-status-filter" aria-label="Reading status"><option value="shelf" selected>On shelf</option><option value="">All books</option><option value="unread">Unread</option><option value="read">Read</option><option value="set-aside">Set aside</option></select>
         <span class="muted" id="book-count"></span>
       </div>
-      <div class="reading-overview"><strong id="reading-summary">Total words read: 0</strong><p class="field-note" id="reading-detail"></p></div>
-      <div class="vocabulary-overview"><div><p class="field-note" id="vocabulary-summary"></p><p class="field-note" id="vocabulary-known-summary"></p></div><button class="button secondary small" id="open-vocabulary" type="button">Vocabulary</button></div>
+      <p class="field-note" id="offline-status" role="status" hidden></p>
       <div id="books" class="book-grid"></div>
       <p class="field-note" id="archive-import-status" role="status" hidden></p>
       <button class="button secondary small" id="resume-slow-import" type="button" hidden>Continue slow download</button>
@@ -129,6 +130,8 @@
         <button class="icon-button" id="sync-progress" type="button" title="Sync reading progress" aria-label="Sync reading progress" aria-controls="sync-notice" hidden><i data-lucide="rotate-ccw"></i></button>
         <button class="icon-button" id="contents-button" type="button" title="Contents" aria-label="Contents"><i data-lucide="list"></i></button>
         <button class="icon-button" id="bookmarks-button" type="button" title="Bookmarks (M)" aria-label="Bookmarks"><i data-lucide="bookmark"></i></button>
+        <button class="icon-button" id="book-tools-button" type="button" title="Search book and character guide" aria-label="Search book and character guide"><i data-lucide="search"></i></button>
+        <button class="icon-button" id="immersion-toggle" type="button" title="Immersion mode" aria-label="Immersion mode" aria-pressed="false"><i data-lucide="book-open"></i></button>
         <button class="icon-button" type="button" data-settings="reading" title="Reading settings" aria-label="Reading settings"><span class="type-icon">Aa</span></button>
         <button class="button quiet summary-toggle" id="summarize" type="button" aria-label="Page summary" aria-controls="summary-panel" aria-expanded="false"><i data-lucide="sparkles"></i><span>Summary</span></button>
         <button class="icon-button" id="audio-toggle" type="button" title="Narration" aria-label="Narration" aria-pressed="false"><i data-lucide="headphones"></i></button>
@@ -157,6 +160,14 @@
         <div id="summary-body" class="summary-body" dir="auto" aria-live="polite"></div>
         <button class="button secondary" id="generate-summary" type="button"><i data-lucide="sparkles"></i><span>Summarize page</span></button>
         <div id="summary-actions" class="summary-actions" role="group" aria-label="Summary follow-ups" hidden></div>
+        <form id="summary-question-form" class="form-stack summary-question-form">
+          <label class="field">Ask the chatbot <textarea name="question" rows="3" maxlength="1000" required placeholder="Ask about this page or what you’ve read so far…"></textarea></label>
+          <label class="field">Question context <select name="scope"><option value="page">Current page</option><option value="book">Book so far</option></select></label>
+          <button id="summary-question-submit" class="button secondary" type="submit">Ask question</button>
+          <p class="field-note">Answers use your summary language and the text you’ve reached.</p>
+        </form>
+        <div id="summary-question-answer" class="book-guide-output" dir="auto" aria-live="polite" data-user-content></div>
+        <p id="summary-question-error" class="form-error" role="alert" hidden></p>
         <section id="summary-detail" class="summary-detail" aria-labelledby="summary-detail-title" hidden>
           <h3 id="summary-detail-title" dir="auto"></h3>
           <div id="summary-detail-body" dir="auto" aria-live="polite"></div>
@@ -164,6 +175,8 @@
       </aside>
     </div>
     <footer class="reader-footer">
+      <div id="abs-sync-notice" class="sync-notice" hidden><p id="abs-sync-message"></p><div class="sync-notice-actions"><button id="abs-sync-resume" class="button secondary" type="button">Resume ABS position</button><button id="abs-sync-keep" class="button quiet" type="button">Keep this position</button></div></div>
+      <p id="abs-sync-status" class="field-note" role="status" hidden></p>
       <div class="narration-player" id="narration-player" role="region" aria-label="Book audio player" hidden>
         <label class="recording-choice" id="recording-choice" hidden>Recording <select id="narration-recording" aria-label="Book recording"></select></label>
         <audio id="narration-audio" preload="metadata"></audio>
@@ -212,6 +225,36 @@
     <div class="reader-dock-edge bottom-edge" aria-hidden="true"></div>
   </section>
 
+  <dialog class="modal" id="reading-history-dialog" aria-labelledby="reading-history-title">
+    <header class="modal-header"><h2 id="reading-history-title">Reading history</h2><button class="icon-button" type="button" data-close aria-label="Close reading history"><i data-lucide="x"></i></button></header>
+    <div class="modal-body form-stack">
+      <div class="reading-overview"><strong id="reading-summary">Total words read: 0</strong><p class="field-note" id="reading-detail"></p></div>
+      <div class="reading-overview"><strong id="reading-time-total">Total reading time: 0s</strong><p class="field-note" id="reading-time-languages"></p><p class="field-note">Active reading only. Pauses after two minutes without interaction, and while the app is hidden, unfocused or showing a dialog. Mixed-language time is estimated from visible text.</p></div>
+      <div class="vocabulary-overview"><div><p class="field-note" id="vocabulary-summary"></p><p class="field-note" id="vocabulary-known-summary"></p></div><button class="button secondary small" id="open-vocabulary" type="button">Vocabulary</button></div>
+    </div>
+  </dialog>
+  <dialog class="modal" id="offline-dialog" aria-labelledby="offline-title">
+    <header class="modal-header"><h2 id="offline-title">Offline reading pack</h2><button class="icon-button" type="button" data-close aria-label="Close offline downloads"><i data-lucide="x"></i></button></header>
+    <div class="modal-body form-stack"><p id="offline-book-title"></p>
+      <p class="field-note">Save the book, its dictionary entries and optional synced audio on this device. Progress, bookmarks, preferences, reading time and vocabulary exposure sync when you reconnect. AI summaries and audio generation need the server. Dictionary coverage varies by language.</p>
+      <label class="checkbox-row"><input id="offline-audio" type="checkbox" checked> Include audio</label>
+      <label class="field">Recording <select id="offline-recording"></select></label>
+      <button id="offline-save" class="button primary" type="button">Download reading pack</button>
+      <button id="offline-remove" class="button quiet" type="button">Remove this book’s offline downloads</button>
+      <p id="offline-progress" class="field-note" role="status" hidden></p><p id="offline-error" class="form-error" role="alert" hidden></p>
+    </div>
+  </dialog>
+  <dialog class="modal" id="book-tools-dialog" aria-labelledby="book-tools-title">
+    <header class="modal-header"><h2 id="book-tools-title">Explore this book</h2><button class="icon-button" type="button" data-close aria-label="Close book tools"><i data-lucide="x"></i></button></header>
+    <div class="modal-body form-stack">
+      <form id="book-search-form" class="form-stack"><label class="field">Find a word or phrase <input name="query" type="search" maxlength="120" required></label><button class="button secondary" type="submit">Search whole book</button></form>
+      <div id="book-search-results" class="form-stack" aria-live="polite"></div>
+      <h3>Character guide</h3><p class="field-note">Uses passages up to your current page. No later pages are sent to the model. AI explanations can still be mistaken.</p>
+      <label class="field">Person to explain (optional) <input id="character-guide-query" maxlength="100" placeholder="Leave blank for the current characters"></label>
+      <button id="generate-character-guide" class="button secondary" type="button">Explain characters and relationships</button>
+      <div id="character-guide-output" class="book-guide-output" dir="auto" aria-live="polite"></div><p id="book-tools-error" class="form-error" role="alert" hidden></p>
+    </div>
+  </dialog>
   <dialog class="modal settings-modal" id="settings" aria-labelledby="settings-title">
     <form id="settings-form">
       <header class="modal-header"><h2 id="settings-title">Settings</h2><button class="icon-button" type="button" data-close aria-label="Close settings"><i data-lucide="x"></i></button></header>
@@ -225,6 +268,10 @@
         <button type="button" data-settings-tab="ai" hidden>AI connection</button>
       </nav>
       <section class="modal-body" data-settings-panel="reading">
+        <label class="checkbox-row"><input name="immersionMode" type="checkbox"> Immersion mode</label>
+        <p class="field-note">Hide page numbers, progress bars and audio clocks. Word help and reading controls stay available.</p>
+        <label class="checkbox-row"><input name="quietLibrary" type="checkbox"> Quiet library</label>
+        <p class="field-note">Keep book details collapsed and statistics in Reading history.</p>
         <fieldset class="field theme-field"><legend>Theme</legend><div id="theme-options" class="theme-options"></div></fieldset>
         <label class="field">Reader background
           <select name="background">
@@ -248,6 +295,9 @@
         <label class="checkbox-row"><input name="pdfNight" type="checkbox"> Dim PDF pages in dark themes</label>
       </section>
       <section class="modal-body" data-settings-panel="language" hidden>
+        <label class="field">Interface language <select name="uiLanguage"><option value="en">English</option><option value="es">Español</option><option value="pt">Português</option><option value="zh">中文</option></select></label>
+        <label class="field">Native language (L1) <input name="nativeLanguage" list="languages" placeholder="Optional · e.g. English" autocomplete="off"></label>
+        <p class="field-note">Your L1 is excluded from vocabulary counts, unfamiliar-word lists and vocabulary-based recommendations. Book text, word counts, reading time and translation languages stay available. Leave blank to include all book languages.</p>
         <h3>My reading languages</h3>
         <p class="field-note">Choose the languages you read. Import book and bulk downloads will suggest this list; automatic detection remains available.</p>
         <label class="field">Add a reading language <input id="reading-language-choice" list="languages" maxlength="70" placeholder="For example, Portuguese or Mandarin" autocomplete="off"></label>
@@ -298,12 +348,8 @@
         <p class="field-note" id="model-result" aria-live="polite" hidden></p>
       </section>
       <section class="modal-body" data-settings-panel="narration" hidden>
-        <label class="checkbox-row"><input name="audioEnabled" type="checkbox"> Enable narration</label>
-        <label class="checkbox-row"><input name="audioToolbarHidden" type="checkbox"> Hide audio toolbar</label>
-        <p class="field-note">The toolbar can stay hidden while audio plays and pages follow. Space still plays or pauses narration. Clear this option to show the toolbar again.</p>
-        <label class="checkbox-row"><input name="podcastMode" type="checkbox"> Use podcast mode</label>
+        <p class="field-note">Open the headphones button in the reader to use narration. Show or hide the audio toolbar with that button or A. Podcast mode and playback speed are controlled on the toolbar.</p>
         <label class="checkbox-row"><input name="audioHighlight" type="checkbox"> Highlight spoken words</label>
-        <label class="field">Playback speed <input name="audioRate" type="number" min="0.5" max="2" step="0.05" value="1"></label>
         <p class="field-note">Pages always follow narration and scrubbing, including when word highlighting is off. Click a synchronized word or a chapter marker to seek while keeping the current play or pause state.</p>
         <p class="field-note" id="kokoro-managed" hidden>The demo owner manages the narration connection.</p>
         <div id="kokoro-settings" class="settings-fields" hidden>
@@ -344,6 +390,17 @@
         <p class="field-note" id="archive-result" role="status" hidden></p>
       </section>
       <section class="modal-body" data-settings-panel="devices" hidden>
+        <h3>Audiobookshelf</h3>
+        <p class="field-note" id="abs-demo-note" hidden>Connect Audiobookshelf on your self-hosted installation.</p>
+        <div id="abs-connection" class="form-stack">
+          <p class="field-note">Export book audio or import existing audiobooks. Both servers can run on different computers. Use the full ABS URL, including its port or subpath.</p>
+          <label class="field">Server URL <input id="abs-url" type="url" placeholder="http://192.168.1.20:13378" spellcheck="false"></label>
+          <label class="field">API key <input id="abs-key" type="password" autocomplete="new-password" placeholder="Audiobookshelf API key"></label>
+          <label class="checkbox-row"><input id="abs-clear-key" type="checkbox"> Remove saved API key</label>
+          <label class="field">Export library <select id="abs-library"></select></label>
+          <label class="field">Export folder <select id="abs-folder"></select></label>
+          <button id="abs-save" class="button secondary" type="button">Save and connect Audiobookshelf</button>
+        </div><p id="abs-settings-status" class="field-note" role="status" hidden></p>
         <h3>OPDS library</h3>
         <p class="field-note">Browse and download your books on an OPDS reader. On Xteink with CrossPoint firmware, open Settings → Connectivity → OPDS Servers → Add Server.</p>
         <p class="field-note" id="opds-demo-note" hidden>OPDS is available on your self-hosted installation. This demo does not publish visitors’ books in a shared catalog.</p>
@@ -371,7 +428,7 @@
         </div>
         <p class="field-note" id="sync-result" role="status" hidden></p>
       </section>
-      <p class="muted" id="account-settings-status" role="status">Loading account preferences…</p>
+      <p class="field-note settings-save-status" id="account-settings-status" role="status">Loading account preferences…</p>
       <p class="form-error" id="settings-error" role="alert" hidden></p>
       <footer class="modal-footer"><button class="button quiet" type="button" data-close>Cancel</button><button class="button primary" type="submit">Save settings</button></footer>
     </form>
@@ -394,6 +451,8 @@
             <button id="archive-add-row" class="button secondary small" type="button">Add another book</button>
           </section>
           <label class="field">Download method <select name="archiveDownloadMode"><option value="auto">Automatic: fast, then free slow download</option><option value="slow">Free slow download</option><option value="fast">Fast download only</option></select></label>
+          <label class="checkbox-row"><input name="archiveQueueUnavailable" type="checkbox" checked> Queue if unavailable</label>
+          <p class="field-note">Downloads run in the background. Unavailable requests retry every six hours by default. Browser checks for free slow downloads still need your interaction.</p>
           <p class="field-note">Fast downloads use your saved membership key. Slow downloads may need a browser check and wait. EPUB or PDF, up to 120 MiB. Server downloads continue if this dialog is closed.</p>
           <section class="form-stack" id="archive-slow-download" hidden aria-label="Continue slow download">
             <p class="field-note" id="archive-slow-notice" role="status"></p>
@@ -496,6 +555,18 @@
       <section class="recordings-section">
         <h3>Your audiobooks</h3>
         <p class="field-note" id="audio-upload-note">Upload one complete audiobook or up to 200 chapter files, totalling 1 GiB and at most 72 hours per recording. Preparation and sync run in the background.</p>
+        <section id="abs-book-tools" class="form-stack" hidden>
+          <h3>Audiobookshelf</h3>
+          <label class="field">Langy recording <select id="abs-book-recording"></select></label>
+          <button id="abs-export" class="button secondary" type="button">Export audio, book and cover to ABS</button>
+          <label class="field">ABS library <select id="abs-book-library"></select></label>
+          <label class="field">ABS title <select id="abs-book-item"></select></label>
+          <button id="abs-more-items" class="button quiet" type="button" hidden>Load more titles</button>
+          <button id="abs-import" class="button secondary" type="button">Import audio and sync with this book</button>
+          <p class="field-note">After export, let ABS scan the files and reopen this dialog to find the title. Link the exact same recording to sync listening positions.</p>
+          <label class="checkbox-row"><input id="abs-same-recording" type="checkbox"> These are the same recording in both apps</label>
+          <button id="abs-link" class="button secondary" type="button">Link recording for progress sync</button>
+        </section><p id="abs-book-status" class="field-note" role="status" hidden></p>
         <form id="upload-audio-form" class="form-stack">
           <label class="field">Recording name <input name="name" maxlength="120" placeholder="Narrator or edition (optional)"></label>
           <label class="field">Audiobook or chapter files <input name="file" type="file" accept=".mp3,.m4a,.m4b,.ogg,.opus,.wav,.flac,.aac,audio/*" multiple required></label>
@@ -560,9 +631,10 @@
       <div class="modal-body form-stack">
         <p class="field-note">Create a searchable copy of this PDF using local OCR. The original stays in your library. Open the copy for word help, summaries, vocabulary analysis and narration. Clear scans and the correct language choices improve recognition.</p>
         <label class="field">Languages in this PDF <select id="ocr-languages" multiple required size="7" aria-describedby="ocr-language-note"></select></label>
-        <p class="field-note" id="ocr-language-note">Select every language actually present. Hold Ctrl/Command to choose more than one on desktop; tap selections on mobile.</p>
+        <p class="field-note" id="ocr-language-note">Options come from My reading languages in Settings. Select the languages actually present. Hold Ctrl/Command to choose more than one on desktop; tap selections on mobile.</p>
+        <label class="field">OCR mode <select name="mode"><option value="redo">Replace existing OCR</option><option value="skip">Only scan pages without text</option></select></label>
         <label class="checkbox-row"><input name="rotate" type="checkbox" checked> Correct page rotation and skew</label>
-        <p class="field-note">Pages that already contain text are preserved. Scans run one at a time on your server without paid APIs. Up to 120 MiB and 2,000 pages; the searchable copy uses additional storage.</p>
+        <p class="field-note">Replace existing OCR rescans hidden text while preserving visible digital text. Rotation correction works in both modes; skew correction applies in “Only scan pages without text” mode. Scans use at least 300 DPI and run locally without paid APIs. Up to 120 MiB and 2,000 pages; the separate copy uses additional storage.</p>
         <p id="ocr-progress" class="field-note" role="status" hidden></p>
         <a id="ocr-result" class="button secondary" hidden>Open searchable copy</a>
         <p id="ocr-error" class="form-error" role="alert" hidden></p>

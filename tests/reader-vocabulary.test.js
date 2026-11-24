@@ -5,13 +5,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { readerVocabulary } from '../server/reader-vocabulary.js';
 import { compareVocabularyDensity } from '../shared/vocabulary-ranking.js';
 
-function fixture(t) {
+function fixture(t, options = {}) {
   const db = new DatabaseSync(':memory:'); t.after(() => db.close());
   db.exec(`CREATE TABLE analyses(book TEXT PRIMARY KEY,state TEXT,metrics TEXT,lemmas TEXT);
     CREATE TABLE chapters(book TEXT,key TEXT,text TEXT,digest TEXT,tokens TEXT,PRIMARY KEY(book,key));`);
   const completed = new Map();
   const completedBooks = (visitor) => [...(completed.get(visitor?.id || '')?.values() || [])];
-  const vocabulary = readerVocabulary(db, { completedBooks });
+  const vocabulary = readerVocabulary(db, { completedBooks, ...options });
   function book(id, title, text, words) {
     let cursor = 0;
     const tokens = words.map(([word, lemma, language, properName = false]) => {
@@ -92,6 +92,21 @@ test('pending book counts wait for analysis, and reader totals remain private an
   f.mark(source, true, { ...a, expires: 1 }); assert.equal(f.vocabulary.profile(a).reading.words, 0);
 });
 
+test('L1 selection excludes its vocabulary everywhere without deleting exposure data or conflating target languages', (t) => {
+  let native = 'en-GB'; const f = fixture(t, { nativeLanguage: () => native });
+  const first = f.book('first', 'Mixed', 'books libro 中文', [['books', 'book', 'en'], ['libro', 'libro', 'es'], ['中', '中', 'zh'], ['文', '文', 'zh']]);
+  const second = f.book('second', 'Mixed two', 'books libro', [['books', 'book', 'en'], ['libro', 'libro', 'es']]);
+  f.record(first, ['books', 'libro', '中']);
+  assert.deepEqual(f.vocabulary.catalogue().byLanguage.map((row) => row.language), ['es', 'zh']);
+  assert.ok(f.vocabulary.catalogue().entries.every((row) => row.language !== 'en'));
+  assert.ok(f.vocabulary.belowThreshold(first).entries.every((row) => row.language !== 'en'));
+  const profile = f.vocabulary.profile();
+  assert.deepEqual(f.vocabulary.familiarity(first, profile).byLanguage.map((row) => row.language), ['es', 'zh']);
+  assert.deepEqual(f.vocabulary.recommendations(first, [first, second], profile)[0].byLanguage.map((row) => row.language), ['es']);
+  native = 'zh-Hans'; assert.deepEqual(f.vocabulary.catalogue().byLanguage.map((row) => row.language), ['en', 'es']);
+  native = ''; assert.equal(f.vocabulary.catalogue().entries.length, 3, 'clearing L1 restores the existing English exposure without a rescan');
+});
+
 test('only displayed words enter the catalogue; inflections merge and language/character inventories remain separate', (t) => {
   const f = fixture(t);
   const spanish = f.book('mixed', 'Mixed', 'Hablo hablaron libros pie 中文书 Teresa', [
@@ -100,7 +115,7 @@ test('only displayed words enter the catalogue; inflections merge and language/c
   ]);
   const english = f.book('english', 'English', 'pie books', [['pie', 'pie', 'en'], ['books', 'book', 'en']]);
   f.record(spanish, ['Hablo', 'hablaron', 'pie', '中', '文', 'Teresa']);
-  assert.deepEqual(f.vocabulary.section(spanish, 'epub:0'), { key: 'epub:0', text: spanish.text, textHash: spanish.digest, textReady: true, analysisState: 'ready' });
+  assert.deepEqual(f.vocabulary.section(spanish, 'epub:0'), { key: 'epub:0', text: spanish.text, textHash: spanish.digest, languages: [], textReady: true, analysisState: 'ready' });
   let catalogue = f.vocabulary.catalogue();
   assert.deepEqual(catalogue.byLanguage, [{ language: 'es', unit: 'lemmas', count: 2 }, { language: 'zh', unit: 'characters', count: 2 }]);
   assert.ok(!catalogue.entries.some((item) => ['libro', '书', 'teresa'].includes(item.term)));

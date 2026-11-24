@@ -62,6 +62,7 @@ public class MainActivity extends Activity {
         settings.setSafeBrowsingEnabled(true);
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                if (!request.isForMainFrame()) return false;
                 Uri target = request.getUrl();
                 if (sameServer(target)) return false;
                 if ("https".equals(target.getScheme()) || "http".equals(target.getScheme())) {

@@ -110,18 +110,16 @@ export function settingsDialog({ preferences, apply }) {
     aiConfig = null;
     const current = preferences();
     readingLanguages.set(current.readingLanguages);
-    for (const key of ['mode', 'summaryLanguage', 'translationLanguage', 'theme', 'background', 'font', 'size', 'line', 'width']) {
+    for (const key of ['mode', 'summaryLanguage', 'translationLanguage', 'theme', 'background', 'font', 'size', 'line', 'width', 'uiLanguage', 'nativeLanguage']) {
       fields[key].value = current[key];
     }
     fields.autoHideDocks.checked = current.autoHideDocks;
+    fields.immersionMode.checked = current.immersionMode;
+    fields.quietLibrary.checked = current.quietLibrary;
     fields.pdfNight.checked = current.pdfNight;
     fields.synonymContextHelp.checked = current.synonymContextHelp;
     fields.showPinyin.checked = current.showPinyin;
-    fields.audioEnabled.checked = current.audioEnabled;
-    fields.audioToolbarHidden.checked = current.audioToolbarHidden;
-    fields.podcastMode.checked = current.podcastMode;
     fields.audioHighlight.checked = current.audioHighlight;
-    fields.audioRate.value = current.audioRate;
     fields.progressSyncEnabled.checked = current.progressSyncEnabled;
     fields.syncDeviceName.value = current.syncDeviceName;
     shadowKeys = { ...current.keys };
@@ -203,9 +201,10 @@ export function settingsDialog({ preferences, apply }) {
     }
     const summaryLanguage = parseLanguage(fields.summaryLanguage.value);
     const translationLanguage = parseLanguage(fields.translationLanguage.value);
+    const nativeLanguage = fields.nativeLanguage.value.trim() ? parseLanguage(fields.nativeLanguage.value) : '';
     let preferredLanguages;
     try { preferredLanguages = readingLanguages.value(); } catch (error) { section('language'); return message('#settings-error', error.message); }
-    if (!summaryLanguage || !translationLanguage) {
+    if (!summaryLanguage || !translationLanguage || fields.nativeLanguage.value.trim() && !nativeLanguage) {
       section('language');
       return message('#settings-error', 'Choose a summary and translation language or enter valid language codes.');
     }
@@ -234,19 +233,18 @@ export function settingsDialog({ preferences, apply }) {
       saveButton.disabled = false;
     }
     const updated = {
-      mode: fields.mode.value, summaryLanguage, translationLanguage, theme: fields.theme.value,
+      mode: fields.mode.value, summaryLanguage, translationLanguage, nativeLanguage, uiLanguage: fields.uiLanguage.value, theme: fields.theme.value,
       readingLanguages: preferredLanguages,
       synonymContextHelp: fields.synonymContextHelp.checked,
       showPinyin: fields.showPinyin.checked,
-      audioEnabled: fields.audioEnabled.checked, audioToolbarHidden: fields.audioToolbarHidden.checked,
       audioRecordings: preferences().audioRecordings || {},
-      podcastMode: fields.podcastMode.checked, audioHighlight: fields.audioHighlight.checked,
-      audioRate: Math.max(.5, Math.min(2, Number(fields.audioRate.value) || 1)),
+      audioHighlight: fields.audioHighlight.checked,
       progressSyncEnabled: fields.progressSyncEnabled.checked,
       syncDeviceName: fields.syncDeviceName.value.trim() || 'Langy browser',
       background: fields.background.value, font: fields.font.value, width: fields.width.value,
       size: fields.size.valueAsNumber, line: fields.line.valueAsNumber,
       autoHideDocks: fields.autoHideDocks.checked,
+      immersionMode: fields.immersionMode.checked, quietLibrary: fields.quietLibrary.checked,
       pdfNight: fields.pdfNight.checked, keys: { ...shadowKeys },
     };
     dialog.close();

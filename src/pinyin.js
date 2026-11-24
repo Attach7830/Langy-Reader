@@ -1,5 +1,6 @@
 import { readingText } from '../shared/reading-text.js';
 import { hanPattern, nodeLanguage, bookLanguages } from '../shared/language.js';
+import { pdfPinyinLayout } from './pinyin-layout.js';
 
 // Draw pronunciation beside original text ranges. The EPUB/PDF text and its
 // position paths are never wrapped, split or replaced with ruby annotations.
@@ -62,11 +63,19 @@ export function pinyinOverlay({ host, preferences, renderer, book, request }) {
         } catch (error) { if (error.name === 'AbortError') return; continue; }
       }
       const readings = new Map(pronunciation.map((item) => [item.from + from, item.pinyin]));
+      const pdf = root.classList.contains('textLayer');
+      if (pdf) for (const placed of pdfPinyinLayout(visible.filter((item) => !item.vertical).map((item) => ({ ...item, pinyin: readings.get(item.character.from) })).filter((item) => item.pinyin), viewport)) {
+        const label = document.createElement('span'); label.textContent = placed.text; label.lang = 'zh-Latn';
+        label.style.cssText = `left:${placed.left - origin.left}px;top:${placed.top - origin.top}px;width:${placed.width}px;font-size:${placed.size}px`;
+        labels.push(label);
+      }
       for (const item of visible) {
+        if (pdf && !item.vertical) continue;
         const pinyin = readings.get(item.character.from);
         if (!pinyin) continue;
         const width = item.vertical ? item.rect.height : item.rect.width;
-        const size = Math.min(item.fontSize * .43, width / Math.max(1, pinyin.length * .56));
+        const fontSize = pdf ? item.rect.width : item.fontSize;
+        const size = Math.min(fontSize * .43, width / Math.max(1, pinyin.length * .56));
         const label = document.createElement('span');
         label.textContent = pinyin; label.lang = 'zh-Latn';
         label.style.cssText = item.vertical

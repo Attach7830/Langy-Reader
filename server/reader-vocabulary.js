@@ -8,7 +8,7 @@ const identity = (language, unit, term) => JSON.stringify([language, unit, term]
 const ownerOf = (visitor) => visitor?.id || '';
 export const defaultKnownThreshold = 20;
 
-export function readerVocabulary(db, { completedBooks = null } = {}) {
+export function readerVocabulary(db, { completedBooks = null, nativeLanguage = () => '' } = {}) {
   const backfill = !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='vocabulary_occurrences'").get();
   const completionUpgrade = !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='vocabulary_completions'").get();
   let readingUpgrade = !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='reading_coverage'").get();
@@ -127,7 +127,7 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
         sum(trackedExposures+completionExposures) AS exposures,
         sum(trackedExposures) AS trackedExposures,sum(completionExposures) AS completionExposures
       FROM combined GROUP BY language,unit,term`)
-      .all(ownerOf(visitor), ownerOf(visitor), ownerOf(visitor));
+      .all(ownerOf(visitor), ownerOf(visitor), ownerOf(visitor)).filter((row) => row.language !== baseLanguage(nativeLanguage(visitor), ''));
   }
   function summarize(rows, threshold) {
     const seen = new Set(), known = new Set(), byLanguage = new Map(), knownByLanguage = new Map();
@@ -144,13 +144,13 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
   }
   function profile(visitor) {
     prune(); syncCompletions(visitor);
-    return { ...summarize(exposureRows(visitor), preferences(visitor).threshold), reading: readingTotals(visitor) };
+    return { ...summarize(exposureRows(visitor), preferences(visitor).threshold), nativeLanguage: baseLanguage(nativeLanguage(visitor), ''), reading: readingTotals(visitor) };
   }
   function familiarity(book, reader) {
     const groups = inventory(book);
     if (!groups) return null;
     const counts = bookCounts(book, true);
-    const byLanguage = [...groups.values()].map(({ language, unit, terms }) => {
+    const byLanguage = [...groups.values()].filter((group) => group.language !== reader.nativeLanguage).map(({ language, unit, terms }) => {
       const seen = [...terms].filter((term) => reader.seen.has(identity(language, unit, term))).length;
       const likelyKnown = [...terms].filter((term) => reader.known?.has(identity(language, unit, term))).length;
       const textUnit = unit === 'characters' ? 'characters' : 'words';
@@ -335,9 +335,9 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
     return { saved: true };
   }
   function section(book, key) {
-    const row = db.prepare('SELECT text,digest FROM chapters WHERE book=? AND key=?').get(book.id, key);
+    const row = db.prepare('SELECT * FROM chapters WHERE book=? AND key=?').get(book.id, key);
     if (!row) throw new RequestError(409, 'Wait for this book to finish analysis.');
-    return { key, text: row.text, textHash: row.digest, textReady: bookCounts(book) !== null,
+    return { key, text: row.text, textHash: row.digest, languages: JSON.parse(row.languages || '[]'), textReady: bookCounts(book) !== null,
       analysisState: db.prepare('SELECT state FROM analyses WHERE book=?').get(book.id)?.state };
   }
   function reindexReading(book) {
@@ -403,8 +403,9 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
     prune(); syncCompletions(visitor);
     const source = bookTerms(book), threshold = preferences(visitor).threshold;
     const recorded = new Map(exposureRows(visitor).map((row) => [identity(row.language, row.unit, row.term), row.exposures]));
-    const rows = source.counts.map((item) => ({ ...item, exposures: recorded.get(identity(item.language, item.unit, item.term)) || 0 }));
-    const byLanguage = [...inventory(book).values()].map(({ language, unit, terms }) => ({ language, unit, total: terms.size,
+    const native = baseLanguage(nativeLanguage(visitor), '');
+    const rows = source.counts.filter((item) => item.language !== native).map((item) => ({ ...item, exposures: recorded.get(identity(item.language, item.unit, item.term)) || 0 }));
+    const byLanguage = [...inventory(book).values()].filter((item) => item.language !== native).map(({ language, unit, terms }) => ({ language, unit, total: terms.size,
       count: rows.filter((row) => row.language === language && row.unit === unit && row.exposures < threshold).length }));
     const language = typeof query.language === 'string' ? query.language.slice(0, 35) : '';
     const search = typeof query.search === 'string' ? query.search.trim().toLowerCase().slice(0, 100) : '';
@@ -422,7 +423,7 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
     return books.filter((other) => other.id !== book.id).map((other) => {
       const candidate = inventory(other);
       if (!candidate) return null;
-      const byLanguage = [...new Set([...reference.keys(), ...candidate.keys()])].map((language) => {
+      const byLanguage = [...new Set([...reference.keys(), ...candidate.keys()])].filter((language) => language !== reader.nativeLanguage).map((language) => {
         const left = reference.get(language), right = candidate.get(language);
         const shared = left && right && left.unit === right.unit ? [...left.terms].filter((term) => right.terms.has(term)).length : 0;
         const union = (left?.terms.size || 0) + (right?.terms.size || 0) - shared;
@@ -430,7 +431,7 @@ export function readerVocabulary(db, { completedBooks = null } = {}) {
       });
       const shared = byLanguage.filter((item) => item.shared);
       if (!shared.length) return null;
-      return { id: other.id, title: other.title, byLanguage: shared, familiarity: familiarity(other, reader),
+      return { id: other.id, title: other.title, author: other.author || '', byLanguage: shared, familiarity: familiarity(other, reader),
         score: byLanguage.reduce((sum, item) => sum + item.similarity, 0) / byLanguage.length };
     }).filter(Boolean).sort((a, b) => b.score - a.score || compareVocabularyDensity(a.familiarity, b.familiarity) || a.title.localeCompare(b.title)).slice(0, 8);
   }

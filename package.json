@@ -4,7 +4,7 @@
   "description": "A self-hosted EPUB and PDF reader with local language help.",
   "scripts": {
     "test": "node --test",
-    "build": "vite build",
+    "build": "vite build && node scripts/offline-assets.js",
     "build:thesaurus": "node scripts/build-thesaurus.js && node scripts/build-wiktionary.js && node scripts/build-mandarin.js",
     "start": "node server/index.js"
   },

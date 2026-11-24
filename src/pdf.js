@@ -151,6 +151,12 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
       get pageNumber() { return pageNumber; },
       move: (direction) => draw(pageNumber + direction),
       async go(target) {
+        if (target?.text) {
+          await draw(Number(target.key.split(':')[1]));
+          const root = shell.querySelector('.textLayer'), track = root && trackText(root, language, true);
+          const word = track?.words.find((item) => item.to > target.from), range = word && track.rangeFor(word);
+          range?.startContainer.parentElement?.scrollIntoView({ block: 'center', inline: 'nearest' }); return;
+        }
         if (target?.sync) {
           const remote = target.sync;
           const saved = Number.isInteger(remote.langyTarget) ? remote.langyTarget

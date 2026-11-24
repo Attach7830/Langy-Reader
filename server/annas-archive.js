@@ -98,7 +98,7 @@ export async function openArchive(dir, { library, demo = false, request = public
     if (job.state === 'cancelled') return;
     job.error = error instanceof RequestError ? error.message : 'Anna’s Archive could not be reached. The import can be retried.';
     const retryable = !(error instanceof RequestError) || error.status >= 500 || error.status === 429;
-    job.nextAttempt = current.retryUnavailable && retryable && job.mode !== 'slow' ? now() + archiveRetryDelay : null;
+    job.nextAttempt = current.retryUnavailable && job.queueUnavailable !== false && retryable && job.mode !== 'slow' ? now() + archiveRetryDelay : null;
     job.state = job.source === 'slow' ? 'needs_action' : job.nextAttempt ? 'retry_wait' : 'error';
     persist(job);
   }
@@ -106,7 +106,7 @@ export async function openArchive(dir, { library, demo = false, request = public
   function slow(job, config, reason) {
     job.source = 'slow'; job.state = 'needs_action'; job.bookUrl = `${config.baseUrl}/md5/${job.md5}`;
     job.notice = reason || 'Continue with a free slow download. Complete the browser check and any wait on Anna’s Archive, then provide the final file link or upload the downloaded book.';
-    job.nextAttempt = reason && config.retryUnavailable && config.apiKey && job.mode !== 'slow' ? now() + archiveRetryDelay : null;
+    job.nextAttempt = reason && config.retryUnavailable && job.queueUnavailable !== false && config.apiKey && job.mode !== 'slow' ? now() + archiveRetryDelay : null;
     persist(job);
   }
 
@@ -187,6 +187,7 @@ export async function openArchive(dir, { library, demo = false, request = public
   function makeJob(body, batchId) {
     if (demo) throw new RequestError(403, 'Anna’s Archive imports are available on self-hosted installations.');
     const mode = body.downloadMode || 'auto';
+    if (body.queueUnavailable !== undefined && typeof body.queueUnavailable !== 'boolean') throw new RequestError(422, 'Choose whether an unavailable download stays queued.');
     if (!['auto', 'fast', 'slow'].includes(mode)) throw new RequestError(422, 'Choose automatic, fast, or slow download.');
     if (!current.apiKey && mode !== 'slow' && (mode === 'fast' || !current.slowFallback)) throw new RequestError(422, 'Add your membership key in Settings → Book sources first, or choose a free slow download.');
     const md5 = archiveMD5(body.reference);
@@ -194,7 +195,7 @@ export async function openArchive(dir, { library, demo = false, request = public
     if (language && !normalizeLanguage(language)) throw new RequestError(422, 'Enter a valid book language code.');
     if (body.categoryId && !library.snapshot().categories.some(({ id }) => id === body.categoryId)) throw new RequestError(422, 'Choose a category that exists.');
     const details = Object.fromEntries(['title', 'author', 'language', 'languages', 'categoryId', 'coverStyle'].filter((key) => body[key] !== undefined).map((key) => [key, body[key]]));
-    return { id: randomUUID(), md5, details, mode, batchId, created: now(), source: 'fast', state: 'queued', bytes: 0, total: null, error: null, nextAttempt: null, attempts: 0 };
+    return { id: randomUUID(), md5, details, mode, batchId, queueUnavailable: body.queueUnavailable ?? true, created: now(), source: 'fast', state: 'queued', bytes: 0, total: null, error: null, nextAttempt: null, attempts: 0 };
   }
   function insert(batch) {
     if (batch.some((item) => [...jobs.values()].some((job) => job.md5 === item.md5 && ['queued', 'downloading', 'importing', 'needs_action', 'retry_wait'].includes(job.state)))) throw new RequestError(409, 'This edition is already running or queued. Continue, retry, or cancel its current import.');
@@ -212,7 +213,7 @@ export async function openArchive(dir, { library, demo = false, request = public
     const batchId = randomUUID();
     const batch = body.books.map((book) => {
       if (!book || typeof book !== 'object') throw new RequestError(422, 'Enter a link for each book.');
-      return makeJob({ language: body.language, languages: body.languages, categoryId: body.categoryId, coverStyle: body.coverStyle, downloadMode: body.downloadMode,
+      return makeJob({ language: body.language, languages: body.languages, categoryId: body.categoryId, coverStyle: body.coverStyle, downloadMode: body.downloadMode, queueUnavailable: body.queueUnavailable,
         reference: book.reference, title: book.title, author: body.sameAuthor ? body.author : book.author }, batchId);
     });
     if (new Set(batch.map((job) => job.md5)).size !== batch.length) throw new RequestError(422, 'Each row must refer to a different book edition.');
@@ -223,7 +224,7 @@ export async function openArchive(dir, { library, demo = false, request = public
     running = true;
     try {
       for (;;) {
-        const job = [...jobs.values()].find((job) => job.state === 'queued' || current.retryUnavailable && ['retry_wait', 'needs_action'].includes(job.state) && job.nextAttempt && job.nextAttempt <= now());
+        const job = [...jobs.values()].find((job) => job.state === 'queued' || current.retryUnavailable && job.queueUnavailable !== false && ['retry_wait', 'needs_action'].includes(job.state) && job.nextAttempt && job.nextAttempt <= now());
         if (!job || closed) break;
         controllers.set(job.id, new AbortController()); job.state = 'queued'; job.source = 'fast'; job.error = null; job.nextAttempt = null; job.attempts++; persist(job);
         if (job.mode === 'slow' || !current.apiKey && current.slowFallback) { slow(job, current); controllers.delete(job.id); continue; }

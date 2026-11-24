@@ -55,6 +55,19 @@ function fixture(t, { remote = null, saved = {}, enabled = true } = {}) {
 const remote = (version = 4) => ({ document, version, progress: '/body/DocFragment[2]/body/p[2]/text().8',
   langyTarget: 'device:4', percentage: .4, timestamp: 999, device: 'Xteink' });
 
+test('closed offline books sync on reconnection, while a newer device position remains untouched for a later choice', async () => {
+  const progress = { first: { syncVersion: 1, syncDirty: true, syncDocument: document, syncPayload: { target: 'one', progress: 'path:one', percentage: .2 } },
+    second: { syncVersion: 1, syncDirty: true, syncDocument: document, syncPayload: { target: 'two', progress: 'path:two', percentage: .3 } } };
+  const writes = [];
+  const sync = readingProgressSync({ progress, persist() {}, preferences: () => ({ progressSyncEnabled: true }), available: () => true, deviceId: 'offline-test', notify() {},
+    request: async (path, options = {}) => {
+      if (options.method === 'PUT') { writes.push(path); return { version: 2, document }; }
+      return { version: path.includes('first') ? 1 : 2, document, progress: { progress: 'different', percentage: .5 } };
+    } });
+  await sync.flushSaved(); assert.deepEqual(writes, ['/api/books/first/progress']);
+  assert.equal(progress.first.syncDirty, false); assert.equal(progress.second.syncDirty, true); assert.equal(progress.second.syncConflict, true);
+});
+
 test('opening resumes shared progress without publishing a reflowed page start back to the server', async (t) => {
   const f = fixture(t, { remote: remote() });
   await f.start();

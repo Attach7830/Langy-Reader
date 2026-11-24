@@ -2,7 +2,7 @@
 // EPUB renderer. Local progress remains usable when the server is unreachable.
 export function readingProgressSync({ request, progress, persist, preferences, available, deviceId,
   applyRemote, notify, visible = () => true, debounce = 1200, poll = 20000 }) {
-  let current;
+  let current, syncingSaved;
   const enabled = () => preferences().progressSyncEnabled !== false;
   const entry = (session) => progress[session.book.id] ||= {};
   const active = (session) => current === session;
@@ -147,7 +147,7 @@ export function readingProgressSync({ request, progress, persist, preferences, a
     capture(session);
     session.serial++;
     session.moved = true;
-    Object.assign(entry(session), { syncDirty: true, syncVersion: session.base,
+    Object.assign(entry(session), { syncDirty: true, syncVersion: session.base, syncPayload: session.latest,
       ...(session.document ? { syncDocument: session.document } : {}) });
     persist();
     if (session.enabled && enabled()) {
@@ -158,6 +158,36 @@ export function readingProgressSync({ request, progress, persist, preferences, a
 
   return {
     start, stop, changed, check: () => check(), flush: () => flush(current, true),
+    async flushSaved() {
+      if (syncingSaved || !available() || !enabled()) return syncingSaved;
+      syncingSaved = (async () => {
+        for (const [id, saved] of Object.entries(progress)) {
+          if (id === current?.book.id || !saved.syncDirty || !saved.syncPayload) continue;
+          const value = structuredClone(saved.syncPayload);
+          try {
+            const endpoint = `/api/books/${encodeURIComponent(id)}/progress`;
+            const remote = await request(endpoint, { signal: AbortSignal.timeout(8000) });
+            if (id === current?.book.id || JSON.stringify(saved.syncPayload) !== JSON.stringify(value)) continue;
+            if (saved.syncDocument && saved.syncDocument !== remote.document) { saved.syncConflict = true; persist(); continue; }
+            if (remote.version !== (saved.syncVersion || 0)) {
+              if (remote.progress?.progress === value.progress && Math.abs(remote.progress.percentage - value.percentage) < .000001) {
+                saved.syncVersion = remote.version; saved.syncDirty = false; saved.syncConflict = false; persist();
+              } else { saved.syncConflict = true; persist(); }
+              continue;
+            }
+            const result = await request(endpoint, { method: 'PUT', signal: AbortSignal.timeout(8000), body: { ...value, baseVersion: remote.version,
+              device: preferences().syncDeviceName || 'Langy browser', device_id: deviceId } });
+            saved.syncVersion = result.version; saved.syncDocument = result.document;
+            if (JSON.stringify(saved.syncPayload) === JSON.stringify(value)) saved.syncDirty = false;
+            saved.syncConflict = false; persist();
+          } catch (error) {
+            if ([404, 410].includes(error.status)) { saved.syncDirty = false; persist(); }
+            else if (error.status === 409) { saved.syncConflict = true; persist(); }
+            else break;
+          }
+        }
+      })().finally(() => { syncingSaved = undefined; }); return syncingSaved;
+    },
     async resume() {
       const session = current;
       if (session?.pending) await apply(session, session.pending.progress, session.pending.version);

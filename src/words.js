@@ -44,7 +44,7 @@ function wordAt(root, event, segmenter) {
   return null;
 }
 
-export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord = () => {}, languages = () => [] }) {
+export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord = () => {}, languages = () => [], onWord = () => {} }) {
   const bubble = document.querySelector('#word-help');
   const hint = bubble.querySelector('[data-word-mode]');
   const heading = bubble.querySelector('[data-word]');
@@ -238,6 +238,7 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
         return;
       }
       clear();
+      if (event.isTrusted) onWord();
       active = item;
       timer = setTimeout(() => show(item, mode, language, getContext), tap ? 0 : 400);
     }

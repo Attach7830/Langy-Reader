@@ -418,7 +418,7 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       vocabularyPages() {
         if (reflowing) return [];
         return rendition.getContents().filter((contents) => contents.content).map((contents) => ({
-          key: `epub:${contents.sectionIndex}`, track: () => trackText(contents.content, language),
+          key: `epub:${contents.sectionIndex}`, root: contents.content, track: () => trackText(contents.content, language),
         }));
       },
       audioUnit() {
@@ -442,6 +442,14 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       },
       async go(target) {
         if (target?.sync) return resumeProgress(target.sync);
+        if (target?.text) {
+          const section = book.spine.get(Number(target.key.split(':')[1]));
+          await section.load(book.load.bind(book)); signal.throwIfAborted();
+          const track = trackText(section.document.body || section.document.documentElement, language);
+          const word = track.words.find((item) => item.to > target.from), range = word && track.rangeFor(word);
+          if (!range) throw new Error('This text match could not be located.');
+          await display(section.cfiFromRange(range)); report(rendition.currentLocation()); return;
+        }
         let location = typeof target === 'string' ? target : target.cfi ?? target.index;
         if (target.fragment) {
           const section = book.spine.get(target.index);

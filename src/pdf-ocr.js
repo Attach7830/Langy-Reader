@@ -1,5 +1,7 @@
 import { $, api, element, message } from './ui.js';
 import { bookLanguages, baseLanguage } from '../shared/language.js';
+import { selectedOCRLanguages } from '../shared/ocr-languages.js';
+import { defaults } from './settings.js';
 
 const codes = { en: 'eng', es: 'spa', pt: 'por', zh: 'chi_sim', fr: 'fra', de: 'deu', it: 'ita', ja: 'jpn', ko: 'kor', ru: 'rus', ar: 'ara', hi: 'hin', nl: 'nld' };
 function name(code) {
@@ -7,7 +9,7 @@ function name(code) {
   if (code === 'chi_tra') return 'Mandarin · traditional';
   try { return new Intl.DisplayNames('en', { type: 'language' }).of(code.replace('_', '-')); } catch { return code; }
 }
-export function pdfOCR({ changed }) {
+export function pdfOCR({ changed, readingLanguages = () => defaults.readingLanguages }) {
   const dialog = $('#ocr-dialog'), form = $('#ocr-form'), languages = $('#ocr-languages'), submit = $('#ocr-submit');
   let book, epoch = 0, poll, loaded = false, current;
   const active = (job) => ['queued', 'running', 'importing'].includes(job?.state);
@@ -25,12 +27,13 @@ export function pdfOCR({ changed }) {
       const result = await api(`/api/books/${encodeURIComponent(book.id)}/ocr`);
       if (version !== epoch) return;
       if (initial) {
+        const choices = selectedOCRLanguages(result.languages, readingLanguages() || defaults.readingLanguages);
         const preferred = new Set(bookLanguages(book).map((language) => codes[baseLanguage(language)]).filter(Boolean));
-        languages.replaceChildren(...result.languages.map((code) => { const option = new Option(`${name(code)} (${code})`, code); option.selected = preferred.has(code); return option; }));
+        languages.replaceChildren(...choices.map((code) => { const option = new Option(`${name(code)} (${code})`, code); option.selected = preferred.has(code); return option; }));
         if (!languages.selectedOptions.length && languages.options.length) languages.options[0].selected = true;
-        loaded = result.available && result.languages.length > 0;
+        loaded = result.available && choices.length > 0;
       }
-      message('#ocr-error', result.error || ''); const before = current?.state; render(result.job);
+      message('#ocr-error', result.error || (!loaded ? 'No installed OCR models match your reading languages. Update My reading languages in Settings, or rebuild the language service to install its language packs.' : '')); const before = current?.state; render(result.job);
       if (result.job?.state === 'ready' && before !== 'ready') await changed();
       if (active(result.job)) poll = setTimeout(() => { void load(version); }, 2000);
     } catch (error) { if (version === epoch) { message('#ocr-error', error.message); if (active(current)) poll = setTimeout(() => { void load(version); }, 5000); } }
@@ -39,12 +42,12 @@ export function pdfOCR({ changed }) {
     event.preventDefault(); if (!loaded || active(current) || !form.reportValidity()) return;
     submit.disabled = true; message('#ocr-error');
     try {
-      render(await api(`/api/books/${encodeURIComponent(book.id)}/ocr`, { method: 'POST', body: { languages: [...languages.selectedOptions].map((option) => option.value), rotate: form.elements.rotate.checked } }));
+      render(await api(`/api/books/${encodeURIComponent(book.id)}/ocr`, { method: 'POST', body: { languages: [...languages.selectedOptions].map((option) => option.value), rotate: form.elements.rotate.checked, mode: form.elements.mode.value } }));
       void load(epoch);
     } catch (error) { message('#ocr-error', error.message); submit.disabled = false; }
   });
   $('#ocr-result').addEventListener('click', () => dialog.close());
   return { show(value) { book = value; epoch++; clearTimeout(poll); current = null; loaded = false;
-    $('#ocr-book-title').textContent = `Scan ${book.title}`; languages.replaceChildren(); form.elements.rotate.checked = true;
+    $('#ocr-book-title').textContent = `Scan ${book.title}`; languages.replaceChildren(); form.elements.rotate.checked = true; form.elements.mode.value = 'redo';
     message('#ocr-error'); render(null); dialog.showModal(); void load(epoch, true); } };
 }

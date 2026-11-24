@@ -11,7 +11,7 @@ export function displayedRanges(track, text, language) {
   return ranges.slice(0, 1000);
 }
 
-export function readingVocabulary({ book, renderer, request, dwell = 1500 }) {
+export function readingVocabulary({ book, renderer, request, dwell = 1500, onDisplay = () => {} }) {
   const storageKey = 'langy-reading-exposures-v1';
   let pending;
   try { pending = JSON.parse(localStorage.getItem(storageKey) || '[]'); } catch { pending = []; }
@@ -45,6 +45,7 @@ export function readingVocabulary({ book, renderer, request, dwell = 1500 }) {
       session = globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     }
     const pages = currentRenderer?.vocabularyPages?.() || [currentRenderer?.audioUnit?.()].filter(Boolean);
+    const displayed = [];
     for (const page of pages) {
       const key = JSON.stringify([current.id, page.key, current.language, current.languages]);
       let source = chapters.get(key);
@@ -57,6 +58,7 @@ export function readingVocabulary({ book, renderer, request, dwell = 1500 }) {
         const ranges = displayedRanges(page.track(), source.text, current.language);
         if (!ranges.length) continue;
         const body = { key: page.key, digest: source.textHash, ranges, session };
+        displayed.push({ key: page.key, digest: source.textHash, ranges });
         const signature = JSON.stringify([current.id, body]);
         if (recorded.has(signature)) continue;
         pending.push({ id: current.id, body }); pending = pending.slice(-200); persist();
@@ -64,6 +66,7 @@ export function readingVocabulary({ book, renderer, request, dwell = 1500 }) {
         if (recorded.size > 500) recorded.delete(recorded.values().next().value);
       } catch { clearTimeout(retry); retry = setTimeout(refresh, 10000); }
     }
+    if (version === epoch && book()?.id === current.id && !document.hidden) onDisplay(displayed);
     void flush();
   }
   function cancel() { epoch++; clearTimeout(timer); clearTimeout(retry); }

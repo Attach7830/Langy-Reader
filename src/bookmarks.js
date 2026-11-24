@@ -7,6 +7,7 @@ export function readingBookmarks({ book, position, go, request }) {
   function render(entries) {
     list.replaceChildren(...entries.map((entry) => {
       const row = element('div', 'bookmark-entry'), open = element('button', 'button quiet', entry.label); open.type = 'button';
+      open.setAttribute('data-user-content', '');
       open.addEventListener('click', () => { dialog.close(); void go(entry.target); });
       const remove = element('button', 'button quiet small', 'Remove'); remove.type = 'button';
       remove.addEventListener('click', async () => {
@@ -14,7 +15,7 @@ export function readingBookmarks({ book, position, go, request }) {
         try { const result = await request(`/api/books/${currentBook}/bookmarks/${entry.id}`, { method: 'DELETE' }); if (epoch === version) render(result.bookmarks); }
         catch (error) { if (epoch === version) { message('#bookmark-error', error.message); remove.disabled = false; } }
       });
-      row.append(open, remove); if (entry.note) row.append(element('p', 'field-note', entry.note)); return row;
+      row.append(open, remove); if (entry.note) { const note = element('p', 'field-note', entry.note); note.setAttribute('data-user-content', ''); row.append(note); } return row;
     }));
     if (!entries.length) list.append(element('p', 'field-note', 'No bookmarks for this book yet.'));
     const existing = entries.find((entry) => entry.target === target);
@@ -25,7 +26,7 @@ export function readingBookmarks({ book, position, go, request }) {
     const epoch = version; save.disabled = true; message('#bookmark-error');
     try {
       const result = await request(`/api/books/${currentBook}/bookmarks`, { method: 'POST', body: { target, label: form.elements.label.value, note: form.elements.note.value } });
-      if (epoch === version) { render(result.bookmarks); toast('Bookmark saved'); }
+      if (epoch === version) { render(result.bookmarks); toast(result.queued ? 'Bookmark saved offline; sync pending.' : 'Bookmark saved'); }
     } catch (error) { if (epoch === version) message('#bookmark-error', error.message); }
     finally { if (epoch === version) save.disabled = false; }
   });

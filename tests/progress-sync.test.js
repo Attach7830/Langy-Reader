@@ -120,6 +120,22 @@ test('bookmarks require login and persist EPUB positions and notes through the A
   for (const path of ['/api/imports/anna/batch', '/api/books/sync-book/ocr']) assert.equal((await fetch(base + path, { method: 'POST' })).status, 401);
 });
 
+test('star, set-aside and reading-time endpoints require login, protect writes, persist and expose library state', async (t) => {
+  const f = await fixture(t); let base = await f.start();
+  for (const path of ['/api/reading-time', '/api/books/sync-book/currently-reading', '/api/books/sync-book/set-aside', '/api/books/sync-book/offline', '/api/settings/audiobookshelf']) assert.equal((await fetch(base + path)).status, 401);
+  await response(base, '/api/books/sync-book/currently-reading', { method: 'PATCH', headers: { ...json, Origin: 'https://elsewhere.test' }, body: '{"currentlyReading":true}', status: 403 });
+  const star = await response(base, '/api/books/sync-book/currently-reading', { method: 'PATCH', headers: json, body: '{"currentlyReading":true}' }); assert.ok(star.starredAt);
+  const aside = await response(base, '/api/books/sync-book/set-aside', { method: 'PATCH', headers: json, body: '{"setAside":true}' }); assert.ok(aside.setAsideAt); assert.equal(aside.starredAt, null);
+  const initial = await response(base, '/api/reading-time', { headers: json }), end = Date.now();
+  const body = { accountId: initial.accountId, events: [{ id: 'reading-time-api', start: end - 5000, end }] };
+  await response(base, '/api/books/sync-book/reading-time', { method: 'POST', headers: json, body: JSON.stringify({ ...body, accountId: 'wrong' }), status: 409 });
+  const saved = await response(base, '/api/books/sync-book/reading-time', { method: 'POST', headers: json, body: JSON.stringify(body) }); assert.equal(saved.recordedMs, 5000);
+  base = await f.start(); const snapshot = await response(base, '/api/library', { headers: json });
+  assert.equal(snapshot.readingTime.totalMs, 5000); assert.equal(snapshot.books.find((book) => book.id === 'sync-book').setAsideAt, aside.setAsideAt);
+  const link = await fetch(base + '/api/archive/search?title=Libro&author=Autora', { headers: json, redirect: 'manual' });
+  assert.equal(link.status, 302); const url = new URL(link.headers.get('location')); assert.equal(url.pathname, '/search'); assert.equal(url.searchParams.get('q'), 'Libro Autora');
+});
+
 test('document IDs use KOReader/CrossPoint byte samples, including byte zero and a truncated final chunk', async (t) => {
   const folder = await mkdtemp(join(tmpdir(), 'langy-checksum-'));
   t.after(() => rm(folder, { recursive: true, force: true }));

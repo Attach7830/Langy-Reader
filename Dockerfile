@@ -4,10 +4,11 @@ COPY package*.json ./
 RUN npm ci
 COPY server ./server
 COPY shared ./shared
-COPY scripts/build-thesaurus.js scripts/build-wiktionary.js scripts/build-mandarin.js ./scripts/
+COPY scripts/build-thesaurus.js scripts/build-wiktionary.js scripts/build-mandarin.js scripts/offline-assets.js ./scripts/
 RUN npm run build:thesaurus
 COPY index.html ./
 COPY src ./src
+COPY public ./public
 COPY shared ./shared
 RUN npm run build
 

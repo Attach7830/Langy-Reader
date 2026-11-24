@@ -25,7 +25,7 @@ const run = promisify(execFile);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const asText = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 
-export async function openLearning(dir, library, demo, ai, { autoRepair = true } = {}) {
+export async function openLearning(dir, library, demo, ai, { autoRepair = true, nativeLanguage = () => '' } = {}) {
   const folder = join(dir, 'narration');
   await mkdir(folder, { recursive: true });
   const db = new DatabaseSync(join(dir, 'learning.sqlite'));
@@ -76,7 +76,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true }
   migrateSpanishVerbForms(db);
   migrateSpanishTaggedMorphology(db);
   migrateLexicalFilters(db);
-  const vocabulary = readerVocabulary(db, { completedBooks: library.readBooks ? (visitor) => library.readBooks(visitor) : null });
+  const vocabulary = readerVocabulary(db, { completedBooks: library.readBooks ? (visitor) => library.readBooks(visitor) : null, nativeLanguage });
   const estimates = readingEstimates({ db, ai });
   let config = {
     baseUrl: process.env.READER_KOKORO_URL || '', voice: process.env.READER_KOKORO_VOICE || 'ef_dora',
@@ -533,6 +533,11 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true }
   }
   return {
     settings, save, voices, info, ensure, unit, chapters, remove, audioFile, prune, cancel,
+    textSections(book) {
+      const rows = db.prepare('SELECT key,ordinal,title,text,digest,tokens,languages FROM chapters WHERE book=? ORDER BY ordinal').all(book.id);
+      if (!rows.length) throw new RequestError(409, 'Wait for this book’s text to finish indexing.');
+      return rows.map((row) => ({ ...row, tokens: JSON.parse(row.tokens || '[]'), languages: JSON.parse(row.languages || '[]') }));
+    },
     narration, queueBook: completeAudio.queue,
     recordings, rescans, ivoox, vocabulary, estimates,
   };

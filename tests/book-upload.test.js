@@ -46,6 +46,7 @@ test('the actual book form uploads one EPUB/PDF with its language field, while i
   function requestData({ languages = [], format = 'epub', field = 'file' } = {}) {
     const browser = new dom.window.FormData(form);
     browser.delete('source'); browser.delete('archiveReference'); browser.delete('archiveDownloadMode'); browser.delete('archiveSlowURL'); browser.delete('file');
+    browser.delete('archiveQueueUnavailable');
     browser.set('coverStyle', 'auto');
     browser.set('languages', JSON.stringify(languages));
     const data = new FormData();
