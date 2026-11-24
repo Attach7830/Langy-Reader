@@ -6,6 +6,7 @@ import notoSC from '@fontsource/noto-sans-sc/400.css?inline';
 import notoTC from '@fontsource/noto-sans-tc/400.css?inline';
 import { fonts, themes } from './settings.js';
 import { outlineDocument, spacingRules } from './epub-outline.js';
+import { serializeRenderer } from './reader-navigation.js';
 import { trackText } from './text-tracking.js';
 import { bindBookLinks } from './book-links.js';
 import { annotateSyncPaths, koReaderXPath, parseKOReaderXPath, resolveKOReaderXPath,
@@ -309,18 +310,29 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       catch { await display(); }
     } else await display();
     await new Promise(requestAnimationFrame);
-    report(rendition.currentLocation());
+    report(await rendition.currentLocation());
 
-    function resize() {
+    async function resize() {
       const next = size();
       if (disposed || !next[0] || !next[1] || next.every((value, i) => value === dimensions[i])) return;
       dimensions = next;
       reflowing = true;
-      rendition.resize(...next);
-      // The first layout can resize before epub.js has published its location.
-      if (!rendition.location?.start && lastTarget) void display(lastTarget).catch(hooks.error);
+      const target = (await rendition.currentLocation())?.start?.cfi || lastTarget;
+      rendition.resize(...next, target);
+      // epub.js queues a display when resized. Drain that display before the
+      // next turn, or it can jump back to the location preceding the swipe.
+      if (target) await display(target);
+      await settle();
     }
-    observer = new ResizeObserver(resize);
+    async function settle() {
+      await new Promise(requestAnimationFrame);
+      const location = await rendition.currentLocation();
+      if (!location?.start) throw new Error('The EPUB page could not be laid out. Try opening the book again.');
+      rendition.location = location;
+      report(location);
+    }
+    let schedule;
+    observer = new ResizeObserver(() => { void schedule(resize).catch((error) => { if (!disposed) hooks.error(error); }); });
     observer.observe(host);
 
     function summaryPage() {
@@ -409,11 +421,12 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       report(rendition.currentLocation());
     }
 
-    return {
+    const opened = {
       destroy,
       syncPosition,
       get syncResolution() { return syncResolution; },
       get contents() { return epubContents(book); },
+      get sectionIndex() { return activeSection; },
       readingRoots() { return rendition.getContents().map((contents) => contents.content).filter(Boolean); },
       vocabularyPages() {
         if (reflowing) return [];
@@ -436,9 +449,12 @@ export async function openEpub({ host, url, position, language, settings, hooks,
         report(rendition.currentLocation());
       },
       readingOutline() { return outline ??= inferOutline(book, signal); },
-      move(direction) {
-        resize();
-        return direction > 0 ? rendition.next() : rendition.prev();
+      async move(direction) {
+        await resize();
+        await (direction > 0 ? rendition.next() : rendition.prev());
+        // next/prev resolve before epub.js emits its deferred relocation event.
+        // Publish the actual new position before accepting another page turn.
+        await settle();
       },
       async go(target) {
         if (target?.sync) return resumeProgress(target.sync);
@@ -458,9 +474,9 @@ export async function openEpub({ host, url, position, language, settings, hooks,
           const anchor = section.document.getElementById(target.fragment);
           if (anchor) location = section.cfiFromElement(anchor);
         }
-        resize();
+        await resize();
         await display(location);
-        report(rendition.currentLocation());
+        await settle();
       },
       summaryPage,
       async apply(next) {
@@ -480,14 +496,18 @@ export async function openEpub({ host, url, position, language, settings, hooks,
             if (rules) rules.textContent = css;
           }
         }
-        resize();
+        await resize();
         if (reflow && target && !fixed) {
           reflowing = true;
           rendition.clear();
           await display(target);
+          await settle();
         }
       },
     };
+    const serialized = serializeRenderer(opened, { signal, stalled: destroy });
+    schedule = serialized.run;
+    return serialized.renderer;
   } catch (error) {
     destroy();
     throw error;

@@ -747,5 +747,5 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   bookDialog.addEventListener('close', () => metadataFields.cancel());
   categoryDialog.addEventListener('cancel', (event) => { if (categoryPending) event.preventDefault(); });
 
-  return { refresh, render, dispose() { clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
+  return { refresh, render, dispose() { offline.dispose(); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
 }

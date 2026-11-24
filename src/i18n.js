@@ -1,6 +1,18 @@
 // Interface text only. Book content, generated explanations and dictionary
 // meanings keep their independently selected languages.
 const phrases = [
+  ['Reading controls', 'Controles de lectura', 'Controles de leitura', '阅读控制'],
+  ['Swipe to turn pages', 'Deslizar para pasar de página', 'Deslizar para virar a página', '滑动翻页'],
+  ['Tap left or right edge to turn pages', 'Tocar los bordes para pasar de página', 'Tocar nas bordas para virar a página', '点按左右边缘翻页'],
+  ['Tap center to toggle full screen', 'Tocar el centro para alternar pantalla completa', 'Tocar no centro para alternar tela cheia', '点按中央切换全屏'],
+  ['Downloads', 'Descargas', 'Downloads', '下载'], ['Audio', 'Audio', 'Áudio', '音频'],
+  ['Sections', 'Secciones', 'Seções', '章节'], ['Book sections', 'Secciones del libro', 'Seções do livro', '图书章节'],
+  ['Chapters and sections', 'Capítulos y secciones', 'Capítulos e seções', '章节和段落'],
+  ['Find a chapter or section', 'Buscar un capítulo o sección', 'Buscar um capítulo ou seção', '查找章节'],
+  ['Add to download queue', 'Añadir a la cola de descargas', 'Adicionar à fila de downloads', '加入下载队列'],
+  ['Cancel download', 'Cancelar descarga', 'Cancelar download', '取消下载'], ['Retry download', 'Reintentar descarga', 'Tentar download novamente', '重试下载'],
+  ['Read book', 'Leer libro', 'Ler livro', '阅读图书'], ['Dismiss', 'Quitar de la lista', 'Remover da lista', '从列表移除'],
+  ['More reading tools', 'Más herramientas de lectura', 'Mais ferramentas de leitura', '更多阅读工具'],
   ['Library', 'Biblioteca', 'Biblioteca', '书库'], ['About', 'Acerca de', 'Sobre', '关于'], ['Discover', 'Descubrir', 'Descobrir', '发现'],
   ['Checking AI', 'Comprobando IA', 'Verificando IA', '正在检查 AI'], ['Demo use only', 'Solo demostración', 'Apenas demonstração', '仅供演示'],
   ['Dim PDF pages in dark themes', 'Oscurecer PDF con temas oscuros', 'Escurecer PDF em temas escuros', '深色主题下调暗 PDF'],

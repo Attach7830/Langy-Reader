@@ -1,6 +1,7 @@
 const interactive = 'a, button, input, select, textarea, label, summary, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="link"], [data-page-navigation-ignore], .reader-message';
 
-export function pageNavigation({ host, turn, enabled = () => true, canSwipe = () => true, now = Date.now }) {
+export function pageNavigation({ host, turn, enabled = () => true, canSwipe = () => true, canTap = () => true,
+  canCenterTap = () => false, centerTap = () => {}, now = Date.now }) {
   const bindings = new Map(), pointers = new Set();
   let gesture, multiple = false, suppressUntil = 0, pointerSeen = false;
   const viewport = host.ownerDocument.defaultView.visualViewport;
@@ -36,6 +37,10 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
     if (!rect.width || !inside(position, rect)) return 0;
     const width = Math.min(64, Math.max(18, rect.width * .055));
     return position.x <= rect.left + width ? -1 : position.x >= rect.right - width ? 1 : 0;
+  }
+  function center(position) {
+    const rect = host.getBoundingClientRect();
+    return inside(position, rect) && position.x >= rect.left + rect.width / 3 && position.x <= rect.right - rect.width / 3;
   }
   function consume(event, prevent = false) {
     if (prevent && event.cancelable) event.preventDefault();
@@ -92,12 +97,15 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
       }
       const swipe = previous.type === 'touch' && previous.swipe && canSwipe() && !nativeZoomed() && elapsed <= 1000
         && Math.abs(dx) >= Math.min(90, Math.max(40, previous.width * .15)) && Math.abs(dx) > Math.abs(dy) * 1.5;
+      const tap = !moved && elapsed <= 600 && !ignored(event.target) && !nativeZoomed();
+      const fullscreen = tap && previous.type === 'touch' && canCenterTap() && center(previous.start) && center(current);
       const direction = swipe ? (dx < 0 ? 1 : -1)
-        : !moved && elapsed <= 600 && !ignored(event.target) && edge(previous.start) === edge(current) ? edge(current) : 0;
-      if (direction || moved || elapsed > 600) {
+        : tap && canTap() && edge(previous.start) === edge(current) ? edge(current) : 0;
+      if (fullscreen || direction || moved || elapsed > 600) {
         suppressUntil = now() + 700;
-        consume(event, Boolean(direction));
+        consume(event, Boolean(direction || fullscreen));
         if (direction) turn(direction);
+        else if (fullscreen) centerTap();
       }
     });
     listen('pointercancel', () => { gesture = undefined; pointers.clear(); multiple = false; suppressUntil = now() + 700; }, true);
@@ -107,7 +115,7 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
       if (hadPointer) return;
       if (!enabled() || event.defaultPrevented || event.detail === 0 || ignored(event.target) || selected(doc)
         || event.button > 0 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
-      const direction = edge(point(event, doc));
+      const direction = canTap() && !nativeZoomed() ? edge(point(event, doc)) : 0;
       if (direction) { consume(event, true); turn(direction); }
     });
     const unbind = () => {

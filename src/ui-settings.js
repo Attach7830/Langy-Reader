@@ -114,6 +114,7 @@ export function settingsDialog({ preferences, apply }) {
       fields[key].value = current[key];
     }
     fields.autoHideDocks.checked = current.autoHideDocks;
+    for (const key of ['tapToTurn', 'swipeToTurn', 'tapCenterFullscreen']) fields[key].checked = current[key] ?? defaults[key];
     fields.immersionMode.checked = current.immersionMode;
     fields.quietLibrary.checked = current.quietLibrary;
     fields.pdfNight.checked = current.pdfNight;
@@ -244,6 +245,7 @@ export function settingsDialog({ preferences, apply }) {
       background: fields.background.value, font: fields.font.value, width: fields.width.value,
       size: fields.size.valueAsNumber, line: fields.line.valueAsNumber,
       autoHideDocks: fields.autoHideDocks.checked,
+      tapToTurn: fields.tapToTurn.checked, swipeToTurn: fields.swipeToTurn.checked, tapCenterFullscreen: fields.tapCenterFullscreen.checked,
       immersionMode: fields.immersionMode.checked, quietLibrary: fields.quietLibrary.checked,
       pdfNight: fields.pdfNight.checked, keys: { ...shadowKeys },
     };

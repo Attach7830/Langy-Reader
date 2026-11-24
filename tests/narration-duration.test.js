@@ -44,9 +44,21 @@ async function fixture(t) {
   player.apply(); await player.refresh();
   const clock = document.querySelector('#narration-time'), seek = document.querySelector('#narration-seek'), rate = document.querySelector('#narration-rate');
   return { dom, player, audio, clock, seek, prefs, positions, navigations,
+    page(value) { key = value; },
     speed(value) { rate.value = String(value); rate.dispatchEvent(new dom.window.Event('change')); },
     tick(time) { audio.currentTime = time; audio.dispatchEvent(new dom.window.Event('timeupdate')); } };
 }
+
+test('manual page turns cannot be pulled back by old audio timeupdates before the new page audio has loaded', async (t) => {
+  const f = await fixture(t);
+  f.tick(900); await delay(5); const before = f.navigations.length;
+  const navigation = f.player.beginNavigation(); f.page('epub:1');
+  f.tick(950); await delay(5);
+  assert.equal(f.navigations.length, before, 'old audio must not navigate back to the previous source section');
+  await f.player.endNavigation(navigation);
+  assert.equal(f.audio.currentTime, 1800, 'manual turns seek to the new section before audio following resumes');
+  f.tick(2000); await delay(5); assert.equal(f.navigations.length, before);
+});
 
 test('audio times update immediately with player or settings speed while media position and seeking stay in recording seconds', async (t) => {
   const f = await fixture(t);

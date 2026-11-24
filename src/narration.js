@@ -1,4 +1,5 @@
 import { $, api, element } from './ui.js';
+import { readerDeadline } from './reader-navigation.js';
 import { deviceMediaControls } from './audio-media-session.js';
 
 const timeLabel = (value) => {
@@ -28,6 +29,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   let recording, recordingBook, connection = false, previewAudio = false, unit, local, descriptor, timed = [], timingMap = new Map();
   let lifecycle = 0, controller, poll, animation, bookRequest, following = false, followAgain = false, forceFollow = false;
   let wantPlaying = false, enabled = false, initialSeek = true, highlighted, highlightedWindow;
+  let manualNavigation = false, navigationVersion = 0;
   const cache = new Map();
   const ready = () => recording?.state === 'ready';
   const playbackSpeed = () => Number.isFinite(audio.playbackRate) && audio.playbackRate > 0 ? audio.playbackRate : 1;
@@ -136,13 +138,13 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   }
   // Page changes run serially; another scrub replaces the pending target.
   async function follow(force = false) {
-    if (!enabled || !ready() || initialSeek) return;
+    if (!enabled || !ready() || initialSeek || manualNavigation) return;
     followAgain = true; forceFollow ||= force;
     if (following) return;
     following = true;
-    const epoch = lifecycle;
+    const epoch = lifecycle, navigation = navigationVersion;
     try {
-      while (followAgain && epoch === lifecycle && enabled) {
+      while (followAgain && epoch === lifecycle && navigation === navigationVersion && !manualNavigation && enabled) {
         followAgain = false;
         const forced = forceFollow; forceFollow = false;
         const segment = segmentAt(audio.currentTime);
@@ -151,8 +153,9 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
           const moved = await navigate(renderer()?.audioTarget(segment.key));
           if (moved === false) { setTimeout(() => { if (epoch === lifecycle) void follow(true); }, 50); break; }
         }
-        if (epoch !== lifecycle) break;
+        if (epoch !== lifecycle || navigation !== navigationVersion || manualNavigation) break;
         await loadCurrent();
+        if (navigation !== navigationVersion || manualNavigation) break;
         if (segmentAt(audio.currentTime)?.key !== segment.key) { followAgain = true; continue; }
         if (unit?.key !== segment.key || !local) continue;
         const stamp = timed[Math.max(0, atTime(timed, audio.currentTime))];
@@ -260,13 +263,15 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   }
   async function refresh({ seekToPage = false } = {}) {
     if (!book()) return;
+    const navigation = navigationVersion, epoch = lifecycle;
     if (recordingBook !== book().id) {
       recordingBook = book().id; controller = new AbortController(); await loadRecording();
     }
     try {
       await loadCurrent();
+      if (navigation !== navigationVersion || epoch !== lifecycle) return;
       syncInitialPosition();
-      if (seekToPage && !following && enabled && ready()) seekTo(firstVisibleTime());
+      if (seekToPage && (!following || manualNavigation) && enabled && ready()) seekTo(firstVisibleTime());
       else { drawHighlight(); void follow(); }
     } catch (error) { if (!previewAudio && error.name !== 'AbortError') status.textContent = error.message; }
   }
@@ -280,6 +285,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     recording = unit = descriptor = local = recordingBook = bookRequest = undefined;
     timed = []; timingMap.clear(); cache.clear();
     following = followAgain = forceFollow = wantPlaying = false;
+    manualNavigation = false; navigationVersion++;
     initialSeek = true;
     previewAudio = false;
     recordingCount = 0;
@@ -359,6 +365,17 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   audio.addEventListener('error', () => { if (audio.getAttribute('src')) status.textContent = 'This book recording could not be played. Try generating it again.'; });
   return {
     refresh, apply, stop, toggle, skipBy,
+    beginNavigation() { manualNavigation = true; return ++navigationVersion; },
+    async endNavigation(version, { seekToPage = true } = {}) {
+      if (version !== navigationVersion) return;
+      // Audio metadata must never keep the reader's navigation lock held. A
+      // known source-section boundary is safe while finer timestamps reload.
+      const current = renderer()?.audioUnit?.(), segment = segmentFor(current?.key);
+      if (seekToPage && enabled && ready() && segment && unit?.key !== current?.key) seekTo(segment.start);
+      try { if (enabled && ready()) await readerDeadline(() => refresh({ seekToPage }), { signal: controller?.signal, milliseconds: 4000 }); }
+      catch (error) { if (version === navigationVersion && error?.name !== 'AbortError') status.textContent = 'Waiting for this page’s audio timing. You can keep reading.'; }
+      finally { if (version === navigationVersion) { manualNavigation = false; void follow(true); } }
+    },
     playbackPosition() { return ready() && audio.getAttribute('src') === recording.url && Number.isFinite(audio.duration)
       ? { book: book().id, recording: recording.id, time: audio.currentTime, duration: recording.duration, absConnected } : null; },
     async resumeAt(time) { seekTo(time); await follow(true); },

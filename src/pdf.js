@@ -3,6 +3,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { trackText } from './text-tracking.js';
 import { hanPattern } from '../shared/language.js';
 import { pdfLinkLayer } from './book-links.js';
+import { serializeRenderer } from './reader-navigation.js';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const baseUrl = new URL('/pdf-assets/', location.href);
@@ -126,14 +127,15 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
     const [outline] = await Promise.all([pdf.getOutline().catch(() => null), draw(initial)]);
     const contents = pdfContents(outline);
     let dimensions = [host.clientWidth, host.clientHeight];
+    let schedule;
     observer = new ResizeObserver(() => {
       const next = [host.clientWidth, host.clientHeight];
       if (next.every((value, i) => value === dimensions[i])) return;
       dimensions = next;
-      draw(pageNumber).catch(hooks.error);
+      void schedule(() => draw(pageNumber)).catch((error) => { if (!closed) hooks.error(error); });
     });
     observer.observe(host);
-    return {
+    const opened = {
       destroy,
       syncPosition: () => ({ progress: String(pageNumber), percentage: pageNumber / pdf.numPages, target: pageNumber }),
       get syncResolution() { return syncResolution; },
@@ -197,6 +199,9 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
         await draw(pageNumber);
       },
     };
+    const serialized = serializeRenderer(opened, { signal, stalled: destroy });
+    schedule = serialized.run;
+    return serialized.renderer;
   } catch (error) {
     destroy();
     throw error;

@@ -35,13 +35,14 @@ function browser(t, db, { initial = {}, storage = new Map(), ...options } = {}) 
 
 test('reader preferences persist across restarts and browsers, preserving device-specific fields', async (t) => {
   const s = await store(t, { username: 'ian' });
-  const a = browser(t, s.db, { initial: { theme: 'midnight', showPinyin: true, readingLanguages: ['pt', 'zh'], keys: { pinyin: 'j' } } });
+  const a = browser(t, s.db, { initial: { theme: 'midnight', showPinyin: true, readingLanguages: ['pt', 'zh'], keys: { pinyin: 'j' }, tapToTurn: true, swipeToTurn: false, tapCenterFullscreen: false } });
   await a.client.start(); assert.equal(s.db.get().preferences.theme, 'midnight');
   s.db.close(); const restarted = s.open({ username: 'ian' });
   const b = browser(t, restarted, { initial: { theme: 'paper', syncDeviceName: 'Tablet', progressSyncEnabled: false } });
   await b.client.start();
   assert.equal(b.settings().theme, 'midnight'); assert.equal(b.settings().showPinyin, true); assert.equal(b.settings().keys.pinyin, 'j');
   assert.deepEqual(b.settings().readingLanguages, ['pt', 'zh']);
+  assert.equal(b.settings().tapToTurn, true); assert.equal(b.settings().swipeToTurn, false); assert.equal(b.settings().tapCenterFullscreen, false);
   assert.equal(b.settings().syncDeviceName, 'Tablet'); assert.equal(b.settings().progressSyncEnabled, false);
   assert.equal('syncDeviceName' in restarted.get().preferences, false); assert.equal('progressSyncEnabled' in restarted.get().preferences, false);
 });

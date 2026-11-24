@@ -16,14 +16,14 @@ function pointer(type, target, x, y = 200, options = {}) {
   target.dispatchEvent(event); return event;
 }
 const click = (target, x, y = 200, options = {}) => pointer('click', target, x, y, { detail: 1, ...options });
-function fixture(t) {
+function fixture(t, options = {}) {
   const dom = new JSDOM('<main id="reading"><div id="viewer"><p id="words">hello reader</p><a href="#note">Note</a><button>Control</button><input><div contenteditable="true">Editable</div></div></main><aside id="summary">Summary</aside>', { url: 'https://langy.test' });
   const host = dom.window.document.querySelector('#reading'), target = host.querySelector('#words'), turns = [];
   host.getBoundingClientRect = () => rect;
   const viewport = new dom.window.EventTarget(); viewport.scale = 1;
   Object.defineProperty(dom.window, 'visualViewport', { configurable: true, value: viewport });
   let clock = 1000, active = true, allowSwipe = true;
-  const nav = pageNavigation({ host, turn: (direction) => turns.push(direction), enabled: () => active, canSwipe: () => allowSwipe, now: () => clock });
+  const nav = pageNavigation({ host, turn: (direction) => turns.push(direction), enabled: () => active, canSwipe: () => allowSwipe, now: () => clock, ...options });
   t.after(() => { nav.destroy(); dom.window.close(); });
   return { dom, host, target, turns, nav, viewport, tick(ms = 100) { clock += ms; },
     active(value) { active = value; }, allowSwipe(value) { allowSwipe = value; },
@@ -46,6 +46,36 @@ test('left/right edge clicks and touch taps turn exactly once while center taps 
   assert.deepEqual(f.turns, [-1, 1, 1, 1]);
   f.gesture(300, 300); assert.equal(click(f.target, 300).defaultPrevented, false);
   assert.equal(f.turns.length, 4);
+});
+
+test('new readers get swipe and center-fullscreen by default, with edge taps controlled independently', (t) => {
+  assert.equal(defaults.swipeToTurn, true); assert.equal(defaults.tapToTurn, false); assert.equal(defaults.tapCenterFullscreen, true);
+  let edgeTaps = defaults.tapToTurn, fullscreens = 0;
+  const f = fixture(t, { canTap: () => edgeTaps, canCenterTap: () => defaults.tapCenterFullscreen, centerTap: () => fullscreens++ });
+  f.gesture(495, 495); click(f.target, 495); assert.deepEqual(f.turns, []);
+  f.gesture(400, 200); click(f.target, 200); assert.deepEqual(f.turns, [1]); assert.equal(fullscreens, 0);
+  const tap = f.gesture(300, 300); const duplicate = click(f.target, 300);
+  assert.equal(tap.defaultPrevented, true); assert.equal(duplicate.defaultPrevented, true); assert.equal(fullscreens, 1);
+  f.gesture(300, 300); click(f.target, 300); assert.equal(fullscreens, 2, 'a second real center tap exits fullscreen');
+  f.gesture(300, 300, { duration: 800 }); click(f.target, 300);
+  f.gesture(300, 300, { type: 'mouse' }); click(f.target, 300);
+  f.gesture(300, 300, { root: f.host.querySelector('a') }); click(f.host.querySelector('a'), 300);
+  assert.equal(fullscreens, 2, 'long presses, mouse selection and hyperlinks never toggle fullscreen');
+  edgeTaps = true; f.gesture(495, 495); click(f.target, 495); assert.deepEqual(f.turns, [1, 1]);
+  f.allowSwipe(false); f.gesture(400, 200); click(f.target, 200); assert.deepEqual(f.turns, [1, 1]);
+});
+
+test('center taps in EPUB frames use the visible reader coordinates and never also turn pages', (t) => {
+  let fullscreens = 0;
+  const f = fixture(t, { canTap: () => false, canCenterTap: () => true, centerTap: () => fullscreens++ });
+  const frame = f.dom.window.document.createElement('iframe'); f.host.append(frame);
+  frame.getBoundingClientRect = () => rect;
+  Object.defineProperty(frame, 'offsetWidth', { value: 800 }); Object.defineProperty(frame, 'offsetHeight', { value: 1200 });
+  const doc = frame.contentDocument; doc.body.textContent = 'EPUB body'; f.nav.bind(doc);
+  f.gesture(400, 400, { root: doc.body, startY: 400, endY: 400 }); click(doc.body, 400, 400);
+  assert.equal(fullscreens, 1); assert.deepEqual(f.turns, []);
+  f.gesture(600, 200, { root: doc.body, startY: 400, endY: 400 }); click(doc.body, 200, 400);
+  assert.equal(fullscreens, 1); assert.deepEqual(f.turns, [1]);
 });
 
 test('horizontal touch swipes turn in both directions and suppress the following click and word lookup', (t) => {

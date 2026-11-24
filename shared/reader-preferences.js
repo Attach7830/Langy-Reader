@@ -7,6 +7,7 @@ export const defaults = {
   progressSyncEnabled: true, syncDeviceName: 'Langy browser',
   keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's', playback: 'p', audioToolbar: 'a', pinyin: 'y', returnLocation: 'b', rewindAudio: '[', forwardAudio: ']', bookmarks: 'm' },
   autoHideDocks: false,
+  tapToTurn: false, swipeToTurn: true, tapCenterFullscreen: true,
   immersionMode: false, quietLibrary: true,
 };
 

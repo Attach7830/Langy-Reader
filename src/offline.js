@@ -2,7 +2,7 @@ import { offlineChanges, offlineOwner, packCaches, cachedResponse, cacheJSON, sa
 import { offlineLookup } from './offline-data.js';
 import { learningLanguages } from '../shared/learning-languages.js';
 
-let activeBook, flushing;
+let activeBook, flushing, notifiedOwner;
 function statusChange(book, operation, body, created) {
   if (operation === 'read-status') book.readAt = body.read ? created : null;
   if (operation === 'currently-reading') { book.starredAt = body.currentlyReading ? created : null; if (body.currentlyReading) book.setAsideAt = null; }
@@ -26,6 +26,9 @@ export async function setOfflineAccount(id) {
   if (previous && previous !== id) {
     for (const name of await caches.keys()) if (name.startsWith('langy-pack-') && !name.startsWith(`langy-pack-${id}-`)) await caches.delete(name);
     for (const change of await offlineChanges.all()) if (change.owner !== id) await offlineChanges.remove(change.id);
+  }
+  if (notifiedOwner !== id && typeof window !== 'undefined' && window.CustomEvent) {
+    notifiedOwner = id; window.dispatchEvent(new window.CustomEvent('langy-offline-account', { detail: { id } }));
   }
 }
 async function bookmarkList(path) {

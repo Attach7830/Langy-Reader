@@ -15,6 +15,7 @@ import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.webkit.HttpAuthHandler;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -22,6 +23,8 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebMessage;
+import android.webkit.WebMessagePort;
 import android.webkit.CookieManager;
 import android.webkit.URLUtil;
 import android.widget.EditText;
@@ -31,6 +34,9 @@ import org.json.JSONObject;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.util.UUID;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -44,6 +50,8 @@ public class MainActivity extends Activity {
     private View custom;
     private WebChromeClient.CustomViewCallback customCallback;
     private boolean triedSavedLogin;
+    private boolean readerFullscreen;
+    private WebMessagePort fullscreenPort;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -61,6 +69,13 @@ public class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(true);
         settings.setSafeBrowsingEnabled(true);
         web.setWebViewClient(new WebViewClient() {
+            @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                if (fullscreenPort != null) { fullscreenPort.close(); fullscreenPort = null; }
+                if (custom == null) setReaderFullscreen(false);
+            }
+            @Override public void onPageFinished(WebView view, String url) {
+                if (sameServer(Uri.parse(url))) connectFullscreen();
+            }
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 if (!request.isForMainFrame()) return false;
                 Uri target = request.getUrl();
@@ -85,12 +100,12 @@ public class MainActivity extends Activity {
             }
             @Override public void onShowCustomView(View view, CustomViewCallback callback) {
                 custom = view; customCallback = callback; web.setVisibility(View.GONE);
-                addContentView(view, new ViewGroup.LayoutParams(-1, -1)); if (getActionBar() != null) getActionBar().hide();
+                addContentView(view, new ViewGroup.LayoutParams(-1, -1)); setReaderFullscreen(true);
             }
             @Override public void onHideCustomView() {
                 if (custom == null) return;
                 ((ViewGroup) custom.getParent()).removeView(custom); custom = null; web.setVisibility(View.VISIBLE);
-                if (getActionBar() != null) getActionBar().show(); customCallback.onCustomViewHidden();
+                setReaderFullscreen(false); customCallback.onCustomViewHidden();
             }
         });
         web.setDownloadListener((url, agent, disposition, mime, length) -> {
@@ -107,6 +122,42 @@ public class MainActivity extends Activity {
         });
         if (server.isEmpty()) connection(); else web.loadUrl(server);
     }
+    private void setReaderFullscreen(boolean enabled) {
+        readerFullscreen = enabled;
+        if (getActionBar() != null) { if (enabled) getActionBar().hide(); else getActionBar().show(); }
+        if (enabled) getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        getWindow().getDecorView().setSystemUiVisibility(enabled
+            ? View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            : View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+    }
+    private void connectFullscreen() {
+        if (fullscreenPort != null) fullscreenPort.close();
+        try (InputStream input = getAssets().open("reader-fullscreen.js")) {
+            ByteArrayOutputStream output = new ByteArrayOutputStream(); byte[] bytes = new byte[4096]; int count;
+            while ((count = input.read(bytes)) != -1) output.write(bytes, 0, count);
+            String token = UUID.randomUUID().toString();
+            String script = output.toString("UTF-8").replace("__LANGY_FULLSCREEN_TOKEN__", token);
+            WebMessagePort[] channel = web.createWebMessageChannel(); fullscreenPort = channel[0];
+            fullscreenPort.setWebMessageCallback(new WebMessagePort.WebMessageCallback() {
+                @Override public void onMessage(WebMessagePort port, WebMessage message) {
+                    if (port != fullscreenPort || !sameServer(Uri.parse(web.getUrl() == null ? "" : web.getUrl()))) return;
+                    if ("enter".equals(message.getData())) setReaderFullscreen(true);
+                    else if ("exit".equals(message.getData()) && custom == null) setReaderFullscreen(false);
+                }
+            });
+            // Only the configured HTTPS origin receives this channel. It accepts
+            // fullscreen state alone, with no login or filesystem interface.
+            web.evaluateJavascript(script, ignored -> {
+                if (fullscreenPort == channel[0] && sameServer(Uri.parse(web.getUrl() == null ? "" : web.getUrl()))) {
+                    try { web.postWebMessage(new WebMessage(token, new WebMessagePort[] { channel[1] }), Uri.parse(server)); }
+                    catch (Exception error) { channel[0].close(); channel[1].close(); }
+                } else { channel[0].close(); channel[1].close(); }
+            });
+        } catch (Exception ignored) {}
+    }
+    @Override public void onWindowFocusChanged(boolean focused) { super.onWindowFocusChanged(focused); if (focused && readerFullscreen) setReaderFullscreen(true); }
     private boolean sameServer(Uri target) {
         Uri base = Uri.parse(server);
         return "https".equals(target.getScheme()) && target.getHost() != null && target.getHost().equalsIgnoreCase(base.getHost()) && target.getPort() == base.getPort();
@@ -139,7 +190,7 @@ public class MainActivity extends Activity {
     }
     private void connection() {
         LinearLayout panel = new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL); panel.setPadding(32, 16, 32, 16);
-        TextView note = new TextView(this); note.setText("Connect to your personal Langy server over HTTPS. While online, choose Save offline on a book to download it. Reading changes sync when you reconnect."); panel.addView(note);
+        TextView note = new TextView(this); note.setText("Connect to your personal Langy server over HTTPS. Save offline adds books to Downloads, where you can check progress. Keep Langy open while downloads run; the queue resumes after reopening. Reading changes sync when you reconnect."); panel.addView(note);
         EditText url = new EditText(this); url.setHint("https://books.srtw.win"); url.setInputType(17); url.setText(server); panel.addView(url);
         EditText user = new EditText(this); user.setHint("Langy username"); user.setText(username); panel.addView(user);
         EditText secret = new EditText(this); secret.setHint("Langy password"); secret.setInputType(129); secret.setText(password); panel.addView(secret);
@@ -153,11 +204,20 @@ public class MainActivity extends Activity {
             } catch (Exception error) { url.setError("Use an HTTPS server address without a path or embedded login."); }
         })); dialog.show();
     }
-    @Override public boolean onCreateOptionsMenu(Menu menu) { menu.add("Server connection"); menu.add("Reload"); return true; }
-    @Override public boolean onOptionsItemSelected(MenuItem item) { if (item.getTitle().equals("Reload")) web.reload(); else connection(); return true; }
+    @Override public boolean onCreateOptionsMenu(Menu menu) { menu.add("Book sections"); menu.add("Downloads"); menu.add("Server connection"); menu.add("Reload"); return true; }
+    @Override public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getTitle().equals("Reload")) web.reload();
+        else if (item.getTitle().equals("Downloads")) openReaderControl("open-offline-downloads");
+        else if (item.getTitle().equals("Book sections")) openReaderControl("contents-button");
+        else connection(); return true;
+    }
+    private void openReaderControl(String id) {
+        if (sameServer(Uri.parse(web.getUrl() == null ? "" : web.getUrl()))) web.evaluateJavascript("document.getElementById(" + JSONObject.quote(id) + ")?.click()", null);
+    }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (request == 20 && upload != null) { upload.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result, data)); upload = null; }
     }
-    @Override public void onBackPressed() { if (custom != null) web.getWebChromeClient().onHideCustomView(); else if (web.canGoBack()) web.goBack(); else super.onBackPressed(); }
+    @Override public void onBackPressed() { if (custom != null) web.getWebChromeClient().onHideCustomView(); else if (readerFullscreen) { openReaderControl("fullscreen"); setReaderFullscreen(false); } else if (web.canGoBack()) web.goBack(); else super.onBackPressed(); }
+    @Override protected void onDestroy() { if (fullscreenPort != null) fullscreenPort.close(); if (web != null) web.destroy(); super.onDestroy(); }
 }

@@ -1,20 +1,24 @@
 let dbPromise;
 function database() {
   return dbPromise ||= new Promise((resolve, reject) => {
-    const request = indexedDB.open('langy-offline', 1);
-    request.onupgradeneeded = () => request.result.createObjectStore('changes', { keyPath: 'id' });
+    const request = indexedDB.open('langy-offline', 2);
+    request.onupgradeneeded = () => {
+      for (const name of ['changes', 'downloads']) if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name, { keyPath: 'id' });
+    };
     request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
   });
 }
-async function transaction(mode, action) {
+async function transaction(mode, action, name = 'changes') {
   const db = await database();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction('changes', mode), request = action(tx.objectStore('changes'));
+    const tx = db.transaction(name, mode), request = action(tx.objectStore(name));
     tx.oncomplete = () => resolve(request.result); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error);
   });
 }
 export const offlineChanges = { all: () => transaction('readonly', (store) => store.getAll()),
   put: (value) => transaction('readwrite', (store) => store.put(value)), remove: (id) => transaction('readwrite', (store) => store.delete(id)) };
+export const offlineDownloadJobs = { all: () => transaction('readonly', (store) => store.getAll(), 'downloads'),
+  put: (value) => transaction('readwrite', (store) => store.put(value), 'downloads'), remove: (id) => transaction('readwrite', (store) => store.delete(id), 'downloads') };
 export const offlineOwner = () => { try { return localStorage.getItem('langy-offline-owner') || ''; } catch { return ''; } };
 export const packPrefix = (owner = offlineOwner()) => `langy-pack-${owner}-`;
 export async function packCaches() { const names = (await caches.keys()).filter((key) => key.startsWith(packPrefix()));

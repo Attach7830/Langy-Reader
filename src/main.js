@@ -18,6 +18,8 @@ import { pinyinOverlay } from './pinyin.js';
 import { readingVocabulary } from './reading-vocabulary.js';
 import { renderSummaryDetail } from './summary-detail.js';
 import { pageNavigation } from './page-navigation.js';
+import { bookContents } from './book-contents.js';
+import { pageTurnQueue, readerDeadline } from './reader-navigation.js';
 import { discoveryScreen } from './ui-discovery.js';
 import { locationHistory } from './location-history.js';
 import { readingShortcut } from './reader-shortcuts.js';
@@ -63,9 +65,16 @@ const returnHistory = locationHistory({
     button.title = previous ? `Back to ${previous.label}${settings.keys.returnLocation ? ` (${keyLabel(settings.keys.returnLocation)})` : ''}` : 'Back to previous location';
   },
 });
+const pageTurns = pageTurnQueue({ perform: performMove, busy(value) {
+  moving = value;
+  if (!value && activeBook && summaryQueued) { summaryQueued = false; summarize(); }
+} });
 const pageGestures = pageNavigation({ host: $('.reading-main'),
-  enabled: () => Boolean(activeBook && renderer && !moving && !document.querySelector('dialog[open]')),
-  canSwipe: () => !viewer.classList.contains('pdf-panning'),
+  enabled: () => Boolean(activeBook && renderer && !document.querySelector('dialog[open]')),
+  canSwipe: () => settings.swipeToTurn !== false && !viewer.classList.contains('pdf-panning'),
+  canTap: () => settings.tapToTurn === true,
+  canCenterTap: () => settings.tapCenterFullscreen !== false,
+  centerTap: () => void toggleFullscreen(),
   turn: (direction) => { viewer.focus({ preventScroll: true }); void move(direction); },
 });
 const pinyin = pinyinOverlay({ host: viewer, preferences: () => settings, renderer: () => renderer, book: () => activeBook, request: api });
@@ -86,7 +95,7 @@ const words = wordHelp({
 });
 const audio = narration({
   preferences: () => settings, renderer: () => renderer, book: () => activeBook,
-  navigate: (target) => move(0, target),
+  navigate: (target) => move(0, target, { audio: true }),
   changePreferences: (values) => {
     settings = saveSettings({ ...settings, ...values });
     audio.apply();
@@ -155,7 +164,10 @@ for (const close of $$('[data-close]')) {
     if (activeBook && !dialog?.open) viewer.focus({ preventScroll: true });
   });
 }
-document.addEventListener('pointerdown', (event) => { if (!event.target.closest('#word-help')) words.clear(); }, true);
+document.addEventListener('pointerdown', (event) => {
+  if (!event.target.closest('#word-help')) words.clear();
+  if (!event.target.closest('#reader-more')) $('#reader-more').open = false;
+}, true);
 viewer.addEventListener('scroll', () => words.clear(), { passive: true });
 
 function applyAppearance() {
@@ -454,6 +466,8 @@ function closeReader() {
   renderer?.destroy();
   renderer = undefined;
   activeBook = undefined;
+  summaryQueued = false;
+  pageTurns.reset();
   activePosition = undefined;
   bookmarks.reset();
   bookTools.reset();
@@ -482,7 +496,7 @@ async function openBook(book) {
   $('#pdf-zoom').hidden = book.format !== 'pdf';
   const contentsButton = $('#contents-button');
   contentsButton.disabled = true;
-  contentsButton.title = book.format === 'pdf' ? 'Go to page' : 'Contents';
+  contentsButton.title = 'Book sections';
   contentsButton.setAttribute('aria-label', contentsButton.title);
   $('#previous').disabled = true;
   $('#next').disabled = true;
@@ -514,7 +528,7 @@ async function openBook(book) {
     pinyin.refresh();
     vocabulary.refresh();
     if (book.format === 'pdf' && opened.contents.length) {
-      contentsButton.title = 'Contents';
+      contentsButton.title = 'Book sections';
       contentsButton.setAttribute('aria-label', contentsButton.title);
     }
     if (!$('#settings').open) await renderer.apply?.(settings);
@@ -569,30 +583,35 @@ async function route() {
   if (activeBook?.id !== book.id) await openBook(book);
 }
 
-async function move(direction, target) {
-  if (!renderer || moving) return false;
+function move(direction, target, context) { return pageTurns.request(direction, target, context); }
+
+async function performMove(direction, target, context) {
+  if (!renderer) return false;
   if (target == null && (direction > 0 ? !activePosition?.next : !activePosition?.previous)) return false;
-  moving = true;
   words.clear();
   resetSummary();
   const signal = loadController.signal;
+  const current = renderer;
+  const narrationNavigation = context?.audio ? null : audio.beginNavigation();
+  let completed = false;
   try {
-    if (target == null) await renderer.move(direction);
-    else await renderer.go(target);
+    await readerDeadline(() => target == null ? current.move(direction) : current.go(target), { signal, milliseconds: 20000 });
     await new Promise(requestAnimationFrame);
+    completed = !signal.aborted;
     if (!signal.aborted) readerMessage();
     return !signal.aborted;
   } catch (error) {
-    if (!signal.aborted) reportError(error);
-  } finally {
-    if (!signal.aborted) {
-      moving = false;
-      if (summaryQueued) {
-        summaryQueued = false;
-        summarize();
-      }
+    if (!signal.aborted && error?.name === 'TimeoutError' && renderer === current) {
+      const book = activeBook;
+      toast('Restoring the reader at your saved page…');
+      await openBook(book);
+    } else if (!signal.aborted) {
+      reportError(error);
     }
+  } finally {
+    if (narrationNavigation != null && !signal.aborted) void audio.endNavigation(narrationNavigation, { seekToPage: completed });
   }
+  return false;
 }
 
 async function zoomPDF(factor) {
@@ -608,94 +627,9 @@ async function zoomPDF(factor) {
   } catch (error) { reportError(error); }
 }
 
-function contents() {
-  if (!renderer) return;
-  const dialog = $('#contents-dialog');
-  if (dialog.open) return;
-  const body = $('#contents-body');
-  words.clear();
-  const isPdf = activeBook.format === 'pdf';
-  const entries = renderer.contents;
-  $('#contents-title').textContent = isPdf && !entries.length ? 'Go to page' : 'Contents';
-  body.replaceChildren();
-  const current = renderer;
-
-  function jump(target) {
-    dialog.close();
-    viewer.focus({ preventScroll: true });
-    void move(0, target);
-  }
-
-  function tocList(items, name) {
-    const list = element('nav', 'toc-list');
-    list.setAttribute('aria-label', name);
-    for (const { label, target, depth, marker } of items) {
-      const item = target == null ? element('div', 'toc-group', label) : element('button', 'toc-item', label);
-      item.style.paddingInlineStart = `${10 + 14 * Math.min(depth, 5)}px`;
-      if (marker) item.append(element('span', 'toc-marker', 'Reading marker'));
-      if (target != null) {
-        item.type = 'button';
-        item.addEventListener('click', () => jump(target));
-      }
-      list.append(item);
-    }
-    return list;
-  }
-
-  let pageInput;
-  if (isPdf) {
-    const form = element('form', 'pdf-jump');
-    const field = element('label', 'field', `Page number (1–${renderer.pageCount})`);
-    pageInput = document.createElement('input');
-    pageInput.type = 'number';
-    pageInput.min = '1';
-    pageInput.max = String(renderer.pageCount);
-    pageInput.value = String(renderer.pageNumber);
-    pageInput.required = true;
-    const submit = element('button', 'button primary', 'Go');
-    field.append(pageInput);
-    form.append(field, submit);
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-      jump(pageInput.valueAsNumber);
-    });
-    body.append(form);
-  }
-  if (entries.length) body.append(tocList(entries, 'Book contents'));
-  if (current.readingOutline) {
-    const detail = element('details', 'toc-outline');
-    const output = element('div', 'toc-outline-body');
-    detail.append(element('summary', '', 'Reading outline'), output);
-    body.append(detail);
-    let started = false;
-    async function showOutline() {
-      if (!detail.open || started) return;
-      started = true;
-      const status = element('p', 'muted toc-note', 'Finding headings and breaks…');
-      status.setAttribute('role', 'status');
-      output.replaceChildren(status);
-      try {
-        const inferred = await current.readingOutline();
-        if (renderer !== current || !output.isConnected) return;
-        const description = inferred.some((item) => item.marker)
-          ? 'Jump by heading or opening words. Reading markers are approximate stops.'
-          : 'Jump by heading or opening words.';
-        const note = element('p', 'muted toc-note', description);
-        output.replaceChildren(...(inferred.length
-          ? [note, tocList(inferred, 'Reading outline')]
-          : [element('p', 'muted toc-note', 'No passages found.')]));
-      } catch {
-        if (renderer === current && output.isConnected) status.textContent = 'Could not read passages from this book.';
-      }
-    }
-    detail.addEventListener('toggle', showOutline);
-    detail.open = entries.filter((item) => item.target != null).length < 2;
-    if (detail.open) void showOutline();
-  }
-  if (!body.children.length) body.append(element('p', 'muted', 'This book has no table of contents.'));
-  dialog.showModal();
-  if (!entries.length) pageInput?.select();
-}
+const contentsUI = bookContents({ renderer: () => renderer, book: () => activeBook,
+  go: (target) => returnHistory.follow(target), focus: () => viewer.focus({ preventScroll: true }) });
+function contents() { words.clear(); contentsUI.open(); }
 
 function keydown(event) {
   if (!activeBook || !renderer || document.querySelector('dialog[open]') || event.defaultPrevented
@@ -727,6 +661,7 @@ $('#previous').addEventListener('click', () => { viewer.focus({ preventScroll: t
 $('#return-location').addEventListener('click', () => { viewer.focus({ preventScroll: true }); void returnHistory.back(); });
 $('#next').addEventListener('click', () => { viewer.focus({ preventScroll: true }); void move(1); });
 $('#contents-button').addEventListener('click', contents);
+$('#reader-more').addEventListener('click', (event) => { if (event.target.closest('button')) $('#reader-more').open = false; });
 $('#bookmarks-button').addEventListener('click', () => void bookmarks.open());
 $('#sync-progress').addEventListener('click', () => void readingSync.check());
 $('#sync-resume').addEventListener('click', () => void readingSync.resume());

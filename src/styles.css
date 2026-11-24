@@ -310,6 +310,20 @@ html[data-immersion="true"] #abs-sync-status { display: none; }
 .reader-title strong { font-size: 14px; }
 .reader-title span { font-size: 12px; color: var(--muted); }
 .reader-actions { gap: 4px; }
+.reader-primary-action { flex: 0 0 auto; gap: 5px; white-space: nowrap; }
+.reader-more { position: relative; }
+.reader-more > summary { list-style: none; cursor: pointer; }
+.reader-more > summary::-webkit-details-marker { display: none; }
+.reader-more-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 12; min-width: 220px; max-width: 90vw; padding: 6px; display: grid; gap: 2px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); box-shadow: var(--shadow); }
+.reader-more-menu .icon-button { width: 100%; justify-content: start; gap: 9px; font: inherit; }
+.reader-more-menu .icon-button::after { content: attr(aria-label); font-size: 13px; }
+.toc-item[aria-current="location"] { background: var(--brand-soft); }
+.download-card { padding: 12px; border: 1px solid var(--border); border-radius: 8px; display: grid; gap: 8px; }
+.download-card h3 { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
+.download-card progress { width: 100%; height: 7px; accent-color: var(--brand); }
+.download-card p { margin: 0; }
+.download-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+#offline-queue-count:not(:empty) { margin-inline-start: 5px; font-variant-numeric: tabular-nums; }
 .type-icon { font: 500 23px/1 "Instrument Serif", Georgia, "Noto Sans SC", "Noto Sans TC", serif; }
 .summary-toggle[aria-expanded="true"] { background: var(--brand-soft); }
 .reader-stage {
@@ -599,6 +613,10 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
   .back-button { width: 35px; padding: 5px; }
   .back-button span, .summary-toggle > span { display: none; }
   .reader-actions { gap: 1px; }
+  .reader-heading { flex-basis: 90px; }
+  .reader-actions { flex-shrink: 1; max-width: 100%; }
+  .reader-actions .reader-primary-action { padding-inline: 6px; font-size: 12px; min-height: 40px; }
+  .reader-more-menu .icon-button { min-height: 42px; }
   .reader-actions :is(.icon-button, .button) { min-width: 32px; min-height: 36px; padding: 6px; }
   .reader-actions svg { width: 16px; height: 16px; }
   .reader-stage.summary-open { grid-template: minmax(0, 1fr) 42% / minmax(0, 1fr); }

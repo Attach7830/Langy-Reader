@@ -39,7 +39,7 @@
         <div><h1 id="library-title">Your library</h1><p id="library-description"></p></div>
         <button class="button primary" id="import-book" type="button"><i data-lucide="plus"></i><span>Import book</span></button>
       </div>
-      <div class="library-view-actions"><button id="open-reading-history" class="button quiet small" type="button">Reading history</button><button id="library-details-toggle" class="button quiet small" type="button" aria-pressed="false">Show reading details</button></div>
+      <div class="library-view-actions"><button id="open-reading-history" class="button quiet small" type="button">Reading history</button><button id="library-details-toggle" class="button quiet small" type="button" aria-pressed="false">Show reading details</button><button id="open-offline-downloads" class="button quiet small" type="button" aria-controls="downloads-dialog">Downloads<span id="offline-queue-count"></span></button></div>
       <div class="storage-status" id="library-storage" hidden>
         <span id="storage-summary"></span>
         <button class="button quiet small" id="refresh-storage" type="button" aria-label="Refresh available storage">Refresh</button>
@@ -126,16 +126,18 @@
         </div>
       </div>
       <div class="reader-actions">
+        <button class="button quiet reader-primary-action" id="contents-button" type="button" title="Book sections" aria-label="Book sections" aria-controls="contents-dialog"><i data-lucide="list"></i><span>Sections</span></button>
+        <button class="button quiet reader-primary-action" id="audio-toggle" type="button" title="Narration" aria-label="Narration" aria-pressed="false"><i data-lucide="headphones"></i><span>Audio</span></button>
+        <button class="icon-button" id="fullscreen" type="button" title="Full screen" aria-label="Full screen" aria-pressed="false"><i data-lucide="maximize"></i></button>
+        <details id="reader-more" class="reader-more"><summary class="icon-button" aria-label="More reading tools" title="More reading tools">•••</summary><div class="reader-more-menu">
         <button class="icon-button" id="return-location" type="button" title="Back to previous location" aria-label="Back to previous location" hidden><i data-lucide="arrow-left"></i></button>
         <button class="icon-button" id="sync-progress" type="button" title="Sync reading progress" aria-label="Sync reading progress" aria-controls="sync-notice" hidden><i data-lucide="rotate-ccw"></i></button>
-        <button class="icon-button" id="contents-button" type="button" title="Contents" aria-label="Contents"><i data-lucide="list"></i></button>
         <button class="icon-button" id="bookmarks-button" type="button" title="Bookmarks (M)" aria-label="Bookmarks"><i data-lucide="bookmark"></i></button>
         <button class="icon-button" id="book-tools-button" type="button" title="Search book and character guide" aria-label="Search book and character guide"><i data-lucide="search"></i></button>
         <button class="icon-button" id="immersion-toggle" type="button" title="Immersion mode" aria-label="Immersion mode" aria-pressed="false"><i data-lucide="book-open"></i></button>
         <button class="icon-button" type="button" data-settings="reading" title="Reading settings" aria-label="Reading settings"><span class="type-icon">Aa</span></button>
         <button class="button quiet summary-toggle" id="summarize" type="button" aria-label="Page summary" aria-controls="summary-panel" aria-expanded="false"><i data-lucide="sparkles"></i><span>Summary</span></button>
-        <button class="icon-button" id="audio-toggle" type="button" title="Narration" aria-label="Narration" aria-pressed="false"><i data-lucide="headphones"></i></button>
-        <button class="icon-button" id="fullscreen" type="button" title="Full screen" aria-label="Full screen" aria-pressed="false"><i data-lucide="maximize"></i></button>
+        </div></details>
       </div>
       <div id="sync-notice" class="sync-notice" hidden>
         <p id="sync-notice-text" role="status"></p>
@@ -239,10 +241,14 @@
       <p class="field-note">Save the book, its dictionary entries and optional synced audio on this device. Progress, bookmarks, preferences, reading time and vocabulary exposure sync when you reconnect. AI summaries and audio generation need the server. Dictionary coverage varies by language.</p>
       <label class="checkbox-row"><input id="offline-audio" type="checkbox" checked> Include audio</label>
       <label class="field">Recording <select id="offline-recording"></select></label>
-      <button id="offline-save" class="button primary" type="button">Download reading pack</button>
+      <button id="offline-save" class="button primary" type="button">Add to download queue</button>
       <button id="offline-remove" class="button quiet" type="button">Remove this book’s offline downloads</button>
       <p id="offline-progress" class="field-note" role="status" hidden></p><p id="offline-error" class="form-error" role="alert" hidden></p>
     </div>
+  </dialog>
+  <dialog class="modal" id="downloads-dialog" aria-labelledby="downloads-title">
+    <header class="modal-header"><h2 id="downloads-title">Downloads</h2><button class="icon-button" type="button" data-close aria-label="Close downloads"><i data-lucide="x"></i></button></header>
+    <div class="modal-body form-stack"><p class="field-note">Books download one at a time. Keep Langy open; you can read or browse while downloads run. The queue resumes when you reopen the app or reconnect.</p><div id="offline-download-list" class="form-stack" aria-label="Book pack downloads"></div><p id="offline-download-error" class="form-error" role="alert" hidden></p></div>
   </dialog>
   <dialog class="modal" id="book-tools-dialog" aria-labelledby="book-tools-title">
     <header class="modal-header"><h2 id="book-tools-title">Explore this book</h2><button class="icon-button" type="button" data-close aria-label="Close book tools"><i data-lucide="x"></i></button></header>
@@ -268,6 +274,12 @@
         <button type="button" data-settings-tab="ai" hidden>AI connection</button>
       </nav>
       <section class="modal-body" data-settings-panel="reading">
+        <fieldset class="form-stack"><legend>Reading controls</legend>
+          <label class="checkbox-row"><input name="swipeToTurn" type="checkbox" checked> Swipe to turn pages</label>
+          <label class="checkbox-row"><input name="tapToTurn" type="checkbox"> Tap left or right edge to turn pages</label>
+          <label class="checkbox-row"><input name="tapCenterFullscreen" type="checkbox" checked> Tap center to toggle full screen</label>
+          <p class="field-note">Swipe is on by default. Center-tap works in the middle third of the reading area. Links, controls, long presses and pinch zoom keep their normal actions.</p>
+        </fieldset>
         <label class="checkbox-row"><input name="immersionMode" type="checkbox"> Immersion mode</label>
         <p class="field-note">Hide page numbers, progress bars and audio clocks. Word help and reading controls stay available.</p>
         <label class="checkbox-row"><input name="quietLibrary" type="checkbox"> Quiet library</label>
