@@ -68,6 +68,58 @@ async function response(base, path, { status = 200, ...options } = {}) {
   return JSON.parse(text);
 }
 
+test('account reader settings require login, enforce same-origin writes, and persist independently of device progress', async (t) => {
+  const f = await fixture(t); let base = await f.start();
+  assert.equal((await fetch(base + '/api/settings/reader')).status, 401);
+  const initial = await response(base, '/api/settings/reader', { headers: json });
+  assert.equal(initial.revision, 0);
+  const change = { revision: 0, changes: { showPinyin: true, theme: 'midnight', keys: { pinyin: 'j' } } };
+  await response(base, '/api/settings/reader', { method: 'PATCH', headers: { ...json, Origin: 'https://unrelated.test' }, body: JSON.stringify(change), status: 403 });
+  const saved = await response(base, '/api/settings/reader', { method: 'PATCH', headers: json, body: JSON.stringify(change) });
+  assert.equal(saved.revision, 1); assert.equal(saved.preferences.showPinyin, true);
+  const conflict = await response(base, '/api/settings/reader', { method: 'PATCH', headers: json, body: JSON.stringify(change), status: 409 });
+  assert.equal(conflict.accountId, saved.accountId); assert.equal(conflict.revision, 1);
+  await response(base, '/api/settings/reader', { method: 'PATCH', headers: json, body: '{"revision":1,"changes":{"apiKey":"never-store"}}', status: 422 });
+  base = await f.start(); const restored = await response(base, '/api/settings/reader', { headers: json });
+  assert.deepEqual(restored, saved); assert.equal(JSON.stringify(restored).includes('test-reader-password'), false);
+});
+
+test('demo reader settings are isolated by the signed visitor cookie', async (t) => {
+  const f = await fixture(t, { demo: true, password: '' }), base = await f.start();
+  const result = await fetch(base + '/api/settings/reader'), first = await result.json();
+  const cookie = result.headers.get('set-cookie').split(';')[0];
+  await response(base, '/api/settings/reader', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ revision: first.revision, changes: { theme: 'dark' } }) });
+  const sameVisitor = await response(base, '/api/settings/reader', { headers: { Cookie: cookie } });
+  const other = await response(base, '/api/settings/reader');
+  assert.equal(sameVisitor.preferences.theme, 'dark'); assert.deepEqual(other.preferences, {}); assert.notEqual(other.accountId, first.accountId);
+});
+
+test('cover selection works through authenticated metadata updates and six-field multipart book uploads', async (t) => {
+  const f = await fixture(t), base = await f.start();
+  const edited = await response(base, '/api/books/sync-book', { method: 'PATCH', headers: json,
+    body: JSON.stringify({ title: 'Saved book', author: '', language: 'es', coverStyle: 'midnight' }) });
+  assert.equal(edited.coverStyle, 'midnight');
+  const data = new FormData();
+  for (const [name, value] of Object.entries({ title: '', author: '', language: '', languages: '[]', categoryId: '', coverStyle: 'forest' })) data.set(name, value);
+  data.set('file', new Blob([f.bytes], { type: 'application/epub+zip' }), 'upload.epub');
+  const imported = await response(base, '/api/books', { status: 201, method: 'POST', headers: { Authorization: basic }, body: data });
+  assert.equal(imported.coverStyle, 'forest');
+  for (const path of ['/api/imports/anna/id/continue', '/api/imports/anna/id/file']) assert.equal((await fetch(base + path, { method: 'POST' })).status, 401);
+});
+
+test('bookmarks require login and persist EPUB positions and notes through the API', async (t) => {
+  const f = await fixture(t), base = await f.start();
+  assert.equal((await fetch(base + '/api/books/sync-book/bookmarks')).status, 401);
+  const saved = await response(base, '/api/books/sync-book/bookmarks', { method: 'POST', headers: json,
+    body: JSON.stringify({ target: cfi, label: 'Useful passage', note: 'My note' }) });
+  assert.equal(saved.bookmarks[0].target, cfi);
+  const restored = await response(base, '/api/books/sync-book/bookmarks', { headers: json }); assert.equal(restored.bookmarks[0].note, 'My note');
+  await response(base, '/api/books/sync-book/bookmarks/' + saved.bookmarks[0].id, { method: 'DELETE', headers: json });
+  assert.equal((await response(base, '/api/books/sync-book/bookmarks', { headers: json })).bookmarks.length, 0);
+  for (const path of ['/api/imports/anna/batch', '/api/books/sync-book/ocr']) assert.equal((await fetch(base + path, { method: 'POST' })).status, 401);
+});
+
 test('document IDs use KOReader/CrossPoint byte samples, including byte zero and a truncated final chunk', async (t) => {
   const folder = await mkdtemp(join(tmpdir(), 'langy-checksum-'));
   t.after(() => rm(folder, { recursive: true, force: true }));
@@ -294,6 +346,7 @@ test('authenticated book word counts and reading totals persist across saved vie
   ] });
   db.prepare(`INSERT INTO analyses(book,owner,language,state,lemmas,wordCount,method,metrics,languageSelection)
     VALUES(?,?,?,'ready',?,3,'contextual',?,'["es"]')`).run('sync-book', '', 'es', lemmas, metrics);
+  db.prepare('UPDATE analyses SET textVersion=1 WHERE book=?').run('sync-book');
   db.prepare(`INSERT INTO chapters(book,key,ordinal,title,text,digest,tokens,lemmas,markers,languages)
     VALUES(?,?,0,?,?,?,?,?,'[]',?)`).run('sync-book', 'epub:0', 'Test chapter', text, digest, JSON.stringify(tokens), lemmas,
       JSON.stringify([{ from: 0, to: text.indexOf('中'), language: 'es' }, { from: text.indexOf('中'), to: text.length, language: 'zh' }]));

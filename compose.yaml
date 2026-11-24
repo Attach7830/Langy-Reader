@@ -17,6 +17,7 @@ services:
       READER_DEMO_AUDIO_PREVIEW: ${READER_DEMO_AUDIO_PREVIEW:-1}
       OLLAMA_URL: http://ollama:11434
       READER_LANGUAGE_URL: http://language:8000
+      READER_ALIGNMENT_MODEL: ${READER_WHISPER_MODEL:-small}
       READER_KOKORO_URL: ${READER_KOKORO_URL:-}
       READER_KOKORO_VOICE: ${READER_KOKORO_VOICE:-ef_dora}
       READER_KOKORO_API_KEY: ${READER_KOKORO_API_KEY:-}
@@ -41,7 +42,10 @@ services:
       start_period: 10s
 
   language:
-    build: ./language
+    build:
+      context: ./language
+      args:
+        WHISPER_MODEL: ${READER_WHISPER_MODEL:-small}
     init: true
     restart: unless-stopped
     networks: [inference]

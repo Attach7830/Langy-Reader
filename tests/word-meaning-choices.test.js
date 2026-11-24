@@ -24,31 +24,40 @@ function fixture(t, options = {}) {
     down(key = 'ArrowDown') { const event = new dom.window.KeyboardEvent('keydown', { key, cancelable: true }); assert.equal(help.keydown(event), true); assert.equal(event.defaultPrevented, true); } };
 }
 
-test('word and character meanings start compact, expand on demand, cycle with arrows and reset when a cached popup reopens', async (t) => {
-  const f = fixture(t); f.show(); await until(() => f.bubble.querySelectorAll('.meaning-choices').length === 3);
-  const pickers = () => [...f.bubble.querySelectorAll('.meaning-choices')];
-  assert.equal(pickers()[0].querySelector('.meaning-selected').textContent, 'juǎn fà · curly hair');
-  assert.equal(pickers()[1].querySelector('.meaning-selected').textContent, 'to roll up');
-  assert.ok(pickers().every((picker) => picker.querySelector('.meaning-options').hidden));
-  const top = f.bubble.style.top; pickers()[1].querySelector('.meaning-toggle').focus();
-  pickers()[1].querySelector('.meaning-toggle').click(); assert.equal(pickers()[1].querySelector('.meaning-options').hidden, false);
+test('Mandarin shows one card, cycles whole word then characters with arrows, and resets on reopening', async (t) => {
+  const f = fixture(t); f.show(); await until(() => f.bubble.querySelector('.mandarin-card'));
+  const picker = () => f.bubble.querySelector('.meaning-choices');
+  const word = () => f.bubble.querySelector('[data-word]').textContent;
+  const definition = () => f.bubble.querySelector('.mandarin-definition').textContent;
+  assert.equal(f.bubble.querySelectorAll('.meaning-choices').length, 1);
+  assert.equal(f.bubble.querySelectorAll('.mandarin-card').length, 1);
+  assert.equal(word(), '卷发'); assert.equal(definition(), 'curly hair');
+  assert.ok(picker().querySelector('.meaning-options').hidden);
+  assert.equal(f.bubble.querySelector('details').open, false);
+  const top = f.bubble.style.top; picker().querySelector('.meaning-toggle').focus();
+  picker().querySelector('.meaning-toggle').click(); assert.equal(picker().querySelector('.meaning-options').hidden, false);
   assert.equal(f.bubble.style.top, top, 'opening alternatives does not move the popup away from its focused control');
   f.bubble.dispatchEvent(new f.dom.window.MouseEvent('pointerleave')); await delay(200); assert.equal(f.bubble.hidden, false, 'a focused list remains usable with the keyboard');
-  pickers()[1].querySelectorAll('[role="option"]')[1].click(); assert.equal(pickers()[1].querySelector('.meaning-selected').textContent, 'to sweep up');
-  f.down(); assert.equal(pickers()[1].querySelector('.meaning-selected').textContent, 'to engulf');
-  f.down(); assert.equal(pickers()[1].querySelector('.meaning-selected').textContent, 'to roll up');
-  f.down('ArrowUp'); assert.equal(pickers()[1].querySelector('.meaning-selected').textContent, 'to engulf');
+  picker().querySelectorAll('[role="option"]')[1].click(); assert.equal(word(), '卷'); assert.equal(definition(), 'to roll up');
+  assert.equal(f.bubble.querySelectorAll('.mandarin-card').length, 1);
+  f.down(); assert.equal(word(), '发'); assert.equal(definition(), 'hair');
+  f.down(); assert.equal(word(), '卷发'); assert.equal(definition(), 'curly hair');
+  f.down('ArrowUp'); assert.equal(word(), '发');
   f.down('Escape'); assert.equal(f.bubble.hidden, true);
-  f.show(); await until(() => !f.bubble.hidden); assert.equal(pickers()[1].querySelector('.meaning-selected').textContent, 'to roll up');
+  f.show(); await until(() => !f.bubble.hidden); assert.equal(word(), '卷发'); assert.equal(definition(), 'curly hair');
   assert.equal(f.requests(), 1, 'closing resets only the selection, keeping the dictionary lookup cache');
 });
 
-test('a late translated gloss preserves the selected character meaning until the popup closes', async (t) => {
+test('a late translated gloss preserves the selected card and appears only on the whole-word card', async (t) => {
   let finish; const extra = new Promise((resolve) => { finish = resolve; });
-  const f = fixture(t, { translation: 'es', extra }); f.show(); await until(() => f.bubble.querySelectorAll('.meaning-choices').length === 3);
-  const character = () => f.bubble.querySelectorAll('.meaning-choices')[1];
-  character().querySelector('.meaning-toggle').click(); character().querySelectorAll('[role="option"]')[2].click();
-  finish({ text: 'cabello rizado' }); await until(() => f.bubble.textContent.includes('cabello rizado'));
-  assert.equal(character().querySelector('.meaning-selected').textContent, 'to engulf');
-  f.help.clear(); f.show(); await until(() => !f.bubble.hidden); assert.equal(character().querySelector('.meaning-selected').textContent, 'to roll up');
+  const f = fixture(t, { translation: 'es', extra }); f.show(); await until(() => f.bubble.querySelector('.mandarin-card'));
+  const before = f.bubble.querySelector('.mandarin-card');
+  f.down(); assert.equal(f.bubble.querySelector('[data-word]').textContent, '卷');
+  finish({ text: 'cabello rizado' }); await until(() => f.bubble.querySelector('.mandarin-card') !== before && f.requests() === 2);
+  await delay(10);
+  assert.equal(f.bubble.querySelector('[data-word]').textContent, '卷');
+  assert.equal(f.bubble.querySelector('.mandarin-definition').textContent, 'to roll up');
+  assert.equal(f.bubble.textContent.includes('cabello rizado'), false);
+  f.down('ArrowUp'); assert.ok(f.bubble.textContent.includes('cabello rizado'));
+  f.help.clear(); f.show(); await until(() => !f.bubble.hidden); assert.equal(f.bubble.querySelector('[data-word]').textContent, '卷发');
 });

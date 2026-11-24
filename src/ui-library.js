@@ -8,16 +8,23 @@ import { vocabularyLibrary, unfamiliarLabel, recommendationRows, bookCountLabel 
 import { bookVocabulary } from './ui-book-vocabulary.js';
 import { bookMetadataFields } from './book-metadata-fields.js';
 import { compareVocabularyDensity } from '../shared/vocabulary-ranking.js';
+import { bookCover, bookCoverPicker } from './book-covers.js';
+import { archiveBulk } from './archive-bulk.js';
+import { pdfOCR } from './pdf-ocr.js';
+import { bookLanguageSuggestions } from './reading-languages.js';
 
 const vocabularyLabel = (vocabulary) => vocabulary?.byLanguage?.map((item) => `${item.count.toLocaleString()} ${item.language === 'zh' ? 'Mandarin Han characters' : `${languageName(item.language)} ${item.unit}`}`).join(' · ');
 const wordCountLabel = (analysis) => bookCountLabel(analysis?.counts)
   || (analysis?.counting?.state === 'error' ? 'Word count unavailable' : 'Counting words…');
 
-export function libraryScreen({ progress, onRemove, detectMetadata }) {
+export function libraryScreen({ progress, onRemove, detectMetadata, readingLanguages = () => null }) {
   const search = $('#search');
   const books = $('#books');
   const bookDialog = $('#book-dialog');
   const bookForm = $('#book-form');
+  const coverPicker = bookCoverPicker(bookForm, $('#book-cover-options'));
+  const bulkImport = archiveBulk(bookForm);
+  const ocr = pdfOCR({ changed: refresh });
   const languagePicker = bookLanguagePicker(bookForm);
   const vocabularyUI = vocabularyLibrary({ changed: refresh });
   const bookVocabularyUI = bookVocabulary();
@@ -26,7 +33,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
   const learningDialog = $('#learning-dialog');
   let learningBook, learningTimer, libraryTimer;
   let snapshot = { categories: [], books: [], maxUpload: 120 * 1024 ** 2, demo: false };
-  let category = 'all', editingBook, editingCategory, selectedFile;
+  let category = 'all', editingBook, editingCategory, selectedFile, slowImport;
   let bookPending = false, categoryPending = false;
   const metadataFields = bookMetadataFields({ form: bookForm, status: $('#book-metadata-status'), detect: detectMetadata,
     active: () => !editingBook && bookDialog.open && $('#book-source').value === 'file' });
@@ -40,6 +47,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
   const archiveWorking = (job) => job && ['queued', 'downloading', 'importing'].includes(job.state);
   function importProgress(job) {
     if (!job) return '';
+    if (job.state === 'retry_wait') return `${job.error || 'Download unavailable.'} Next attempt: ${new Date(job.nextAttempt).toLocaleString()}.`;
+    if (job.state === 'needs_action') return job.error || job.notice || 'Continue this book’s free slow download.';
     if (job.state === 'queued') return 'Requesting an Anna’s Archive download…';
     if (job.state === 'downloading') return `Downloading book · ${(job.bytes / 1024 ** 2).toFixed(1)} MiB${job.total ? ` / ${(job.total / 1024 ** 2).toFixed(1)} MiB` : ''}`;
     return job.state === 'importing' ? 'Adding book to your library…' : job.state === 'error' ? job.error : '';
@@ -71,21 +80,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
     const saved = progress[book.id]?.syncDirty || !snapshot.progress?.[book.id]
       ? progress[book.id] : { ...progress[book.id], percent: snapshot.progress[book.id].percentage };
     link.setAttribute('aria-label', `${saved ? 'Resume' : 'Read'} ${book.title}`);
-    const cover = element('div', `book-cover${book.id === 'sample' ? ' cover-sample' : ''}`);
-    cover.setAttribute('aria-hidden', 'true');
-    cover.dataset.palette = book.id === 'sample' ? '0' : String(book.title.codePointAt(0) % 4);
-    cover.append(element('span', 'cover-format', book.format.toUpperCase()),
-      element('span', 'cover-title', book.title.length > 50 ? `${book.title.slice(0, 48)}…` : book.title));
-    if (book.id === 'sample') cover.append(icon('coffee'));
-    else cover.append(element('span', 'cover-author', book.author), element('span', 'cover-decoration'));
-    if (book.thumbnailType) {
-      const image = document.createElement('img');
-      image.alt = '';
-      image.loading = 'lazy';
-      image.src = `/api/books/${book.id}/cover`;
-      image.addEventListener('error', () => image.remove(), { once: true });
-      cover.append(image);
-    }
+    const cover = bookCover(book);
     const info = element('div', 'book-info');
     const meta = [book.author, languageName(book.language)].filter(Boolean).join(' · ');
     info.append(element('span', 'book-title', book.title), element('span', 'book-meta', meta));
@@ -122,6 +117,10 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
     tools.setAttribute('aria-label', `Analysis and audio for ${book.title}`);
     tools.addEventListener('click', () => void showLearning(book));
     detail.append(tools);
+    if (book.format === 'pdf' && !snapshot.demo) {
+      const scan = element('button', 'button quiet small', 'Scan PDF with OCR'); scan.type = 'button';
+      scan.setAttribute('aria-label', `Scan ${book.title} with OCR`); scan.addEventListener('click', () => ocr.show(book)); detail.append(scan);
+    }
     const readToggle = element('button', 'button quiet small book-read-toggle', book.readAt ? 'Mark as unread' : 'Mark as read');
     readToggle.type = 'button';
     readToggle.setAttribute('aria-label', `Mark ${book.title} as ${book.readAt ? 'unread' : 'read'}`);
@@ -183,6 +182,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
     $('#empty-detail').textContent = filtering ? 'Try a different search or filter.' : 'Import an EPUB or PDF to get started.';
     drawIcons();
     message('#archive-import-status', importProgress(snapshot.archive?.job));
+    $('#resume-slow-import').hidden = snapshot.archive?.job?.state !== 'needs_action';
+    renderDownloads(snapshot.archive?.jobs || []);
   }
 
   async function refresh() {
@@ -196,6 +197,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
       || ['queued', 'running'].includes(book.learning?.counting?.state)
       || ['queued', 'running'].includes(book.learning?.reading?.state)) || archiveWorking(snapshot.archive?.job)) {
       libraryTimer = setTimeout(() => { if (!document.querySelector('dialog[open]')) void refresh(); }, archiveWorking(snapshot.archive?.job) ? 1200 : 4500);
+    } else if (snapshot.archive?.jobs?.some((job) => ['retry_wait', 'needs_action'].includes(job.state))) {
+      libraryTimer = setTimeout(() => { if (!document.querySelector('dialog[open]')) void refresh(); }, 60_000);
     }
     return snapshot;
   }
@@ -452,7 +455,11 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
     if (bookPending) { if (!bookDialog.open) bookDialog.showModal(); return; }
     metadataFields.reset();
     editingBook = book;
+    slowImport = null;
+    $('#archive-slow-download').hidden = true;
+    bookForm.elements.archiveReference.readOnly = false;
     bookForm.reset();
+    bulkImport.reset();
     stageFile();
     const isEdit = Boolean(book);
     $('#book-dialog-title').textContent = isEdit ? 'Book details' : 'Import book';
@@ -468,9 +475,11 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
     const choices = [new Option('Uncategorized', ''), ...snapshot.categories.map(({ id, name, language }) => new Option(language ? `${name} · ${languageName(language)}` : name, id))];
     $('#book-categories').replaceChildren(...choices);
     const fields = bookForm.elements;
+    bookLanguageSuggestions(readingLanguages());
     fields.title.value = book?.title ?? '';
     fields.title.required = false;
     fields.author.value = book?.author ?? '';
+    coverPicker.set(book || {});
     fields.language.value = book?.language ?? '';
     fields.language.required = false;
     languagePicker.set(book?.languages);
@@ -504,13 +513,53 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
   $('#add-category').addEventListener('click', () => showCategory());
   $('#all-books').addEventListener('click', () => chooseCategory('all'));
   $('#import-book').addEventListener('click', () => showBook());
+  function showSlowImport(job) {
+    slowImport = job;
+    $('#archive-slow-download').hidden = false;
+    $('#file-field').hidden = false;
+    $('#archive-slow-page').href = job.bookUrl;
+    $('#archive-slow-notice').textContent = job.error || job.notice;
+    $('#book-submit').textContent = 'Import slow download';
+    bookForm.elements.archiveReference.readOnly = true;
+  }
+  function resumeSlow(job) {
+    if (job?.state !== 'needs_action' || bookPending) return;
+    showBook(); $('#book-source').value = 'anna'; $('#archive-book-fields').hidden = false;
+    bookForm.elements.archiveReference.value = job.reference;
+    for (const name of ['title', 'author', 'language', 'categoryId']) bookForm.elements[name].value = job.details?.[name] || '';
+    let languages = job.details?.languages || [];
+    if (typeof languages === 'string') { try { languages = JSON.parse(languages); } catch { languages = []; } }
+    languagePicker.set(languages); showFolderLanguage(); showSlowImport(job);
+    coverPicker.set(job.details || {});
+  }
+  $('#resume-slow-import').addEventListener('click', () => resumeSlow(snapshot.archive?.job));
+  function renderDownloads(jobs) {
+    const host = $('#archive-download-list'); $('#archive-downloads').hidden = !jobs.length;
+    host.replaceChildren(...jobs.slice().reverse().map((job) => {
+      const row = element('div', 'archive-download-row');
+      row.append(element('strong', '', job.details?.title || job.book?.title || job.reference?.slice(0, 12) || 'Book download'),
+        element('p', 'field-note', job.state === 'ready' ? 'Imported' : job.state === 'cancelled' ? 'Cancelled' : importProgress(job)));
+      const actions = element('div', 'archive-download-actions');
+      if (job.state === 'needs_action') { const button = element('button', 'button secondary small', 'Continue slow download'); button.type = 'button'; button.addEventListener('click', () => resumeSlow(job)); actions.append(button); }
+      for (const [label, method, path, show] of [ ['Retry now', 'POST', `/api/imports/anna/${job.id}/retry`, ['error', 'retry_wait', 'needs_action'].includes(job.state)],
+        ['Cancel', 'DELETE', `/api/imports/anna/${job.id}`, ['queued', 'downloading', 'retry_wait', 'needs_action'].includes(job.state)] ]) {
+        if (!show) continue;
+        const button = element('button', 'button quiet small', label); button.type = 'button';
+        button.addEventListener('click', async () => { button.disabled = true; try { await api(path, { method }); await refresh(); } catch (error) { message('#library-error', error.message); button.disabled = false; } }); actions.append(button);
+      }
+      row.append(actions); return row;
+    }));
+  }
   $('#book-source').addEventListener('change', () => {
     const archive = $('#book-source').value === 'anna';
     metadataFields.cancel();
     $('#file-field').hidden = archive;
     $('#archive-book-fields').hidden = !archive;
+    slowImport = null; $('#archive-slow-download').hidden = true; bookForm.elements.archiveSlowURL.value = '';
+    bookForm.elements.archiveReference.readOnly = false;
     message('#book-error');
     if (!archive && selectedFile) metadataFields.start(selectedFile);
+    if (!archive) bulkImport.reset();
   });
   $('#configure-archive').addEventListener('click', () => bookDialog.close());
   search.addEventListener('input', render);
@@ -546,9 +595,11 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
     catch (error) { return message('#book-error', error.message); }
     const archiveImport = !editingBook && $('#book-source').value === 'anna';
     const reference = bookForm.elements.archiveReference.value.trim();
+    const downloadMode = bookForm.elements.archiveDownloadMode.value, slowURL = bookForm.elements.archiveSlowURL.value.trim();
     data.delete('source');
     data.delete('archiveReference');
-    if (archiveImport && !reference) return message('#book-error', 'Paste an Anna’s Archive book link or MD5.');
+    data.delete('archiveDownloadMode'); data.delete('archiveSlowURL');
+    if (archiveImport && !bulkImport.enabled() && !reference) return message('#book-error', 'Paste an Anna’s Archive book link or MD5.');
     if (!editingBook && !archiveImport && !selectedFile) return message('#book-error', 'Choose an EPUB or PDF within the upload limit.');
     bookPending = true;
     $('#book-submit').disabled = true;
@@ -560,13 +611,24 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
         await api(`/api/books/${editingBook.id}`, { method: 'PATCH', body: Object.fromEntries(data) });
       } else if (archiveImport) {
         data.delete('file');
-        let job = await api('/api/imports/anna', { method: 'POST', body: { ...Object.fromEntries(data), reference } });
+        if (bulkImport.enabled()) {
+          const result = await api('/api/imports/anna/batch', { method: 'POST', body: { ...Object.fromEntries(data), downloadMode, sameAuthor: bulkImport.sameAuthor(), books: bulkImport.value() } });
+          bookDialog.close(); toast(`${result.jobs.length} books queued`); await refresh(); return;
+        }
+        let job;
+        if (slowImport) {
+          if (selectedFile) { const upload = new FormData(); upload.append('file', selectedFile); upload.append('details', JSON.stringify(Object.fromEntries(data)));
+            job = await api(`/api/imports/anna/${slowImport.id}/file`, { method: 'POST', body: upload }); }
+          else if (slowURL) job = await api(`/api/imports/anna/${slowImport.id}/continue`, { method: 'POST', body: { url: slowURL, details: Object.fromEntries(data) } });
+          else { message('#book-error', 'Open the slow download options, then choose the downloaded EPUB/PDF or paste its final file link.'); return; }
+        } else job = await api('/api/imports/anna', { method: 'POST', body: { ...Object.fromEntries(data), reference, downloadMode } });
         while (archiveWorking(job)) {
           message('#book-import-progress', importProgress(job));
           message('#archive-import-status', importProgress(job));
           await new Promise((resolve) => setTimeout(resolve, 1000));
           job = await api(`/api/imports/anna/${job.id}`);
         }
+        if (job.state === 'needs_action') { showSlowImport(job); await refresh(); return; }
         if (job.state !== 'ready') throw new Error(job.error || 'The book could not be imported.');
       } else {
         data.set('file', selectedFile);
@@ -580,9 +642,9 @@ export function libraryScreen({ progress, onRemove, detectMetadata }) {
     } finally {
       bookPending = false;
       message('#book-import-progress');
-      message('#archive-import-status');
+      message('#archive-import-status', importProgress(snapshot.archive?.job));
       $('#book-submit').disabled = false;
-      $('#book-submit').textContent = editingBook ? 'Save book' : 'Import book';
+      $('#book-submit').textContent = editingBook ? 'Save book' : slowImport ? 'Import slow download' : 'Import book';
     }
   });
 

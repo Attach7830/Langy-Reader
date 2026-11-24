@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { bookNarration } from '../server/book-audio.js';
+import { speechVersion } from '../server/narration-text.js';
 
 const run = promisify(execFile);
 
@@ -21,7 +22,7 @@ test('complete narration keeps sample timing, chapters, cache, cancellation, and
       INSERT INTO analyses VALUES('book','owner');`);
     const book = { id: 'book', title: 'Sample book' };
     const config = { voice: 'voice', model: 'kokoro', speed: 1, baseUrl: 'http://kokoro.test/v1' };
-    const options = JSON.stringify(config);
+    const options = JSON.stringify({ ...config, speechVersion });
     // Durations deliberately fall between MP3 frames. Container-duration concatenation would drift.
     const lengths = [17777, 43123];
     for (const [index, samples] of lengths.entries()) {

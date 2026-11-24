@@ -1,4 +1,4 @@
-const usable = (stamp, duration) => stamp && !stamp.estimated && Number.isFinite(stamp.start) && Number.isFinite(stamp.end)
+const usable = (stamp, duration) => stamp && !stamp.estimated && !stamp.review && Number.isFinite(stamp.start) && Number.isFinite(stamp.end)
   && stamp.start >= 0 && stamp.end > stamp.start && stamp.end <= duration + .01;
 export const confirmed = (timings, duration) => timings.map((stamp) => usable(stamp, duration) ? { ...stamp } : null);
 

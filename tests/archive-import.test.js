@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, writeFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -19,7 +19,7 @@ function response(body, statusCode = 200, headers = {}) {
 async function finished(archive, id) {
   for (let count = 0; count < 200; count++) {
     const job = archive.job(id);
-    if (['ready', 'error'].includes(job.state)) return job;
+    if (['ready', 'error', 'needs_action', 'retry_wait', 'cancelled'].includes(job.state)) return job;
     await delay(10);
   }
   throw new Error('Import did not finish');
@@ -51,7 +51,7 @@ test('member import keeps the key private, imports a verified EPUB, and reports 
       return response(epub, 200, { 'content-length': String(epub.length), 'content-disposition': 'attachment; filename="Sample.epub"' });
     };
     const archive = await openArchive(folder, { library, request, onImport: (book) => { analyzed = book.id; } });
-    assert.throws(() => archive.queue({ reference: md5 }), /membership key/u);
+    assert.throws(() => archive.queue({ reference: md5, downloadMode: 'fast' }), /membership key/u);
     const settings = await archive.save({ baseUrl: 'https://annas-archive.gl', apiKey: key });
     assert.equal(settings.hasKey, true);
     assert.ok(!JSON.stringify(settings).includes(key));
@@ -66,7 +66,7 @@ test('member import keeps the key private, imports a verified EPUB, and reports 
     assert.deepEqual(await readFile(library.filePath(complete.book)), epub);
     assert.ok(!JSON.stringify(complete).includes(key));
     assert.ok(!JSON.stringify(complete).includes('private-download-token'));
-    for (const [failure, expected] of [['quota', /allowance/u], ['bad-key', /membership/u], ['mismatch', /MD5/u], ['oversize', /120 MiB/u], ['oversize-stream', /120 MiB/u]]) {
+    for (const [failure, expected] of [['bad-key', /membership/u], ['mismatch', /MD5/u], ['oversize', /120 MiB/u], ['oversize-stream', /120 MiB/u]]) {
       mode = failure;
       const failed = await finished(archive, archive.queue({ reference: md5 }).id);
       assert.equal(failed.state, 'error');
@@ -88,6 +88,57 @@ test('member import keeps the key private, imports a verified EPUB, and reports 
     assert.throws(() => demo.queue({ reference: md5 }), /self-hosted/u);
     assert.throws(() => demo.save({ apiKey: key }), /self-hosted/u);
   } finally { await rm(folder, { recursive: true, force: true }); }
+});
+
+test('an exhausted fast quota offers a private slow-download continuation and imports a verified public file link', async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), 'langy-slow-link-')); t.after(() => rm(folder, { recursive: true, force: true }));
+  const library = await openLibrary(folder), epub = await sampleBook(), md5 = createHash('md5').update(epub).digest('hex');
+  const key = 'private-member-key', calls = [];
+  const archive = await openArchive(folder, { library, request: async (value) => {
+    const url = new URL(value); calls.push(url);
+    if (url.pathname === '/dyn/api/fast_download.json') return response({ error: 'quota_exceeded ' + key }, 429);
+    assert.equal(url.searchParams.has('key'), false);
+    return response(epub, 200, { 'content-length': String(epub.length) });
+  } });
+  await archive.save({ apiKey: key });
+  library.saveCategory('reading', { name: 'Reading' }, true);
+  const waiting = await finished(archive, archive.queue({ reference: md5, categoryId: 'reading', title: 'Chosen title' }).id);
+  assert.equal(waiting.state, 'needs_action'); assert.equal(waiting.source, 'slow'); assert.match(waiting.notice, /allowance/u);
+  assert.equal(waiting.bookUrl, 'https://annas-archive.gl/md5/' + md5); assert.ok(!JSON.stringify(waiting).includes(key));
+  assert.throws(() => archive.continue(waiting.id, { url: 'https://127.0.0.1/private' }), /private/u);
+  archive.continue(waiting.id, { url: 'https://files.example.test/book?token=private-file-token', details: { title: 'Updated title', coverStyle: 'forest' } });
+  const complete = await finished(archive, waiting.id);
+  assert.equal(complete.state, 'ready', complete.error); assert.equal(complete.book.categoryId, 'reading'); assert.equal(complete.book.title, 'Updated title');
+  assert.equal(complete.book.coverStyle, 'forest'); assert.equal(calls.length, 2);
+  assert.ok(!JSON.stringify(complete).includes('private-file-token')); assert.deepEqual(await readFile(library.filePath(complete.book)), epub);
+});
+
+test('free slow downloads need no key, retain the pending edition through browser checks and verify uploaded files', async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), 'langy-slow-upload-')); t.after(() => rm(folder, { recursive: true, force: true }));
+  const library = await openLibrary(folder), epub = await sampleBook(), md5 = createHash('md5').update(epub).digest('hex'); let calls = 0;
+  const archive = await openArchive(folder, { library, request: async () => { calls++; return response('<html>Complete a browser check</html>', 200, { 'content-type': 'text/html' }); } });
+  const job = archive.queue({ reference: `https://annas-archive.gl/slow_download/${md5}/0/2`, downloadMode: 'slow', author: 'Selected author' });
+  assert.equal(job.state, 'needs_action'); assert.equal(calls, 0);
+  archive.continue(job.id, { url: 'https://files.example.test/check' }); const challenge = await finished(archive, job.id);
+  assert.equal(challenge.state, 'needs_action'); assert.match(challenge.error, /browser check/u);
+  const bad = join(library.uploads, 'bad.epub'); await writeFile(bad, 'wrong edition');
+  await assert.rejects(archive.accept(job.id, { path: bad, size: 13, originalname: 'bad.epub' }), /MD5/u);
+  assert.equal(archive.job(job.id).state, 'needs_action'); assert.deepEqual(await readdir(library.uploads), []);
+  const good = join(library.uploads, 'downloaded.epub'); await writeFile(good, epub);
+  const complete = await archive.accept(job.id, { path: good, size: epub.length, originalname: 'downloaded.epub' });
+  assert.equal(complete.state, 'ready'); assert.equal(complete.book.author, 'Selected author'); assert.equal(calls, 1);
+  await assert.rejects(archive.accept(job.id, null), /finish/u);
+});
+
+test('fast-only mode and disabled fallback report quotas without starting slow downloads', async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), 'langy-slow-off-')); t.after(() => rm(folder, { recursive: true, force: true }));
+  const library = await openLibrary(folder), archive = await openArchive(folder, { library, request: async () => response({ error: 'quota_exceeded' }, 429) });
+  await archive.save({ apiKey: 'key', slowFallback: false, retryUnavailable: false });
+  const md5 = '0123456789abcdef0123456789abcdef';
+  assert.equal((await finished(archive, archive.queue({ reference: md5 }).id)).state, 'error');
+  await archive.save({ slowFallback: true });
+  assert.equal((await finished(archive, archive.queue({ reference: md5, downloadMode: 'fast' }).id)).state, 'error');
+  assert.equal((await openArchive(folder, { library })).settings().slowFallback, true);
 });
 
 test('references cannot become arbitrary fetch URLs, and downloads reject private networks and mixed DNS answers', async () => {

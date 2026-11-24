@@ -129,8 +129,8 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
       if (result.mandarin) {
         heading.textContent = result.mandarin.word;
         hint.textContent = 'Mandarin dictionary';
-        answer.replaceChildren(mandarinHelp(result.mandarin, choose));
-        if (result.text) answer.append(element('div', 'word-sense', `${result.status === 'context' ? 'AI context explanation' : label}: ${result.text}`));
+        answer.replaceChildren(mandarinHelp(result.mandarin, choose, (word) => { heading.textContent = word; },
+          result.text ? `${result.status === 'context' ? 'AI context explanation' : label}: ${result.text}` : ''));
         return;
       }
       answer.lang = result.language ?? target;

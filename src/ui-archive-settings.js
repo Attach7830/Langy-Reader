@@ -18,6 +18,8 @@ export function archiveSettings() {
       fields.aa_baseUrl.value = config.baseUrl || '';
       fields.aa_apiKey.value = '';
       fields.aa_clearKey.checked = false;
+      fields.aa_slowFallback.checked = config.slowFallback !== false;
+      fields.aa_retryUnavailable.checked = config.retryUnavailable !== false;
       fields.aa_apiKey.placeholder = config.hasKey ? 'Saved key · leave blank to keep' : 'Membership key';
       message('#archive-result', config.configurable && config.hasKey ? 'Key saved. Membership and download allowance are checked when importing.' : '');
     } catch (error) { if (current === epoch) message('#archive-result', error.message); }
@@ -25,8 +27,8 @@ export function archiveSettings() {
   }
   async function save() {
     if (!config?.configurable) return;
-    const body = { baseUrl: fields.aa_baseUrl.value, apiKey: fields.aa_apiKey.value, clearKey: fields.aa_clearKey.checked };
-    if (body.baseUrl !== config.baseUrl || body.apiKey || body.clearKey) {
+    const body = { baseUrl: fields.aa_baseUrl.value, apiKey: fields.aa_apiKey.value, clearKey: fields.aa_clearKey.checked, slowFallback: fields.aa_slowFallback.checked, retryUnavailable: fields.aa_retryUnavailable.checked };
+    if (body.baseUrl !== config.baseUrl || body.apiKey || body.clearKey || body.slowFallback !== config.slowFallback || body.retryUnavailable !== config.retryUnavailable) {
       config = await api('/api/settings/archive', { method: 'PUT', body });
       fields.aa_apiKey.value = '';
       fields.aa_clearKey.checked = false;

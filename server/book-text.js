@@ -3,7 +3,7 @@ import { posix } from 'node:path';
 import { DOMParser } from '@xmldom/xmldom';
 import { XMLParser } from 'fast-xml-parser';
 import yauzl from 'yauzl';
-import { readingText } from '../shared/reading-text.js';
+import { readingText, readingBlocks } from '../shared/reading-text.js';
 import { languageSpans, bookLanguages } from '../shared/language.js';
 import { RequestError } from './books.js';
 
@@ -124,6 +124,7 @@ export async function extractBook(book, path, languageCall) {
       const content = readingText(body);
       chapters.push({
         key: `epub:${index}`, title, text: content.text,
+        speechBlocks: readingBlocks(content),
         languages: languageSpans(content, book.language, bookLanguages(book)),
         markers: chapterMarkers(doc, body, content, targets.filter((target) => target.file === file), title),
       });

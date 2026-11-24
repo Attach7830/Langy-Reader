@@ -6,6 +6,7 @@ import yauzl from 'yauzl';
 import { sampleBook } from './sample.js';
 import { baseLanguage } from '../shared/language.js';
 import { archivePath, bookText, epubMetadataValues, filenameTitle, inferBookLanguage, parseEpubContainer, parseEpubPackage } from '../shared/book-metadata.js';
+import { validCoverStyle } from '../shared/book-covers.js';
 
 export const maxUpload = 120 * 1024 * 1024;
 
@@ -151,6 +152,11 @@ export async function openLibrary(dir, limits = null) {
       PRIMARY KEY(book,owner)
     ) STRICT;
     CREATE INDEX IF NOT EXISTS read_status_owner ON book_read_status(owner);
+    CREATE TABLE IF NOT EXISTS bookmarks(
+      id TEXT PRIMARY KEY,book TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,owner TEXT NOT NULL,
+      target TEXT NOT NULL,label TEXT NOT NULL,note TEXT NOT NULL,created INTEGER NOT NULL,expires INTEGER,
+      UNIQUE(book,owner,target)
+    ) STRICT;
   `);
   db.prepare('INSERT OR IGNORE INTO library_meta VALUES (?, ?)').run('instanceId', randomUUID());
   const instanceId = db.prepare('SELECT value FROM library_meta WHERE key = ?').get('instanceId').value;
@@ -161,6 +167,7 @@ export async function openLibrary(dir, limits = null) {
   if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'languages')) {
     db.exec("ALTER TABLE books ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'");
   }
+  if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'coverStyle')) db.exec("ALTER TABLE books ADD COLUMN coverStyle TEXT NOT NULL DEFAULT 'auto'");
   if (!db.prepare('PRAGMA table_info(categories)').all().some(({ name }) => name === 'language')) {
     db.exec('ALTER TABLE categories ADD COLUMN language TEXT');
   }
@@ -170,7 +177,7 @@ export async function openLibrary(dir, limits = null) {
     db.exec('BEGIN');
     try {
       db.prepare('INSERT INTO categories(id,name,owner,expires) VALUES (?, ?, ?, ?)').run('spanish', 'Spanish', shared, null);
-      db.prepare('INSERT INTO books VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+      db.prepare('INSERT INTO books(id,title,author,language,format,categoryId,thumbnailType,addedAt,owner,expires,bytes,updatedAt,languages) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
         'sample', 'El café de la esquina', '', 'es', 'epub', 'spanish', null, Date.now(), shared, null, sample.byteLength,
         Date.now(), '[]',
       );
@@ -228,6 +235,29 @@ export async function openLibrary(dir, limits = null) {
 
   return {
     uploads, getBook, filePath, coverPath, instanceId,
+    bookmarks(id, visitor) {
+      getBook(id, visitor);
+      db.prepare('DELETE FROM bookmarks WHERE expires IS NOT NULL AND expires<=?').run(Date.now());
+      return db.prepare('SELECT id,target,label,note,created FROM bookmarks WHERE book=? AND owner=? ORDER BY created DESC,id').all(id, editable(visitor))
+        .map((row) => ({ ...row, target: JSON.parse(row.target) }));
+    },
+    saveBookmark(id, body, visitor) {
+      const book = getBook(id, visitor), target = body.target;
+      const valid = book.format === 'pdf' ? Number.isSafeInteger(target) && target >= 1 && target <= 1000000
+        : typeof target === 'string' && target.length <= 8192 && /^epubcfi\([^<>\x00-\x1f]+\)$/u.test(target);
+      if (!valid || typeof body.label !== 'string' || body.label.length > 200 || typeof (body.note ?? '') !== 'string' || (body.note || '').length > 2000) throw new RequestError(422, 'Choose a reading position, a label of up to 200 characters and an optional note of up to 2,000 characters.');
+      const owner = editable(visitor), serialized = JSON.stringify(target);
+      const existing = db.prepare('SELECT id FROM bookmarks WHERE book=? AND owner=? AND target=?').get(id, owner, serialized);
+      if (!existing && db.prepare('SELECT count(*) AS n FROM bookmarks WHERE book=? AND owner=?').get(id, owner).n >= 1000) throw new RequestError(422, 'This book already has 1,000 bookmarks. Remove one to add another.');
+      db.prepare(`INSERT INTO bookmarks VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(book,owner,target) DO UPDATE SET label=excluded.label,note=excluded.note`)
+        .run(randomUUID(), id, owner, serialized, body.label.trim() || 'Bookmark', (body.note || '').trim(), Date.now(), visitor?.expires ?? null);
+      return { bookmarks: this.bookmarks(id, visitor) };
+    },
+    removeBookmark(id, bookmark, visitor) {
+      getBook(id, visitor);
+      if (!db.prepare('DELETE FROM bookmarks WHERE id=? AND book=? AND owner=?').run(bookmark, id, editable(visitor)).changes) throw new RequestError(404, 'Bookmark not found.');
+      return { bookmarks: this.bookmarks(id, visitor) };
+    },
     readBooks(visitor) {
       return db.prepare(`SELECT b.id,b.language,r.readAt,r.expires FROM book_read_status r JOIN books b ON b.id=r.book
         WHERE r.owner=? AND (r.expires IS NULL OR r.expires>?) AND (b.expires IS NULL OR b.expires>?)
@@ -311,6 +341,8 @@ export async function openLibrary(dir, limits = null) {
       const owner = editable(visitor);
       let saved = false;
       try {
+        const coverStyle = body.coverStyle ?? 'auto';
+        if (!validCoverStyle(coverStyle)) throw new RequestError(422, 'Choose one of the available book covers.');
         const metadata = await readMetadata(file.path, format);
         const providedLanguage = asText(body.language, 35);
         const languages = normalizeBookLanguages(body.languages);
@@ -333,9 +365,9 @@ export async function openLibrary(dir, limits = null) {
           if (used + file.size > limits.storage) throw new RequestError(507, 'Demo storage is full. Try later.');
         }
         const assignment = folderAssignment(body.categoryId, language, languages, visitor);
-        db.prepare('INSERT INTO books VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+        db.prepare('INSERT INTO books(id,title,author,language,format,categoryId,thumbnailType,addedAt,owner,expires,bytes,updatedAt,languages,coverStyle) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
           id, title, author, assignment.language, format, assignment.categoryId,
-          metadata.thumbnail ? metadata.thumbnailType : null, Date.now(), owner, visitor?.expires ?? null, file.size, Date.now(), JSON.stringify(assignment.languages),
+          metadata.thumbnail ? metadata.thumbnailType : null, Date.now(), owner, visitor?.expires ?? null, file.size, Date.now(), JSON.stringify(assignment.languages), coverStyle,
         );
         saved = true;
         touch();
@@ -364,13 +396,15 @@ export async function openLibrary(dir, limits = null) {
       const book = getBook(id, visitor);
       if (book.owner !== editable(visitor)) throw new RequestError(403, 'The sample book is read-only.');
       const title = asText(body.title, 250);
+      const coverStyle = body.coverStyle ?? book.coverStyle;
+      if (!validCoverStyle(coverStyle)) throw new RequestError(422, 'Choose one of the available book covers.');
       const languages = normalizeBookLanguages(body.languages, book.languages);
       const requestedLanguage = normalizeLanguage(body.language);
       if (!title || !requestedLanguage) throw new RequestError(422, 'Enter a title and a valid language code.');
       const language = primaryLanguage(requestedLanguage, languages);
       const assignment = folderAssignment(body.categoryId, language, languages, visitor);
-      db.prepare('UPDATE books SET title = ?, author = ?, language = ?, categoryId = ?, updatedAt = ?, languages = ? WHERE id = ?')
-        .run(title, asText(body.author, 200), assignment.language, assignment.categoryId, Date.now(), JSON.stringify(assignment.languages), id);
+      db.prepare('UPDATE books SET title = ?, author = ?, language = ?, categoryId = ?, updatedAt = ?, languages = ?, coverStyle = ? WHERE id = ?')
+        .run(title, asText(body.author, 200), assignment.language, assignment.categoryId, Date.now(), JSON.stringify(assignment.languages), coverStyle, id);
       touch();
       return publicBook(getBook(id, visitor));
     },

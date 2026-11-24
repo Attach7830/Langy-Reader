@@ -58,6 +58,8 @@ test('holding page arrows repeats navigation while pinyin, summary and playback 
   const before = actions.length; key('y', false, document.querySelector('input')); key('y', false, document.querySelector('#page'), { ctrlKey: true }); key(' ', false, document.querySelector('button'));
   assert.equal(actions.length, before, 'typing and native button actions keep their keys');
   settings.keys.pinyin = 'j'; key('y'); assert.equal(getSettings().showPinyin, false); key('j'); assert.equal(getSettings().showPinyin, true);
+  key('['); key(']'); assert.equal(actions.at(-2), 'rewindAudio'); assert.equal(actions.at(-1), 'forwardAudio');
+  key(']', true); assert.equal(actions.at(-1), 'forwardAudio');
 });
 
 test('an empty extra-language field permits native book form submission, including after abandoning another language', async (t) => {

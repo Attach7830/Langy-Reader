@@ -21,8 +21,10 @@ import { pageNavigation } from './page-navigation.js';
 import { discoveryScreen } from './ui-discovery.js';
 import { locationHistory } from './location-history.js';
 import { readingShortcut } from './reader-shortcuts.js';
+import { accountSettings } from './account-settings.js';
+import { readingBookmarks } from './bookmarks.js';
 import { bookLanguages } from '../shared/language.js';
-import { getProgress, getSettings, keyLabel, languageName, modes, saveProgress, saveSettings, syncDeviceId, updateAppearance } from './settings.js';
+import { getProgress, getSettings, keyLabel, languageName, modes, saveProgress, saveSettings, subscribeSettings, syncDeviceId, updateAppearance } from './settings.js';
 
 const viewer = $('#viewer');
 const stage = $('#stage');
@@ -78,10 +80,18 @@ const audio = narration({
   },
 });
 const library = libraryScreen({
-  progress,
+  progress, readingLanguages: () => settings.readingLanguages,
   onRemove(id) { delete progress[id]; saveProgress(progress); },
 });
+const bookmarks = readingBookmarks({ book: () => activeBook, position: () => activePosition, go: (target) => returnHistory.follow(target), request: api });
 const settingsUI = settingsDialog({ preferences: () => settings, apply: applySettings });
+const account = accountSettings({ request: api, preferences: () => settings,
+  busy: () => Boolean($('#settings').open),
+  apply: (updated) => applySettings(updated, false, false),
+  status: (state) => { const label = $('#account-settings-status');
+    if (label) label.textContent = ({ saved: 'Reader preferences saved to your account.', pending: 'Saving reader preferences…', offline: 'Preferences saved on this browser; account sync will retry.' })[state]; },
+});
+subscribeSettings(account.changed);
 const readingSync = readingProgressSync({
   request: api, progress, persist: () => saveProgress(progress), preferences: () => settings,
   available: () => !library.state.demo, deviceId: syncDeviceId(),
@@ -142,13 +152,15 @@ function applyAppearance() {
   $('#summarize').title = settings.keys.summary ? `Summarize page (${keyLabel(settings.keys.summary)})` : 'Summarize page';
   $('#previous').title = settings.keys.previous ? `Previous page (${keyLabel(settings.keys.previous)})` : 'Previous page';
   $('#next').title = settings.keys.next ? `Next page (${keyLabel(settings.keys.next)})` : 'Next page';
+  $('#bookmarks-button').title = settings.keys.bookmarks ? `Bookmarks (${keyLabel(settings.keys.bookmarks)})` : 'Bookmarks';
   returnHistory.refresh();
 }
 
-function applySettings(updated, aiChanged) {
+function applySettings(updated, aiChanged, notify = true) {
+  if (JSON.stringify(settings) === JSON.stringify(updated) && !aiChanged) return;
   const relayout = ['size', 'font', 'line', 'width', 'summaryLanguage', 'showPinyin'].some((key) => settings[key] !== updated[key]);
   const syncChanged = settings.progressSyncEnabled !== updated.progressSyncEnabled;
-  settings = saveSettings(updated);
+  settings = saveSettings(updated, { notify });
   words.clear();
   applyAppearance();
   syncFullscreen();
@@ -417,6 +429,7 @@ function closeReader() {
   renderer = undefined;
   activeBook = undefined;
   activePosition = undefined;
+  bookmarks.reset();
   moving = false;
   words.clear();
   showSummary(false);
@@ -669,6 +682,9 @@ function keydown(event) {
   else if (action === 'next') void move(1);
   else if (action === 'fullscreen') void toggleFullscreen();
   else if (action === 'playback') audio.toggle();
+  else if (action === 'rewindAudio') audio.skipBy(-10);
+  else if (action === 'forwardAudio') audio.skipBy(10);
+  else if (action === 'bookmarks') void bookmarks.open();
   else if (action === 'audioToolbar') toggleAudioToolbar();
   else if (action === 'pinyin') { applySettings({ ...settings, showPinyin: !settings.showPinyin }); toast(settings.showPinyin ? 'Pinyin shown' : 'Pinyin hidden'); }
   else if (action === 'returnLocation') void returnHistory.back();
@@ -682,6 +698,7 @@ $('#previous').addEventListener('click', () => { viewer.focus({ preventScroll: t
 $('#return-location').addEventListener('click', () => { viewer.focus({ preventScroll: true }); void returnHistory.back(); });
 $('#next').addEventListener('click', () => { viewer.focus({ preventScroll: true }); void move(1); });
 $('#contents-button').addEventListener('click', contents);
+$('#bookmarks-button').addEventListener('click', () => void bookmarks.open());
 $('#sync-progress').addEventListener('click', () => void readingSync.check());
 $('#sync-resume').addEventListener('click', () => void readingSync.resume());
 $('#sync-keep').addEventListener('click', () => void readingSync.keepLocal());
@@ -706,16 +723,21 @@ document.addEventListener('fullscreenchange', syncFullscreen);
 document.addEventListener('keydown', keydown);
 window.addEventListener('resize', words.clear);
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) void readingSync.flush();
-  else void readingSync.check();
+  if (document.hidden) { void readingSync.flush(); void account.flush({ keepalive: true }); }
+  else { void readingSync.check(); void account.resume(); }
 });
-window.addEventListener('pagehide', () => void readingSync.flush());
+window.addEventListener('pagehide', () => { void readingSync.flush(); void account.flush({ keepalive: true }); });
+window.addEventListener('online', () => void account.resume());
+window.addEventListener('focus', () => void account.resume());
+$('#settings').addEventListener('close', () => void account.resume());
+setInterval(() => { if (!document.hidden) void account.resume(); }, 30_000);
 
 drawIcons();
 applyAppearance();
 void checkAI();
 setInterval(checkAI, 30_000);
 try {
+  await account.start();
   const snapshot = await library.refresh();
   settingsUI.setDemo(snapshot.demo);
   $('#about-link').hidden = !snapshot.demo;

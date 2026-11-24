@@ -14,8 +14,11 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 from spanish_morphology import spanish_correction
+from vocabulary_filters import lexical_tokens, lemma_inventory
+from pdf_ocr import router as ocr_router
 
 app = FastAPI()
+app.include_router(ocr_router)
 lock = threading.RLock()
 MODELS = {"es": "es_core_news_sm", "en": "en_core_web_sm", "pt": "pt_core_news_sm"}
 WORD = re.compile(r"[^\W_]+(?:['’][^\W_]+)*", re.UNICODE)
@@ -30,6 +33,7 @@ class Alignment(BaseModel):
     audio: str = Field(max_length=24000000)
     words: list[str] = Field(max_length=2000)
     language: str = Field(max_length=35)
+    text: str = Field(default='', max_length=4000)
 
 
 class RecordingMatch(BaseModel):
@@ -106,7 +110,8 @@ def analyze(body: Analysis):
             "lemma": lemma, "pos": token.pos_, "properName": is_name,
             **(correction or {}),
         })
-    return {"tokens": tokens, "lemmas": sorted(lemmas), "method": method}
+    tokens = lexical_tokens(body.text, tokens)
+    return {"tokens": tokens, "lemmas": lemma_inventory(tokens, language), "method": method}
 
 
 @functools.lru_cache(maxsize=1)
@@ -126,7 +131,8 @@ def normalized(text):
 def match_timings(words, heard):
     if any(any(0x3400 <= ord(char) <= 0x9fff or 0x20000 <= ord(char) <= 0x3ffff for char in word) for word in words):
         from book_alignment import align_recording
-        return align_recording(words, [{"word": word, "start": start, "end": end} for word, start, end, _ in heard])["timings"]
+        return align_recording(words, [{"word": word, "start": start, "end": end, "confidence": confidence}
+                                       for word, start, end, confidence in heard])["timings"]
     source = [normalized(word) for word in words]
     detected = [word[0] for word in heard]
     times = [None] * len(source)
@@ -145,14 +151,14 @@ def match_timings(words, heard):
     return times
 
 
-def recognized_words(model, samples, language, words, retry=False, vad=False):
+def recognized_words(model, samples, language, words, retry=False, vad=False, text=''):
     language = language.replace('_', '-').split('-')[0].lower()
     automatic = language in {'', 'mul', 'und', 'auto'}
     if language == 'cmn': language = 'zh'
     segments, _ = model.transcribe(
         samples, language=None if automatic else language, multilingual=automatic, task='transcribe', word_timestamps=True, beam_size=5 if retry else 3,
         condition_on_previous_text=False, temperature=0.0,
-        initial_prompt=None if retry else " ".join(words[:40]),
+        initial_prompt=None if retry else (text[:350] or ("".join(words[:80]) if language == 'zh' else " ".join(words[:40]))),
         # Whisper can classify short headings as silence. Retry only the failed chunk.
         no_speech_threshold=None if retry else 0.6,
         vad_filter=vad,
@@ -166,6 +172,36 @@ def recognized_words(model, samples, language, words, retry=False, vad=False):
                 heard.append((normalized(piece), word.start + width * index,
                               word.start + width * (index + 1), word.probability))
     return heard
+
+
+def timing_quality(words, times):
+    # Weight by source characters so one matched syllable cannot hide a missing
+    # long compound. Interpolated subword boundaries are less reliable anchors.
+    total = sum(max(1, len(normalized(word))) for word in words)
+    matched = sum(max(1, len(normalized(word))) * (0.7 if stamp.get('review') else 1)
+                  for word, stamp in zip(words, times) if stamp)
+    return matched / max(1, total)
+
+
+def merge_timing_passes(words, first, second):
+    primary, other = (second, first) if timing_quality(words, second) > timing_quality(words, first) else (first, second)
+    result = list(primary)
+    # Fill holes only inside unchanged, ordered neighbouring anchors. Do not
+    # combine conflicting passes into a timeline that jumps backward.
+    right, boundary = [math.inf] * len(result), math.inf
+    for index in range(len(result) - 1, -1, -1):
+        right[index] = boundary
+        if result[index]: boundary = result[index]['start']
+    end = 0
+    for index, stamp in enumerate(result):
+        if stamp:
+            end = stamp['end']
+            continue
+        candidate = other[index] if index < len(other) else None
+        if candidate and candidate['start'] >= end and candidate['end'] <= right[index] and candidate['end'] > candidate['start']:
+            result[index] = candidate
+            end = candidate['end']
+    return result
 
 
 def decode_recording(encoded):
@@ -192,9 +228,12 @@ def align(body: Alignment):
     with lock:
         model = recognizer()
         language = body.language.replace("_", "-").split("-")[0].lower()
-        times = match_timings(body.words, recognized_words(model, samples, language, body.words))
-        if body.words and not any(times):
-            times = match_timings(body.words, recognized_words(model, samples, language, body.words, retry=True))
+        times = match_timings(body.words, recognized_words(model, samples, language, body.words, text=body.text))
+        # Partial Mandarin matches are common: the old all-or-nothing test never
+        # retried those gaps. Keep retries bounded to one extra pass per chunk.
+        if body.words and timing_quality(body.words, times) < .88:
+            retry = match_timings(body.words, recognized_words(model, samples, language, body.words, retry=True))
+            times = merge_timing_passes(body.words, times, retry)
     return {"timings": times}
 
 

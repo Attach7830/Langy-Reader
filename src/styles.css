@@ -225,6 +225,34 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .cover-sample { gap: 13px; }
 .cover-sample .cover-title { max-width: 150px; }
 .cover-sample > svg { width: 42px; height: 42px; stroke-width: 1.2; }
+.book-cover[data-cover="terracotta"] { --cover-bg: #a14f3c; --cover-ink: #fff0d9; background-image: linear-gradient(135deg, #fff1 0 25%, transparent 25% 75%, #0001 75%); }
+.book-cover[data-cover="forest"] { --cover-bg: #21483d; --cover-ink: #f1ebd2; background-image: repeating-linear-gradient(35deg, transparent 0 32px, #bdcfb914 33px 34px); }
+.book-cover[data-cover="forest"] .cover-decoration { border-radius: 50% 0; transform: rotate(-35deg); }
+.book-cover[data-cover="ocean"] { --cover-bg: #194459; --cover-ink: #e6f3ee; background-image: radial-gradient(ellipse at bottom right, #397c87 0 24%, transparent 24.5% 34%, #32718088 34.5% 44%, transparent 44.5%); }
+.book-cover[data-cover="midnight"] { --cover-bg: #171b33; --cover-ink: #f3e6c5; background-image: radial-gradient(circle at 25% 73%, #dcca8f 0 1px, transparent 1.5px), radial-gradient(circle at 72% 23%, #dcca8f 0 1px, transparent 1.5px), radial-gradient(circle at 80% 78%, #dcca8f 0 2px, transparent 2.5px); }
+.book-cover[data-cover="parchment"] { --cover-bg: #e9d9b6; --cover-ink: #3e382b; outline: 1px solid #87775288; outline-offset: -12px; background-image: repeating-linear-gradient(0deg, #6b5a3e06 0 1px, transparent 1px 4px); }
+.book-cover[data-cover="plum"] { --cover-bg: #51334d; --cover-ink: #f8e9df; background-image: linear-gradient(145deg, transparent 55%, #ba8aa22e 55% 70%, transparent 70%), linear-gradient(35deg, transparent 70%, #d3aabd22 70%); }
+.book-cover[data-cover="plum"] .cover-decoration { border-radius: 0; transform: rotate(45deg); }
+.book-cover-picker { border: 0; padding: 0; margin: 14px 0; min-width: 0; }
+.book-cover-picker legend { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.book-cover-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); gap: 9px; }
+.book-cover-option { position: relative; display: flex; flex-direction: column; gap: 5px; cursor: pointer; min-width: 0; }
+.book-cover-option input { position: absolute; top: 5px; right: 5px; z-index: 2; margin: 0; accent-color: var(--brand); }
+.book-cover-preview { display: block; border: 2px solid transparent; border-radius: 6px; }
+.book-cover-preview .book-cover { padding: 10px 6px 7px 10px; box-shadow: none; }
+.book-cover-preview .cover-title { font-size: 15px; }
+.book-cover-preview .cover-author, .book-cover-preview .cover-format { font-size: 7px; }
+.book-cover-preview .book-cover::before { width: 5px; }
+.book-cover-option input:checked + .book-cover-preview { border-color: var(--focus); }
+.book-cover-option input:focus-visible + .book-cover-preview { outline: 2px solid var(--focus); outline-offset: 2px; }
+.book-cover-name { font-size: 10px; line-height: 1.3; }
+.archive-bulk-row, .archive-download-row { border: 1px solid var(--border); border-radius: 7px; padding: 12px; margin-block: 8px; }
+.archive-bulk-row { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.archive-bulk-row > :first-child { grid-column: 1 / -1; }
+.archive-download-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+#archive-downloads { margin: 10px 0 22px; }
+.bookmark-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; border-top: 1px solid var(--border); padding-top: 8px; }
+.bookmark-entry > p { grid-column: 1 / -1; white-space: pre-wrap; }
 .book-info { display: block; position: relative; margin-top: 12px; padding-right: 30px; }
 .book-title, .book-meta { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .book-title { font-weight: 750; }
@@ -488,6 +516,8 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 .mandarin-character { border-top: 1px solid var(--border); padding-top: 5px; margin-top: 5px; }
 .mandarin-character-name { display: flex; align-items: baseline; gap: 8px; }
 .mandarin-reading { color: var(--muted); }
+.mandarin-alternatives { margin-top: 5px; font-size: 12px; }
+.mandarin-alternatives summary { color: var(--muted); cursor: pointer; }
 .meaning-choices { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 4px; }
 .meaning-toggle { min-height: 28px; min-width: 42px; padding: 3px 5px; background: var(--well); color: var(--muted); border: 1px solid var(--border); border-radius: 5px; font-size: 11px; }
 .meaning-options { grid-column: 1 / -1; max-height: 170px; overflow: auto; border: 1px solid var(--border); border-radius: 5px; }

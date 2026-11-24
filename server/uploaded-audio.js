@@ -8,6 +8,7 @@ import { RequestError } from './books.js';
 import { synchronizeChunk } from './audio-timing.js';
 import { chapterAudio } from './chapter-audio.js';
 import { sectionLanguages } from './language-voices.js';
+import { env } from 'node:process';
 
 const run = promisify(execFile);
 export const maxAudioUpload = 1024 * 1024 ** 2;
@@ -100,10 +101,11 @@ export function uploadedAudio({ db, folder, library, languageCall, wake, isResca
         await rename(target, playback);
         if (!valid()) { await rm(playback, { force: true }); return; }
       }
-      let checkpoint = { offset: 0, heard: [], language: recognitionLanguage };
+      const transcriptVersion = `2:${env.READER_ALIGNMENT_MODEL || 'small'}`;
+      let checkpoint = { offset: 0, heard: [], language: recognitionLanguage, version: transcriptVersion };
       try {
         const saved = JSON.parse(await readFile(transcript(job.id), 'utf8'));
-        if (saved.language === recognitionLanguage) checkpoint = saved;
+        if (saved.language === recognitionLanguage && saved.version === transcriptVersion) checkpoint = saved;
       } catch { /* A new recording starts without a transcript. */ }
       for (let offset = checkpoint.offset; offset < job.duration; offset += 59) {
         if (!valid()) return;

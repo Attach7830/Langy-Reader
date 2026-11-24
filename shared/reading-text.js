@@ -27,6 +27,22 @@ export function readingText(root) {
   return { text, runs };
 }
 
+// Structural metadata shares the canonical text's UTF-16 offsets. Never add
+// narration punctuation or labels to the text used by reading/progress sync.
+export function readingBlocks({ runs }) {
+  const blocks = [];
+  let previous;
+  for (const run of runs) {
+    let node = run.node?.parentNode;
+    while (node?.parentNode && !blockTags.has(node.localName?.toLowerCase())) node = node.parentNode;
+    const last = blocks.at(-1);
+    if (last && previous === node) last.to = run.end;
+    else blocks.push({ from: run.start, to: run.end, kind: /^h[1-6]$/u.test(node?.localName || '') ? 'heading' : 'paragraph' });
+    previous = node;
+  }
+  return blocks;
+}
+
 export function textWords(text, language = 'en') {
   const segmenter = new Intl.Segmenter(language, { granularity: 'word' });
   return Array.from(segmenter.segment(text)).filter((part) => part.isWordLike && /[\p{L}\p{N}]/u.test(part.segment))

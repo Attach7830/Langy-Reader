@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 from unittest.mock import patch
 
-from app import Alignment, Analysis, analyze, align, match_timings, normalized, recognized_words, rescan_recording
+from app import Alignment, Analysis, analyze, align, match_timings, merge_timing_passes, normalized, recognized_words, rescan_recording
 
 
 def speech_word(word, start, end):
@@ -72,6 +72,50 @@ class AlignmentTests(unittest.TestCase):
     def test_unmatched_numbers_remain_unmatched_and_invalid_times_are_not_returned(self):
         self.assertEqual(match_timings(["42"], [("cuarenta", 0.1, 0.4, 1)]), [None])
         self.assertEqual(match_timings(["uno"], [("uno", float("nan"), 0.4, 1)]), [None])
+
+    def test_partial_mandarin_alignment_retries_and_recovers_complementary_gaps(self):
+        class Model:
+            def __init__(self): self.options = []
+            def transcribe(self, *args, **kwargs):
+                self.options.append(kwargs)
+                words = ([speech_word('今天', .1, .4), speech_word('小明', .4, .6)] if len(self.options) == 1 else
+                         [speech_word('走进', .6, .8), speech_word('图书馆', .8, 1.4)])
+                return [types.SimpleNamespace(words=words)], None
+        model = Model()
+        body = Alignment(audio='YQ==', words=['今天', '小明', '走进', '图书馆'], language='cmn', text='今天，小明走进图书馆。')
+        with patch('app.recognizer', return_value=model), patch('app.decode_recording', return_value=np.ones(32000)):
+            times = align(body)['timings']
+        self.assertTrue(all(times))
+        self.assertEqual(len(model.options), 2)
+        self.assertEqual(model.options[0]['language'], 'zh')
+        self.assertEqual(model.options[0]['initial_prompt'], body.text)
+        self.assertTrue(all(a['end'] <= b['start'] for a, b in zip(times, times[1:])))
+
+    def test_low_confidence_mandarin_matches_are_reviewed_and_get_a_second_pass(self):
+        self.assertTrue(match_timings(['朋友'], [('朋友', .1, .4, .2)])[0]['review'])
+        class Model:
+            def __init__(self): self.calls = 0
+            def transcribe(self, *args, **kwargs):
+                self.calls += 1
+                word = speech_word('朋友', .1, .4)
+                word.probability = .2 if self.calls == 1 else .9
+                return [types.SimpleNamespace(words=[word])], None
+        model = Model()
+        with patch('app.recognizer', return_value=model), patch('app.decode_recording', return_value=np.ones(16000)):
+            times = align(Alignment(audio='YQ==', words=['朋友'], language='zh'))['timings']
+        self.assertEqual(model.calls, 2)
+        self.assertFalse(times[0]['review'])
+
+    def test_pass_merge_rejects_a_new_timestamp_that_overlaps_unchanged_neighbours(self):
+        first = [{'start': 0, 'end': 1}, None, {'start': 2, 'end': 3}]
+        second = [None, {'start': .5, 'end': 2.5}, None]
+        self.assertEqual(merge_timing_passes(['甲', '乙', '丙'], first, second), first)
+
+    def test_mandarin_prompt_does_not_insert_spaces_between_every_source_word(self):
+        class Model:
+            def transcribe(self, *args, **kwargs): self.options = kwargs; return [], None
+        model = Model(); recognized_words(model, [], 'zh', ['今天', '小明', '读书'])
+        self.assertEqual(model.options['initial_prompt'], '今天小明读书')
 
     def test_rescan_recognizes_fresh_speech_and_rejects_low_confidence_or_silent_matches(self):
         class Model:

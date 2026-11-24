@@ -35,6 +35,18 @@ class BookAlignmentTests(unittest.TestCase):
         self.assertEqual(result['matchedWords'], len(words))
         self.assertAlmostEqual(result['timings'][0]['start'], .2)
 
+    def test_long_mandarin_recording_keeps_anchors_despite_regular_recognition_errors(self):
+        # Each phrase has 12 correct Han characters followed by a substitution;
+        # requiring 16 consecutive characters used to lose every anchor.
+        text = ''.join(chr(0x4e00 + i) for i in range(3000))
+        spoken = list(text)
+        for index in range(12, len(spoken), 13): spoken[index] = '啊'
+        heard = [{'word': char, 'start': i * .1, 'end': (i + 1) * .1} for i, char in enumerate(spoken)]
+        result = align_recording(list(text), heard)
+        self.assertGreater(result['strongMatchCharacters'], 2000)
+        self.assertGreater(result['matchedWords'], 2700)
+        self.assertIsNone(result['timings'][12])
+
 
 if __name__ == '__main__':
     unittest.main()

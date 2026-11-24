@@ -112,14 +112,14 @@ test('source ruby pronunciation is excluded from readable text and progress frac
   assert.equal(positionFraction(root, node, 1), 1 / 10);
 });
 
-test('language voices route Mandarin, Portuguese and English while retaining compatible monolingual caches', () => {
+test('language voices route Mandarin, Portuguese and English with versioned narration caches', () => {
   const config = { voice: 'ef_dora', model: 'kokoro', speed: 1, baseUrl: 'http://kokoro/v1', autoLanguageVoices: true };
   assert.equal(voiceFor(config, 'zh-Hant'), 'zf_xiaobei');
   assert.equal(voiceFor(config, 'pt-PT'), 'pf_dora');
   assert.equal(voiceFor(config, 'en'), 'af_heart');
   assert.equal(voiceFor({ ...config, voicesByLanguage: { pt: 'my-european-portuguese' } }, 'pt-PT'), 'my-european-portuguese');
   assert.equal(voiceFor({ ...config, autoLanguageVoices: false }, 'zh'), 'ef_dora');
-  assert.deepEqual(narrationOptions(config, ['es']), { voice: 'ef_dora', model: 'kokoro', speed: 1, baseUrl: 'http://kokoro/v1' });
+  assert.deepEqual(narrationOptions(config, ['es']), { voice: 'ef_dora', model: 'kokoro', speed: 1, baseUrl: 'http://kokoro/v1', speechVersion: 2 });
   assert.deepEqual(narrationOptions(config, ['zh', 'en', 'pt']).voiceMap, { zh: 'zf_xiaobei', en: 'af_heart', pt: 'pf_dora' });
   assert.deepEqual(sectionLanguages([{ languages: JSON.stringify([{ language: 'en' }, { language: 'zh' }]) }], 'pt'), ['en', 'zh']);
 });

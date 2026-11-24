@@ -74,7 +74,7 @@ test('a mixed book keeps Mandarin totals separate, categorizes with characters, 
   const generated = await until(() => { const result = learning.narration(book).audio; if (result.state === 'error') throw new Error(result.error); return result.state === 'ready' && result; });
   assert.deepEqual(voices, ['zf_xiaobei', 'af_heart', 'pf_dora', 'ef_dora']);
   assert.deepEqual(alignmentLanguages, ['zh', 'en', 'pt', 'es']);
-  assert.ok(Math.abs(generated.duration - 4) < .01);
+  assert.ok(Math.abs(generated.duration - 4.35) < .01, 'the section ends with an audible pause and retains sample-based timing');
   const uploaded = join(dir, 'own.wav'); await writeFile(uploaded, speech);
   const recording = await learning.recordings.accept(book, { path: uploaded, size: speech.length, originalname: 'own.wav' }, {});
   learning.recordings.queue(book, recording.id);

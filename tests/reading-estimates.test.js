@@ -103,7 +103,7 @@ test('the application starts a reading estimate while an audio job is still wait
   });
   const text = 'People read books in the library. They enjoyed the story and talked about the characters afterwards.';
   for (const id of ['audio', 'reading']) {
-    db.prepare("INSERT INTO analyses(book,owner,language,state) VALUES(?,'','en','ready')").run(id);
+    db.prepare("INSERT INTO analyses(book,owner,language,state,languageSelection,textVersion) VALUES(?,'','en','ready','[\"en\"]',1)").run(id);
     db.prepare('INSERT INTO chapters(book,key,ordinal,title,text,digest,tokens,lemmas) VALUES(?,?,?,?,?,?,?,?)').run(id, 'epub:0', 0, 'Chapter', text, id, '[]', '[]');
   }
   const options = { voice: 'ef_dora', model: 'kokoro', speed: 1, baseUrl: process.env.READER_KOKORO_URL };

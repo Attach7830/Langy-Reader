@@ -1,4 +1,5 @@
 import { baseLanguage } from '../shared/language.js';
+import { speechVersion } from './narration-text.js';
 
 const presets = { en: 'af_heart', es: 'ef_dora', pt: 'pf_dora', zh: 'zf_xiaobei', ja: 'jf_alpha', fr: 'ff_siwis', it: 'if_sara', hi: 'hf_alpha' };
 const voiceLanguages = { a: 'en', b: 'en', e: 'es', p: 'pt', z: 'zh', j: 'ja', f: 'fr', i: 'it', h: 'hi' };
@@ -10,7 +11,7 @@ export function voiceFor(config, language) {
   return presets[code] || config.voice;
 }
 export function narrationOptions(config, languages) {
-  const options = { voice: config.voice, model: config.model, speed: config.speed, baseUrl: config.baseUrl };
+  const options = { voice: config.voice, model: config.model, speed: config.speed, baseUrl: config.baseUrl, speechVersion };
   const voiceMap = Object.fromEntries([...new Set(languages.map((language) => baseLanguage(language)))].map((language) => [language, voiceFor(config, language)])
     .filter(([, voice]) => voice !== config.voice));
   if (Object.keys(voiceMap).length) options.voiceMap = voiceMap;

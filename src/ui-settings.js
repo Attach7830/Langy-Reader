@@ -4,6 +4,7 @@ import { languageOptions, parseLanguage } from './languages.js';
 import { narrationSettings } from './ui-narration-settings.js';
 import { archiveSettings } from './ui-archive-settings.js';
 import { deviceSettings } from './ui-device-settings.js';
+import { readingLanguagesPicker } from './reading-languages.js';
 
 export function settingsDialog({ preferences, apply }) {
   const narration = narrationSettings();
@@ -12,6 +13,7 @@ export function settingsDialog({ preferences, apply }) {
   const dialog = $('#settings');
   const form = $('#settings-form');
   const fields = form.elements;
+  const readingLanguages = readingLanguagesPicker({ host: $('#reading-language-list'), input: $('#reading-language-choice'), add: $('#reading-language-add'), error: (text) => message('#settings-error', text) });
   const aiTab = $('[data-settings-tab="ai"]');
   const themeButtons = Object.entries(themes).map(([value, theme]) => {
     const label = element('label', 'theme-option');
@@ -107,6 +109,7 @@ export function settingsDialog({ preferences, apply }) {
     devices.reset();
     aiConfig = null;
     const current = preferences();
+    readingLanguages.set(current.readingLanguages);
     for (const key of ['mode', 'summaryLanguage', 'translationLanguage', 'theme', 'background', 'font', 'size', 'line', 'width']) {
       fields[key].value = current[key];
     }
@@ -200,6 +203,8 @@ export function settingsDialog({ preferences, apply }) {
     }
     const summaryLanguage = parseLanguage(fields.summaryLanguage.value);
     const translationLanguage = parseLanguage(fields.translationLanguage.value);
+    let preferredLanguages;
+    try { preferredLanguages = readingLanguages.value(); } catch (error) { section('language'); return message('#settings-error', error.message); }
     if (!summaryLanguage || !translationLanguage) {
       section('language');
       return message('#settings-error', 'Choose a summary and translation language or enter valid language codes.');
@@ -230,6 +235,7 @@ export function settingsDialog({ preferences, apply }) {
     }
     const updated = {
       mode: fields.mode.value, summaryLanguage, translationLanguage, theme: fields.theme.value,
+      readingLanguages: preferredLanguages,
       synonymContextHelp: fields.synonymContextHelp.checked,
       showPinyin: fields.showPinyin.checked,
       audioEnabled: fields.audioEnabled.checked, audioToolbarHidden: fields.audioToolbarHidden.checked,

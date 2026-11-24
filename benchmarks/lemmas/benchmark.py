@@ -39,6 +39,9 @@ def langy_analyzer(language, source):
     metadata = {"source_sha256": hashlib.sha256(Path(source).read_bytes()).hexdigest(),
                 "name_filter": "Production Langy PROPN/PER/PERSON/LOC/GPE exclusion, including its lexical overrides", "model": "Han character scan"}
     helper = Path(source).with_name("spanish_morphology.py")
+    lexical_filters = Path(source).with_name("vocabulary_filters.py")
+    if lexical_filters.is_file():
+        metadata['vocabulary_filters_sha256'] = hashlib.sha256(lexical_filters.read_bytes()).hexdigest()
     if helper.is_file():
         metadata["spanish_morphology_sha256"] = hashlib.sha256(helper.read_bytes()).hexdigest()
     if language == "es" and Path(source).with_name("spanish_dictionary.py").is_file():

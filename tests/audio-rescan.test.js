@@ -13,11 +13,11 @@ const run = promisify(execFile);
 const texts = ['uno dos tres cuatro', 'cinco seis siete ocho', 'nueve diez once doce'];
 const words = texts.join(' ').split(' ');
 async function until(check) { for (let i = 0; i < 600; i++) { const value = check(); if (value) return value; await delay(20); } throw new Error('Background operation timed out'); }
-async function fixture(t, duration = 12) {
+async function fixture(t, duration = 12, { autoRepair = false } = {}) {
   const folder = await mkdtemp(join(tmpdir(), 'langy-rescan-'));
   const original = globalThis.fetch;
   const book = { id: 'book', title: 'Capítulos', language: 'es' };
-  const learning = await openLearning(folder, { getBook: () => book }, false, {});
+  const learning = await openLearning(folder, { getBook: () => book }, false, {}, { autoRepair });
   const db = new DatabaseSync(join(folder, 'learning.sqlite'));
   db.prepare('INSERT INTO analyses(book,owner,language,state) VALUES(?,?,?,?)').run(book.id, 'owner', 'es', 'ready');
   for (const [index, text] of texts.entries()) db.prepare('INSERT INTO chapters(book,key,ordinal,title,text,digest,tokens,lemmas,markers) VALUES(?,?,?,?,?,?,?,?,?)')
@@ -102,6 +102,17 @@ test('fresh rescan recovers a wholly unmatched chapter, preserves known global t
   assert.deepEqual(f.anchors('generated-copy').filter((word) => generatedBefore.some((item) => item.word === word.word)), generatedBefore);
   assert.deepEqual(f.anchors(first.id), current);
   assert.deepEqual(await readFile(f.learning.audioFile(f.book, 'generated-copy')), audio);
+});
+
+test('completed synchronization automatically repairs missing positions once and does not loop on its own updated alignment', async (t) => {
+  const f = await fixture(t, 12, { autoRepair: true });
+  const recording = await f.upload('Automatic repair'); f.learning.recordings.queue(f.book, recording.id);
+  assert.equal((await f.ready(recording.id)).state, 'ready');
+  const result = await f.rescanReady(recording.id);
+  assert.equal(result.state, 'ready', result.error); assert.equal(result.added, 4); assert.equal(f.rescanCalls, 1);
+  assert.equal(f.anchors(recording.id).length, 12);
+  f.learning.rescans.automatic(f.book, recording.id); await delay(50);
+  assert.equal(f.rescanCalls, 1, 'the completed automatic pass records the final signature, preventing repeated rescans');
 });
 
 test('failed rescans retain working alignment, retry freshly, survive restart checkpoints, and cancel safely', async (t) => {

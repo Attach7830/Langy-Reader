@@ -12,6 +12,23 @@ export function migrateSpanishTaggedMorphology(db) {
   return refreshSpanishAnalyses(db, 'spanish-tagged-morphology-v1');
 }
 
+export function migrateLexicalFilters(db) {
+  const name = 'bound-anti-prefix-and-numeral-filter-v1';
+  db.exec('CREATE TABLE IF NOT EXISTS analysis_migrations (name TEXT PRIMARY KEY, appliedAt INTEGER NOT NULL) STRICT');
+  if (db.prepare('SELECT 1 FROM analysis_migrations WHERE name=?').get(name)) return [];
+  const affected = db.prepare("SELECT book FROM analyses WHERE state IN ('ready','error')").all().map((row) => row.book);
+  db.exec('BEGIN');
+  try {
+    for (const id of affected) {
+      db.prepare("UPDATE analyses SET state='queued',lemmas=NULL,wordCount=NULL,method=NULL,metrics=NULL,error=NULL WHERE book=?").run(id);
+      db.prepare('DELETE FROM estimates WHERE book=?').run(id);
+    }
+    db.prepare('INSERT INTO analysis_migrations VALUES(?,?)').run(name, Date.now());
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  return affected;
+}
+
 function refreshSpanishAnalyses(db, name) {
   db.exec('CREATE TABLE IF NOT EXISTS analysis_migrations (name TEXT PRIMARY KEY, appliedAt INTEGER NOT NULL) STRICT');
   if (db.prepare('SELECT 1 FROM analysis_migrations WHERE name=?').get(name)) return [];

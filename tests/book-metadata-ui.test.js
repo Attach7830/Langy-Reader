@@ -80,7 +80,8 @@ test('real library import waits for metadata, submits manual overrides once, and
   await until(() => !document.querySelector('#book-dialog').open);
   assert.equal(imports.length, 1); assert.equal(imports[0].get('title'), 'Detected book'); assert.equal(imports[0].get('author'), 'My author');
   assert.equal(imports[0].get('language'), 'pt'); assert.equal(imports[0].get('languages'), '[]'); assert.equal(imports[0].get('file').name, file.name);
-  assert.equal([...imports[0].keys()].filter((name) => name !== 'file').length, 5, 'metadata preview does not exceed the multipart field limit');
+  assert.equal(imports[0].get('coverStyle'), 'auto');
+  assert.equal([...imports[0].keys()].filter((name) => name !== 'file').length, 6, 'metadata and cover choice stay within the multipart field limit');
   document.querySelector('[aria-label="Edit Detected book"]').click();
   assert.equal(form.elements.title.required, false); assert.equal(form.elements.language.required, false);
   assert.equal(document.querySelector('#book-language-note').hidden, false);

@@ -1,3 +1,6 @@
+import { defaults } from '../shared/reader-preferences.js';
+export { defaults } from '../shared/reader-preferences.js';
+
 export const modes = {
   translation: 'English translation',
   definition: 'Definition',
@@ -31,16 +34,9 @@ export const shortcuts = {
   audioToolbar: 'Show or hide audio toolbar',
   pinyin: 'Show or hide pinyin',
   returnLocation: 'Back to previous location',
-};
-
-export const defaults = {
-  mode: 'translation', synonymContextHelp: false, showPinyin: false, translationLanguage: 'en', summaryLanguage: 'en', theme: 'paper', background: 'grain',
-  font: 'spectral', size: 20, line: 1.65, width: 'balanced', pdfNight: true,
-  audioEnabled: false, audioToolbarHidden: false, podcastMode: false, audioHighlight: true, audioRate: 1,
-  audioRecordings: {},
-  progressSyncEnabled: true, syncDeviceName: 'Langy browser',
-  keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's', playback: 'p', audioToolbar: 'a', pinyin: 'y', returnLocation: 'b' },
-  autoHideDocks: false,
+  rewindAudio: 'Rewind audio 10 seconds',
+  forwardAudio: 'Fast forward audio 10 seconds',
+  bookmarks: 'Open bookmarks',
 };
 
 function read(key, defaultValue) {
@@ -63,10 +59,13 @@ export function getSettings() {
   return { ...defaults, ...saved, keys, audioRecordings: { ...object(saved.audioRecordings) } };
 }
 
-export function saveSettings(settings) {
+const listeners = new Set();
+export function subscribeSettings(listener) { listeners.add(listener); return () => listeners.delete(listener); }
+export function saveSettings(settings, { notify = true } = {}) {
   const previous = getSettings();
   const updated = { ...previous, ...settings, keys: { ...previous.keys, ...settings.keys } };
   write('langy-settings-v1', updated);
+  if (notify) for (const listener of listeners) listener(updated, previous);
   return updated;
 }
 export const getProgress = () => read('langy-progress-v1', {});

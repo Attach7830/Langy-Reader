@@ -30,9 +30,12 @@ def align_recording(words, heard):
     for part in heard_parts:
         offsets.append(position)
         position += len(part)
-    width = 16
+    chinese = any(0x3400 <= ord(char) <= 0x9fff or 0x20000 <= ord(char) <= 0x3ffff for char in source)
+    # Twelve consecutive Han characters already form a substantial phrase.
+    # Shorter, denser anchors survive occasional ASR substitutions in long books.
+    width = 12 if chinese else 16
     index = {}
-    for position in range(0, max(0, len(source) - width + 1), 4):
+    for position in range(0, max(0, len(source) - width + 1), 1 if chinese else 4):
         phrase = source[position:position + width]
         index[phrase] = position if phrase not in index else None
     candidates = []
@@ -90,7 +93,8 @@ def align_recording(words, heard):
             end = b["start"] + (b["end"] - b["start"]) * (positions[-1] - offsets[last] + 1) / len(heard_parts[last])
             estimated = positions[0] != offsets[first] or positions[-1] + 1 != offsets[last] + len(heard_parts[last])
             if start >= last_end - .03 and end > max(last_end, start):
-                stamp = {"start": max(last_end, start), "end": end, "review": estimated,
+                weak = any(word.get('confidence', 1) < .48 for word in spoken[first:last + 1])
+                stamp = {"start": max(last_end, start), "end": end, "review": estimated or weak,
                          **({"estimated": True} if estimated else {})}
                 last_end = end
                 matched += 1

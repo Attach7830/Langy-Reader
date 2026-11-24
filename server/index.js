@@ -17,6 +17,8 @@ import { chapterFileLimit } from './chapter-audio.js';
 import { verifyStorage } from './storage-location.js';
 import { openBookDiscovery } from './book-discovery.js';
 import { openMandarin } from './mandarin.js';
+import { openReaderSettings } from './reader-settings.js';
+import { openPDFOCR } from './pdf-ocr.js';
 import { demoUploadLimit, demoBookLimit, demoStorageLimit, limitJobs, visitorMiddleware } from './demo.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -26,6 +28,7 @@ await verifyStorage(dir);
 const limits = demo ? { upload: demoUploadLimit, books: demoBookLimit, storage: demoStorageLimit } : null;
 const library = await openLibrary(dir, limits);
 const password = process.env.READER_PASSWORD || '';
+const readerSettings = openReaderSettings(dir, { demo, username: process.env.READER_USER || 'reader' });
 const progressSync = openProgressSync(dir, { library, demo,
   username: process.env.READER_SYNC_USER || process.env.READER_USER || 'reader',
   password: process.env.READER_SYNC_PASSWORD || password,
@@ -37,8 +40,9 @@ const mandarin = openMandarin();
 const learning = await openLearning(dir, library, demo, ai);
 const vocabularyMeaning = vocabularyMeanings({ vocabulary: learning.vocabulary, ai, lookupSynonyms });
 const archive = await openArchive(dir, { library, demo, onImport: (book) => learning.ensure(library.getBook(book.id)) });
+const ocr = await openPDFOCR(dir, { library, demo, onImport: (book) => learning.ensure(library.getBook(book.id)) });
 const uploadLimit = limits?.upload ?? maxUpload;
-const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 5, fieldSize: 1024 } });
+const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 6, fieldSize: 1024 } });
 const audioUpload = multer({ dest: library.uploads, limits: { fileSize: maxAudioUpload, files: 1, fields: 1, fieldSize: 1024 } });
 const chapterUpload = multer({ storage: chapterStorage(library.uploads), limits: { fileSize: maxAudioUpload, files: chapterFileLimit, fields: 1, fieldSize: 1024 } });
 const demoUploads = demo ? [limitJobs({ perMinute: 32, perVisitor: 8 })] : [];
@@ -91,7 +95,7 @@ app.use('/api', (req, res, next) => {
 
 if (demo) {
   const identifyVisitor = await visitorMiddleware(dir);
-  app.use(['/api/library', '/api/categories', '/api/books', '/api/storage', '/api/vocabulary', '/api/discovery'], identifyVisitor);
+  app.use(['/api/library', '/api/categories', '/api/books', '/api/storage', '/api/vocabulary', '/api/discovery', '/api/settings/reader'], identifyVisitor);
   app.post(['/api/ai/word', '/api/ai/summary', '/api/mandarin/word', '/api/mandarin/readings', '/api/mandarin/pinyin'], identifyVisitor);
   await library.pruneDemoBooks();
   await learning.prune();
@@ -104,10 +108,31 @@ if (demo) {
   app.post('/api/settings/learning/voices', async (req, res) => res.json(await learning.voices()));
   app.put('/api/settings/archive', async (req, res) => res.json(await archive.save(req.body ?? {})));
   app.post('/api/imports/anna', (req, res) => res.status(202).json(archive.queue(req.body ?? {})));
+  app.get('/api/imports/anna', (req, res) => res.json({ jobs: archive.list() }));
+  app.post('/api/imports/anna/batch', (req, res) => res.status(202).json(archive.queueBatch(req.body ?? {})));
+  app.post('/api/imports/anna/:id/retry', (req, res) => res.status(202).json(archive.retry(req.params.id)));
+  app.delete('/api/imports/anna/:id', (req, res) => res.json(archive.cancel(req.params.id)));
   app.get('/api/imports/anna/:id', (req, res) => res.json(archive.job(req.params.id)));
+  app.post('/api/imports/anna/:id/continue', (req, res) => res.status(202).json(archive.continue(req.params.id, req.body)));
+  app.post('/api/imports/anna/:id/file', upload.single('file'), async (req, res) => res.json(await archive.accept(req.params.id, req.file, req.body?.details)));
 }
 
+app.get('/api/settings/reader', (req, res) => res.json(readerSettings.get(req.visitor)));
+app.patch('/api/settings/reader', (req, res) => {
+  const result = readerSettings.patch(req.body, req.visitor);
+  res.status(result.conflict ? 409 : 200).json(result);
+});
 app.get('/api/settings/learning', (req, res) => res.json(learning.settings()));
+app.get('/api/books/:id/ocr', async (req, res) => {
+  const book = library.getBook(req.params.id, req.visitor);
+  let languages = [], error;
+  if (!demo && book.format === 'pdf') { try { languages = await ocr.languages(); } catch (failure) { error = failure.message; } }
+  res.json({ available: !demo && book.format === 'pdf', job: ocr.status(book), languages, error });
+});
+app.get('/api/books/:id/bookmarks', (req, res) => res.json({ bookmarks: library.bookmarks(req.params.id, req.visitor) }));
+app.post('/api/books/:id/bookmarks', (req, res) => res.json(library.saveBookmark(req.params.id, req.body ?? {}, req.visitor)));
+app.delete('/api/books/:id/bookmarks/:bookmark', (req, res) => res.json(library.removeBookmark(req.params.id, req.params.bookmark, req.visitor)));
+app.post('/api/books/:id/ocr', (req, res) => res.status(202).json(ocr.queue(library.getBook(req.params.id, req.visitor), req.body ?? {})));
 app.get('/api/settings/archive', (_, res) => res.json(archive.settings()));
 app.get('/api/settings/sync', (_, res) => res.json(progressSync.settings()));
 if (!demo) {
@@ -133,7 +158,7 @@ app.get('/api/library', async (req, res) => {
     ...snapshot,
     progress: demo ? null : progressSync.snapshot(),
     storage: await library.storage(req.visitor),
-    archive: { available: !demo, hasKey: archive.settings().hasKey, job: demo ? null : archive.latest() },
+    archive: { available: !demo, hasKey: archive.settings().hasKey, job: demo ? null : archive.latest(), jobs: demo ? [] : archive.list() },
     vocabulary: { byLanguage: reader.byLanguage, likelyKnown: reader.knownByLanguage, threshold: reader.threshold, reading: reader.reading },
     books: books.map((book) => ({ ...book, familiarity: learning.vocabulary.familiarity(book, reader) })),
   });

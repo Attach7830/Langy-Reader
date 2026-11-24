@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { textWords } from '../shared/reading-text.js';
 import { RequestError } from './books.js';
 import { extractBook, languageChunks } from './book-text.js';
+import { narrationChunks } from './narration-text.js';
 import { narrationOptions, sectionLanguages } from './language-voices.js';
 import { addVocabulary, vocabularySummary } from './vocabulary.js';
 import { bookLanguages } from '../shared/language.js';
@@ -18,13 +19,13 @@ import { hasUsableTimings, synchronizeChunk } from './audio-timing.js';
 import { uploadedAudio } from './uploaded-audio.js';
 import { audioRescans } from './audio-rescan.js';
 import { openIvoox } from './ivoox.js';
-import { migrateSpanishFutureSubjunctive, migrateSpanishVerbForms, migrateSpanishTaggedMorphology } from './analysis-migrations.js';
+import { migrateSpanishFutureSubjunctive, migrateSpanishVerbForms, migrateSpanishTaggedMorphology, migrateLexicalFilters } from './analysis-migrations.js';
 
 const run = promisify(execFile);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const asText = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 
-export async function openLearning(dir, library, demo, ai) {
+export async function openLearning(dir, library, demo, ai, { autoRepair = true } = {}) {
   const folder = join(dir, 'narration');
   await mkdir(folder, { recursive: true });
   const db = new DatabaseSync(join(dir, 'learning.sqlite'));
@@ -66,12 +67,15 @@ export async function openLearning(dir, library, demo, ai) {
     }
   }
   if (languageUpgrade) db.exec("UPDATE analyses SET state='queued',error=NULL WHERE state='ready'");
+  if (!db.prepare('PRAGMA table_info(chapters)').all().some(({ name }) => name === 'speechBlocks')) db.exec("ALTER TABLE chapters ADD COLUMN speechBlocks TEXT NOT NULL DEFAULT '[]'");
+  if (!db.prepare('PRAGMA table_info(analyses)').all().some(({ name }) => name === 'textVersion')) db.exec('ALTER TABLE analyses ADD COLUMN textVersion INTEGER NOT NULL DEFAULT 0');
   if (!db.prepare('PRAGMA table_info(analyses)').all().some(({ name }) => name === 'languageSelection')) {
     db.exec("ALTER TABLE analyses ADD COLUMN languageSelection TEXT NOT NULL DEFAULT '[]'");
   }
   migrateSpanishFutureSubjunctive(db);
   migrateSpanishVerbForms(db);
   migrateSpanishTaggedMorphology(db);
+  migrateLexicalFilters(db);
   const vocabulary = readerVocabulary(db, { completedBooks: library.readBooks ? (visitor) => library.readBooks(visitor) : null });
   const estimates = readingEstimates({ db, ai });
   let config = {
@@ -182,7 +186,7 @@ export async function openLearning(dir, library, demo, ai) {
   const textJobs = new Map(), textLanes = { epub: Promise.resolve(), pdf: Promise.resolve() };
   const selectionOf = (book) => JSON.stringify(bookLanguages(book).sort());
   function prepareText(book, retry = false) {
-    if (vocabulary.bookCounts(book)) return Promise.resolve(true);
+    if (vocabulary.bookCounts(book) && db.prepare('SELECT textVersion FROM analyses WHERE book=?').get(book.id)?.textVersion === 1) return Promise.resolve(true);
     const signature = bookCountSignature(book), previous = textJobs.get(book.id);
     if (previous?.signature === signature) {
       if (previous.promise) return previous.promise;
@@ -201,15 +205,16 @@ export async function openLearning(dir, library, demo, ai) {
       // lemma service must not prevent counting or recording reading progress.
       db.exec('BEGIN');
       try {
-        const save = db.prepare(`INSERT INTO chapters(book,key,ordinal,title,text,digest,markers,languages) VALUES(?,?,?,?,?,?,?,?)
+        const save = db.prepare(`INSERT INTO chapters(book,key,ordinal,title,text,digest,markers,languages,speechBlocks) VALUES(?,?,?,?,?,?,?,?,?)
           ON CONFLICT(book,key) DO UPDATE SET ordinal=excluded.ordinal,title=excluded.title,text=excluded.text,
           tokens=CASE WHEN chapters.digest=excluded.digest THEN chapters.tokens ELSE NULL END,
           lemmas=CASE WHEN chapters.digest=excluded.digest THEN chapters.lemmas ELSE NULL END,
           metrics=CASE WHEN chapters.digest=excluded.digest THEN chapters.metrics ELSE NULL END,
-          digest=excluded.digest,markers=excluded.markers,languages=excluded.languages`);
+          digest=excluded.digest,markers=excluded.markers,languages=excluded.languages,speechBlocks=excluded.speechBlocks`);
         for (const [ordinal, section] of sections.entries()) save.run(book.id, section.key, ordinal, section.title, section.text,
-          hash(section.text), JSON.stringify(section.markers || [{ title: section.title, from: 0 }]), JSON.stringify(section.languages || []));
+          hash(section.text), JSON.stringify(section.markers || [{ title: section.title, from: 0 }]), JSON.stringify(section.languages || []), JSON.stringify(section.speechBlocks || []));
         vocabulary.saveBookCounts(book, sections);
+        db.prepare('UPDATE analyses SET textVersion=1 WHERE book=?').run(book.id);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       vocabulary.reindexReading(book);
@@ -232,7 +237,7 @@ export async function openLearning(dir, library, demo, ai) {
     if (!previous || previous.language !== book.language || previous.languageSelection !== selection || (retry && !['queued', 'running'].includes(previous.state))) {
       db.prepare(`INSERT INTO analyses(book, owner, language, languageSelection, state) VALUES(?,?,?,?,'queued')
         ON CONFLICT(book) DO UPDATE SET language=excluded.language,languageSelection=excluded.languageSelection,state='queued',error=NULL,
-        metrics=NULL,lemmas=NULL,wordCount=NULL,method=NULL`)
+        metrics=NULL,lemmas=NULL,wordCount=NULL,method=NULL,textVersion=0`)
         .run(book.id, book.owner || '', book.language, selection);
       estimates.invalidate(book.id);
       db.prepare('DELETE FROM reading_book_counts WHERE book=?').run(book.id);
@@ -358,9 +363,10 @@ export async function openLearning(dir, library, demo, ai) {
   }
 
   async function generate(job) {
-    const row = db.prepare('SELECT * FROM chapters WHERE book=? AND key=?').get(job.book, job.chapter);
     const analysis = db.prepare('SELECT owner FROM analyses WHERE book=?').get(job.book);
-    library.getBook(job.book, { id: analysis?.owner });
+    const book = library.getBook(job.book, { id: analysis?.owner });
+    if (!await prepareText(book)) throw new Error('The book text changed. Generate narration again.');
+    const row = db.prepare('SELECT * FROM chapters WHERE book=? AND key=?').get(job.book, job.chapter);
     if (!row || row.digest !== job.digest) throw new Error('The text changed. Generate narration again.');
     const options = JSON.parse(job.options);
     if (options.baseUrl !== config.baseUrl) throw new Error('The Kokoro connection changed. Queue narration again.');
@@ -373,13 +379,13 @@ export async function openLearning(dir, library, demo, ai) {
     const files = [];
     let offset = 0;
     try {
-      for (const [index, chunk] of languageChunks(row, 1800, language).entries()) {
+      for (const [index, chunk] of narrationChunks(row, language).entries()) {
         if (!db.prepare('SELECT id FROM audio WHERE id=?').get(job.id)) return;
         const chunkWords = words.map((word, tokenIndex) => ({ ...word, tokenIndex })).filter((word) => word.from >= chunk.from && word.from < chunk.to);
         if (!chunkWords.length) continue;
         db.prepare("UPDATE audio SET state='generating' WHERE id=?").run(job.id);
         const response = await kokoro('/audio/speech', {
-          model: captured.model, voice: options.voiceMap?.[chunk.language] || captured.voice, speed: captured.speed, input: chunk.text,
+          model: captured.model, voice: options.voiceMap?.[chunk.language] || captured.voice, speed: captured.speed, input: chunk.input,
           response_format: 'wav', stream: false,
         }, captured);
         const data = Buffer.from(await response.arrayBuffer());
@@ -394,15 +400,19 @@ export async function openLearning(dir, library, demo, ai) {
         db.prepare("UPDATE audio SET state='aligning' WHERE id=?").run(job.id);
         const aligned = await languageCall('/align', {
           audio: (await readFile(wav)).toString('base64'), words: chunkWords.map((word) => word.word),
-          language: chunk.language,
+          language: chunk.language, text: chunk.text,
         });
         for (const stamp of synchronizeChunk(chunkWords, aligned.timings, duration)) {
           if (stamp.start == null) continue;
           Object.assign(timings[stamp.tokenIndex], { start: stamp.start + offset, end: stamp.end + offset,
-            review: stamp.review, ...(stamp.estimated ? { estimated: true } : {}) });
+            review: stamp.review || chunk.kind === 'label', ...(stamp.estimated || chunk.kind === 'label' ? { estimated: true } : {}) });
         }
-        files.push(wav);
-        offset += duration;
+        if (chunk.pauseAfter) {
+          const padded = join(temporary, `padded-${index}.wav`);
+          await run('ffmpeg', ['-nostdin', '-v', 'error', '-y', '-i', wav, '-af', `apad=pad_dur=${chunk.pauseAfter}`, '-c:a', 'pcm_s16le', padded], { timeout: 60000 });
+          files.push(padded);
+        } else files.push(wav);
+        offset += duration + chunk.pauseAfter;
       }
       const concat = join(temporary, 'parts.txt');
       await writeFile(concat, files.map((file) => `file '${file}'`).join('\n'));
@@ -448,6 +458,7 @@ export async function openLearning(dir, library, demo, ai) {
           }
         }
       }
+      if (job && autoRepair && !demo && ['analysis', 'book', 'recording'].includes(type)) autoRepairBook(job.book);
     } catch (error) {
       const text = error instanceof RequestError ? error.message
         : type === 'rescan' ? 'Audio rescan failed. Your existing alignment is unchanged. Check the language service and retry.'
@@ -471,6 +482,15 @@ export async function openLearning(dir, library, demo, ai) {
   }
   const timer = setInterval(() => void work(), 1000);
   timer.unref();
+  function autoRepairBook(id) {
+    const row = db.prepare("SELECT owner FROM analyses WHERE book=? AND state='ready'").get(id);
+    if (!row) return;
+    let book; try { book = library.getBook(id, { id: row.owner }); } catch { return; }
+    for (const recording of db.prepare("SELECT id FROM book_audio WHERE book=? AND state='ready'").all(id)) {
+      try { rescans.automatic(book, recording.id); } catch { /* Text changes or a concurrent rescan wait for a compatible recording. */ }
+    }
+  }
+  if (autoRepair && !demo) setImmediate(() => { for (const row of db.prepare("SELECT book FROM analyses WHERE state='ready'").all()) autoRepairBook(row.book); });
 
   async function remove(id) {
     textJobs.delete(id);

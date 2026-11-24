@@ -87,3 +87,21 @@ test('speed-adjusted chapter markers and chapter buttons keep their original see
   assert.equal(document.querySelector('#narration-forward').disabled, true);
   f.player.stop(); assert.equal(f.clock.textContent, '0:00 / 0:00'); assert.equal(f.seek.disabled, true);
 });
+
+test('audio seek shortcuts share the toolbar seek path while hidden and scrolling over speed adjusts by 0.05×', async (t) => {
+  const f = await fixture(t); f.tick(1795);
+  f.prefs.audioToolbarHidden = true; f.player.apply();
+  assert.equal(document.querySelector('#narration-player').hidden, true);
+  f.player.skipBy(10); assert.equal(f.audio.currentTime, 1805);
+  await until(() => f.navigations.some((target) => target.key === 'epub:1'));
+  f.player.skipBy(-10); assert.equal(f.audio.currentTime, 1795);
+  const rate = document.querySelector('#narration-rate'); let time = 0;
+  function wheel(deltaY, options = {}) { const event = new f.dom.window.WheelEvent('wheel', { deltaY, cancelable: true, ...options });
+    Object.defineProperty(event, 'timeStamp', { value: time += 100 }); rate.dispatchEvent(event); return event; }
+  assert.equal(wheel(-100).defaultPrevented, true); assert.equal(f.prefs.audioRate, 1.05); assert.equal(rate.value, '1.05');
+  wheel(100); assert.equal(f.prefs.audioRate, 1); assert.equal(f.audio.currentTime, 1795);
+  assert.equal(wheel(-100, { ctrlKey: true }).defaultPrevented, false); assert.equal(f.prefs.audioRate, 1);
+  f.prefs.audioRate = 2; f.player.apply(); wheel(-100); assert.equal(f.prefs.audioRate, 2);
+  f.prefs.audioRate = .5; f.player.apply(); wheel(100); assert.equal(f.prefs.audioRate, .5);
+  f.player.skipBy(-99999); assert.equal(f.audio.currentTime, 0); f.player.skipBy(99999); assert.equal(f.audio.currentTime, 3600);
+});

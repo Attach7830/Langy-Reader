@@ -69,6 +69,8 @@
       <div class="vocabulary-overview"><div><p class="field-note" id="vocabulary-summary"></p><p class="field-note" id="vocabulary-known-summary"></p></div><button class="button secondary small" id="open-vocabulary" type="button">Vocabulary</button></div>
       <div id="books" class="book-grid"></div>
       <p class="field-note" id="archive-import-status" role="status" hidden></p>
+      <button class="button secondary small" id="resume-slow-import" type="button" hidden>Continue slow download</button>
+      <details id="archive-downloads" hidden><summary>Book downloads</summary><div id="archive-download-list" class="form-stack"></div></details>
       <div id="empty-library" class="empty-state" hidden>
         <i data-lucide="book-open"></i><h2 id="empty-title"></h2><p id="empty-detail"></p>
       </div>
@@ -126,6 +128,7 @@
         <button class="icon-button" id="return-location" type="button" title="Back to previous location" aria-label="Back to previous location" hidden><i data-lucide="arrow-left"></i></button>
         <button class="icon-button" id="sync-progress" type="button" title="Sync reading progress" aria-label="Sync reading progress" aria-controls="sync-notice" hidden><i data-lucide="rotate-ccw"></i></button>
         <button class="icon-button" id="contents-button" type="button" title="Contents" aria-label="Contents"><i data-lucide="list"></i></button>
+        <button class="icon-button" id="bookmarks-button" type="button" title="Bookmarks (M)" aria-label="Bookmarks"><i data-lucide="bookmark"></i></button>
         <button class="icon-button" type="button" data-settings="reading" title="Reading settings" aria-label="Reading settings"><span class="type-icon">Aa</span></button>
         <button class="button quiet summary-toggle" id="summarize" type="button" aria-label="Page summary" aria-controls="summary-panel" aria-expanded="false"><i data-lucide="sparkles"></i><span>Summary</span></button>
         <button class="icon-button" id="audio-toggle" type="button" title="Narration" aria-label="Narration" aria-pressed="false"><i data-lucide="headphones"></i></button>
@@ -245,6 +248,11 @@
         <label class="checkbox-row"><input name="pdfNight" type="checkbox"> Dim PDF pages in dark themes</label>
       </section>
       <section class="modal-body" data-settings-panel="language" hidden>
+        <h3>My reading languages</h3>
+        <p class="field-note">Choose the languages you read. Import book and bulk downloads will suggest this list; automatic detection remains available.</p>
+        <label class="field">Add a reading language <input id="reading-language-choice" list="languages" maxlength="70" placeholder="For example, Portuguese or Mandarin" autocomplete="off"></label>
+        <button id="reading-language-add" type="button" class="button secondary small">Add language</button>
+        <div id="reading-language-list" class="book-language-list"></div>
         <label class="field">Word help on hover or tap <select name="mode" id="help-options"></select></label>
         <label class="checkbox-row"><input name="synonymContextHelp" type="checkbox"> Explain missing synonym entries with AI</label>
         <label class="checkbox-row"><input name="showPinyin" type="checkbox"> Show pinyin above Chinese text</label>
@@ -328,6 +336,8 @@
           <label class="field">Anna’s Archive mirror <select name="aa_baseUrl" aria-label="Anna’s Archive mirror"></select></label>
           <label class="field">Anna’s Archive membership key <input name="aa_apiKey" type="password" maxlength="4096" autocomplete="new-password" spellcheck="false"></label>
           <label class="checkbox-row"><input name="aa_clearKey" type="checkbox"> Remove saved membership key</label>
+          <label class="checkbox-row"><input name="aa_slowFallback" type="checkbox" checked> Offer free slow downloads when the fast allowance is reached</label>
+          <label class="checkbox-row"><input name="aa_retryUnavailable" type="checkbox" checked> Retry unavailable downloads every 6 hours</label>
           <p class="field-note">This connection applies to this installation. The key is saved on your server and is never returned by the settings API. Membership eligibility and download limits still apply.</p>
           <p class="field-note">Save the connection, then choose Anna’s Archive in Import book and paste a book link or MD5. Import supports EPUB and PDF within the normal size limit.</p>
         </div>
@@ -361,6 +371,7 @@
         </div>
         <p class="field-note" id="sync-result" role="status" hidden></p>
       </section>
+      <p class="muted" id="account-settings-status" role="status">Loading account preferences…</p>
       <p class="form-error" id="settings-error" role="alert" hidden></p>
       <footer class="modal-footer"><button class="button quiet" type="button" data-close>Cancel</button><button class="button primary" type="submit">Save settings</button></footer>
     </form>
@@ -374,8 +385,22 @@
           <select name="source" id="book-source" aria-label="Import from"><option value="file">Upload file</option><option value="anna">Anna’s Archive</option></select>
         </label>
         <div class="form-stack" id="archive-book-fields" hidden>
-          <label class="field">Anna’s Archive book link or MD5 <input name="archiveReference" maxlength="2000" autocomplete="off" spellcheck="false" placeholder="Book link or 32-character MD5"></label>
-          <p class="field-note">Uses the membership key saved in Settings → Book sources. EPUB or PDF, up to 120 MiB. The download continues on the server if this dialog is closed.</p>
+          <label class="checkbox-row"><input id="archive-bulk-mode" type="checkbox"> Download multiple books</label>
+          <label class="field" id="archive-reference-field">Anna’s Archive book link or MD5 <input name="archiveReference" maxlength="2000" autocomplete="off" spellcheck="false" placeholder="Book link or 32-character MD5"></label>
+          <section id="archive-bulk-panel" class="form-stack" hidden>
+            <p class="field-note">Add up to 50 books. Each has its own link and optional title/author. Language, additional languages, category, cover and download method below apply to every book.</p>
+            <label class="checkbox-row"><input id="archive-shared-author" type="checkbox"> All books use the author entered below</label>
+            <div id="archive-bulk-rows" class="form-stack"></div>
+            <button id="archive-add-row" class="button secondary small" type="button">Add another book</button>
+          </section>
+          <label class="field">Download method <select name="archiveDownloadMode"><option value="auto">Automatic: fast, then free slow download</option><option value="slow">Free slow download</option><option value="fast">Fast download only</option></select></label>
+          <p class="field-note">Fast downloads use your saved membership key. Slow downloads may need a browser check and wait. EPUB or PDF, up to 120 MiB. Server downloads continue if this dialog is closed.</p>
+          <section class="form-stack" id="archive-slow-download" hidden aria-label="Continue slow download">
+            <p class="field-note" id="archive-slow-notice" role="status"></p>
+            <a id="archive-slow-page" class="button secondary" target="_blank" rel="noopener noreferrer">Open book’s slow download options</a>
+            <p class="field-note">Choose a slow partner server and complete its browser check and wait. Then upload the downloaded book below, or copy its final file download link here. Your selected book details will be kept.</p>
+            <label class="field">Final file download link (optional) <input name="archiveSlowURL" type="url" maxlength="8192" autocomplete="off" spellcheck="false" placeholder="https://…"></label>
+          </section>
           <button class="button quiet" type="button" id="configure-archive" data-settings="sources">Configure Anna’s Archive</button>
         </div>
         <label class="file-field" id="file-field">
@@ -386,15 +411,16 @@
         <p class="field-note" id="book-metadata-status" role="status" aria-live="polite" hidden></p>
         <label class="field">Title <input name="title" maxlength="250" placeholder="From the book or filename"></label>
         <label class="field">Author <input name="author" maxlength="200" placeholder="Optional"></label>
+        <fieldset class="book-cover-picker"><legend>Book cover</legend><div id="book-cover-options" class="book-cover-options"></div><p class="field-note">Choose a design, or keep Original / automatic to use the book’s embedded cover when available. You can change this later.</p></fieldset>
         <div class="form-grid">
-          <label class="field">Primary language <input name="language" list="languages" maxlength="70" placeholder="Automatic" autocomplete="off"></label>
+          <label class="field">Primary language <input name="language" list="book-languages" maxlength="70" placeholder="Automatic" autocomplete="off"></label>
           <label class="field">Category <select name="categoryId" id="book-categories"></select></label>
         </div>
         <p class="field-note" id="book-language-note">Leave title, author or primary language blank to detect it from the file. Enter a value to override detection. If no language can be detected, the saved language or Spanish is used.</p>
         <p class="field-note" id="book-folder-language-note" hidden></p>
         <label class="checkbox-row"><input id="book-language-limit" type="checkbox"> Multiple languages in this book</label>
         <div class="form-stack" id="book-language-selection" hidden>
-          <label class="field">Add a language <input id="book-language-choice" list="languages" maxlength="70" placeholder="For example, Mandarin or English" autocomplete="off"></label>
+          <label class="field">Add a language <input id="book-language-choice" list="book-languages" maxlength="70" placeholder="For example, Mandarin or English" autocomplete="off"></label>
           <button class="button secondary small" id="book-language-add" type="button">Add language</button>
           <div class="book-language-list" id="book-language-list" aria-live="polite"></div>
           <p class="field-note">Leave the extra language field blank when finished. With no languages selected, the book uses its primary language, detected automatically if blank. Otherwise, analysis, word help and narration use the selected languages. Saving reanalyzes the existing book.</p>
@@ -514,6 +540,35 @@
   </div>
   <div id="toast" class="toast" role="status" hidden></div>
   <datalist id="languages"></datalist>
+  <datalist id="book-languages"></datalist>
+  <dialog class="modal" id="bookmarks-dialog" aria-labelledby="bookmarks-title">
+    <form id="bookmark-form">
+      <header class="modal-header"><h2 id="bookmarks-title">Bookmarks</h2><button class="icon-button" type="button" data-close aria-label="Close bookmarks"><i data-lucide="x"></i></button></header>
+      <div class="modal-body form-stack">
+        <label class="field">Bookmark label <input name="label" maxlength="200" placeholder="Current page"></label>
+        <label class="field">Note (optional) <textarea name="note" maxlength="2000" rows="3"></textarea></label>
+        <button id="bookmark-save" class="button secondary" type="submit">Save this reading position</button>
+        <div id="bookmark-list" class="form-stack"></div><p id="bookmark-error" class="form-error" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer"><button type="button" class="button quiet" data-close>Close</button></footer>
+    </form>
+  </dialog>
   <script type="module" src="/src/main.js"></script>
+  <dialog class="modal" id="ocr-dialog" aria-labelledby="ocr-book-title">
+    <form id="ocr-form">
+      <header class="modal-header"><h2 id="ocr-book-title">Scan PDF with OCR</h2><button type="button" class="icon-button" data-close aria-label="Close OCR"><i data-lucide="x"></i></button></header>
+      <div class="modal-body form-stack">
+        <p class="field-note">Create a searchable copy of this PDF using local OCR. The original stays in your library. Open the copy for word help, summaries, vocabulary analysis and narration. Clear scans and the correct language choices improve recognition.</p>
+        <label class="field">Languages in this PDF <select id="ocr-languages" multiple required size="7" aria-describedby="ocr-language-note"></select></label>
+        <p class="field-note" id="ocr-language-note">Select every language actually present. Hold Ctrl/Command to choose more than one on desktop; tap selections on mobile.</p>
+        <label class="checkbox-row"><input name="rotate" type="checkbox" checked> Correct page rotation and skew</label>
+        <p class="field-note">Pages that already contain text are preserved. Scans run one at a time on your server without paid APIs. Up to 120 MiB and 2,000 pages; the searchable copy uses additional storage.</p>
+        <p id="ocr-progress" class="field-note" role="status" hidden></p>
+        <a id="ocr-result" class="button secondary" hidden>Open searchable copy</a>
+        <p id="ocr-error" class="form-error" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer"><button type="button" class="button quiet" data-close>Close</button><button id="ocr-submit" type="submit" class="button primary" disabled>Create searchable copy</button></footer>
+    </form>
+  </dialog>
 </body>
 </html>

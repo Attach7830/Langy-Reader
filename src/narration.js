@@ -329,6 +329,16 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     const selected = Number(rate.value);
     if (Number.isFinite(selected) && selected >= .5 && selected <= 2) changePreferences({ audioRate: selected });
   });
+  let lastWheel = -Infinity;
+  rate.title = 'Playback speed · scroll up/down to adjust by 0.05×';
+  rate.addEventListener('wheel', (event) => {
+    if (rate.disabled || event.ctrlKey || event.metaKey || event.altKey || !event.deltaY) return;
+    event.preventDefault();
+    if (event.timeStamp - lastWheel < 80) return;
+    lastWheel = event.timeStamp;
+    const next = Math.max(.5, Math.min(2, Math.round((preferences().audioRate + (event.deltaY < 0 ? .05 : -.05)) * 100) / 100));
+    if (next !== preferences().audioRate) changePreferences({ audioRate: next });
+  }, { passive: false });
   generate.addEventListener('click', async () => {
     if (!book()) return;
     generate.disabled = true;
@@ -346,7 +356,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   audio.addEventListener('ended', () => { wantPlaying = false; controls(); clearHighlight(); });
   audio.addEventListener('error', () => { if (audio.getAttribute('src')) status.textContent = 'This book recording could not be played. Try generating it again.'; });
   return {
-    refresh, apply, stop, toggle,
+    refresh, apply, stop, toggle, skipBy,
     lemmaAt(node, offset) { return unit?.method === 'word forms' ? null : local?.at(node, offset)?.token; },
     seekWord(node, offset) {
       if (!enabled || !ready()) return;

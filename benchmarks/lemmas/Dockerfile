@@ -20,6 +20,7 @@ RUN python /app/benchmarks/lemmas/prepare_corpora.py /opt/benchmark-corpora
 COPY language/prepare_spanish_lexicon.py language/spanish-lexicon-sources.json /app/language/
 RUN python /app/language/prepare_spanish_lexicon.py /opt/models/spanish-morphology
 COPY language/app.py /app/language/app.py
+COPY language/vocabulary_filters.py language/pdf_ocr.py /app/language/
 COPY language/spanish_morphology.py /app/language/spanish_morphology.py
 COPY language/spanish_dictionary.py language/spanish_lexicon.py /app/language/
 COPY benchmarks/lemmas/benchmark.py benchmarks/lemmas/challenge.json benchmarks/lemmas/spanish-future.json benchmarks/lemmas/spanish-forms.json /app/benchmarks/lemmas/

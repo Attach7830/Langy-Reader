@@ -23,6 +23,7 @@ export function audioRescans({ db, folder, library, languageCall, publishUploade
     job TEXT NOT NULL REFERENCES audio_rescans(id) ON DELETE CASCADE,
     word INTEGER NOT NULL, start REAL NOT NULL, end REAL NOT NULL, PRIMARY KEY(job,word)
   ) STRICT, WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS auto_rescans(recording TEXT PRIMARY KEY,signature TEXT NOT NULL,version INTEGER NOT NULL) STRICT;
   UPDATE audio_rescans SET state='queued' WHERE state='running';`);
   function status(book, recording) {
     const value = db.prepare('SELECT * FROM audio_rescans WHERE book=? AND recording=?').get(book.id, recording);
@@ -118,7 +119,12 @@ export function audioRescans({ db, folder, library, languageCall, publishUploade
     const timings = data.timings;
     for (const match of db.prepare('SELECT word,start,end FROM rescan_matches WHERE job=? ORDER BY word').all(job.id)) timings[match.word] = { start: match.start, end: match.end, review: false };
     const windows = JSON.parse(job.windows), window = windows[job.cursor];
-    if (!window) { finish(job, book, data, timings); return; }
+    if (!window) {
+      finish(job, book, data, timings);
+      if (db.prepare('SELECT recording FROM auto_rescans WHERE recording=?').get(job.recording))
+        db.prepare('UPDATE auto_rescans SET signature=? WHERE recording=?').run(snapshot(book, job.recording).signature, job.recording);
+      return;
+    }
     const temporary = join(folder, `rescan-${job.id}`);
     await mkdir(temporary, { recursive: true });
     try {
@@ -147,7 +153,13 @@ export function audioRescans({ db, folder, library, languageCall, publishUploade
       } catch (error) { db.exec('ROLLBACK'); throw error; }
     } finally { await rm(temporary, { recursive: true, force: true }); }
   }
-  return { status, queue, busy, process,
+  function automatic(book, id) {
+    const data = snapshot(book, id), previous = db.prepare('SELECT * FROM auto_rescans WHERE recording=?').get(id);
+    if (previous?.version === 2 && previous.signature === data.signature || busy(id)) return;
+    db.prepare('INSERT INTO auto_rescans VALUES(?,?,2) ON CONFLICT(recording) DO UPDATE SET signature=excluded.signature,version=2').run(id, data.signature);
+    if (data.timings.some((stamp) => !stamp)) queue(book, id);
+  }
+  return { status, queue, busy, process, automatic,
     next: () => db.prepare("SELECT * FROM audio_rescans WHERE state='queued' ORDER BY created LIMIT 1").get(),
     fail(job, error) { db.prepare("UPDATE audio_rescans SET state='error',error=? WHERE id=? AND state!='cancelled'").run(error, job.id); },
     cancel(book, recording) { db.prepare("UPDATE audio_rescans SET state='cancelled',error=NULL WHERE book=? AND recording=? AND state IN ('queued','running')").run(book.id, recording); return status(book, recording); },
