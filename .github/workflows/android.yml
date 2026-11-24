@@ -21,12 +21,43 @@ jobs:
       - name: Retain the preview signing key between builds
         uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
-          key: langy-android-preview-signing-v1
+          path: ${{ github.workspace }}/android/.signing/preview.keystore
+          key: langy-android-preview-signing-v2
+      - name: Prepare and verify the preview signing key
+        env:
+          LANGY_ANDROID_KEYSTORE_BASE64: ${{ secrets.LANGY_ANDROID_KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p android/.signing
+          if [ ! -s android/.signing/preview.keystore ]; then
+            if [ -n "$LANGY_ANDROID_KEYSTORE_BASE64" ]; then
+              printf '%s' "$LANGY_ANDROID_KEYSTORE_BASE64" | base64 --decode > android/.signing/preview.keystore
+            elif [ -s android/preview-signing.sha256 ] && [ '${{ github.repository }}' = 'Attach7830/Langy-Reader' ]; then
+              echo 'The existing signing key is missing. Restore LANGY_ANDROID_KEYSTORE_BASE64 from the private signing backup.' >&2
+              exit 1
+            else
+              keytool -genkeypair -keystore android/.signing/preview.keystore -storepass android -keypass android -alias androiddebugkey -dname 'CN=Langy Reader Preview' -keyalg RSA -keysize 4096 -validity 10000
+            fi
+          fi
+          chmod 600 android/.signing/preview.keystore
+          keytool -exportcert -keystore android/.signing/preview.keystore -storepass android -alias androiddebugkey -file android/.signing/preview-certificate.der
+          sha256sum android/.signing/preview-certificate.der | cut -d ' ' -f 1 > android/.signing/preview-signing.sha256
+          if [ -s android/preview-signing.sha256 ] && [ '${{ github.repository }}' = 'Attach7830/Langy-Reader' ]; then
+            diff -u android/preview-signing.sha256 android/.signing/preview-signing.sha256
+          fi
+          mkdir -p android/app/build/outputs/preview-signing
+          cp android/.signing/preview-signing.sha256 android/app/build/outputs/preview-signing/preview-signing.sha256
+          if [ '${{ github.repository }}' = 'Attach7830/Langy-Reader' ]; then
+            openssl cms -encrypt -binary -aes-256-cbc -in android/.signing/preview.keystore -out android/app/build/outputs/preview-signing/preview-keystore.p7m -outform DER android/signing-backup-certificate.pem
+          fi
       - name: Build installable preview APK
         run: gradle -p android --no-daemon assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: Langy-Reader-Android
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/outputs/preview-signing/preview-keystore.p7m
+            android/app/build/outputs/preview-signing/preview-signing.sha256
           retention-days: 90

@@ -10,6 +10,7 @@ data/
 archive-settings.json
 audiobookshelf-settings.json
 android/.gradle/
+android/.signing/
 android/local.properties
 android/**/build/
 *.keystore
