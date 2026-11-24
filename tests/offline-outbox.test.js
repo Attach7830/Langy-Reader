@@ -40,6 +40,10 @@ test('offline packs show only downloaded books, bookmarks survive lost acknowled
   assert.ok((await offlineRequest('/api/library')).books[0].starredAt);
   await offlineRequest('/api/books/book/set-aside', { method: 'PATCH', body: { setAside: true } });
   const changed = (await offlineRequest('/api/library')).books[0]; assert.ok(changed.setAsideAt); assert.equal(changed.starredAt, null);
+  const exposure = await offlineRequest('/api/books/book/vocabulary/seen', { method: 'POST', body: { key: 'epub:0', digest: 'd', session: 'reading', ranges: [{ from: 0, to: 10 }] } });
+  assert.equal(exposure.queued, true); assert.equal(exposure.saved, true);
+  const readingTime = await offlineRequest('/api/books/book/reading-time', { method: 'POST', body: { accountId: 'first', events: [{ id: 'offline-time', start: 1000, end: 2000 }] } });
+  assert.equal(readingTime.queued, true); assert.equal([...changeMap.values()].filter((item) => item.kind === 'reading-statistic').length, 2);
   await setOfflineAccount('second'); assert.equal(changeMap.size, 0); assert.deepEqual(await caches.keys(), []);
   await assert.rejects(offlineRequest('/api/library'), /Download a book/u);
 });

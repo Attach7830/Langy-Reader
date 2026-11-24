@@ -60,6 +60,14 @@ export async function offlineRequest(path, { body, method = body ? 'POST' : 'GET
     const response = await cachedResponse(path); if (response) return response.json();
   }
   const lifecycle = /^\/api\/books\/([^/]+)\/(read-status|currently-reading|set-aside)$/u.exec(path);
+  const statistic = /^\/api\/books\/([^/]+)\/(reading-time|vocabulary\/seen)$/u.exec(path);
+  if (method === 'POST' && statistic && await savedPack(statistic[1])) {
+    if ((await offlineChanges.all()).length >= 100000) throw new Error('Reconnect to sync saved reading activity before continuing offline tracking.');
+    // Persist before acknowledging to the small browser outboxes. Long offline
+    // books must not lose earlier pages when those bounded outboxes roll over.
+    await offlineChanges.put({ id: crypto.randomUUID(), owner: offlineOwner(), created: Date.now(), kind: 'reading-statistic', path, method, body });
+    return { saved: true, queued: true };
+  }
   if (method === 'PATCH' && lifecycle && await savedPack(lifecycle[1])) {
     const field = { 'read-status': 'read', 'currently-reading': 'currentlyReading', 'set-aside': 'setAside' }[lifecycle[2]];
     if (typeof body?.[field] !== 'boolean') throw new Error('Choose a valid book status.');
@@ -86,15 +94,24 @@ export async function flushOfflineChanges() {
   if (flushing || !globalThis.indexedDB || !offlineOwner()) return flushing;
   flushing = (async () => {
     let changes; try { changes = await offlineChanges.all(); } catch { return; }
+    let synced = 0;
     for (const change of changes.sort((a, b) => a.created - b.created)) {
       if (change.owner !== offlineOwner()) continue;
       let response;
       try { response = await fetch(change.path, { method: change.method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(change.body) }); } catch { break; }
-      if (!response.ok) { if ([404, 410].includes(response.status)) { await offlineChanges.remove(change.id); continue; } break; }
+      if (!response.ok) {
+        let detail; try { detail = await response.json(); } catch {}
+        if ([404, 410].includes(response.status) || change.kind === 'reading-statistic' && (response.status === 422 || response.status === 409 && /text changed/iu.test(detail?.error || ''))) {
+          await offlineChanges.remove(change.id); continue;
+        }
+        break;
+      }
       const result = await response.json(); if (result.bookmarks) await cacheJSON(change.base, result);
       if (change.kind === 'book-status') await rememberStatus(change.book, result);
       await offlineChanges.remove(change.id);
+      synced++;
     }
+    if (synced && typeof window !== 'undefined' && window.CustomEvent) window.dispatchEvent(new window.CustomEvent('langy-offline-synced', { detail: { synced } }));
   })().finally(() => { flushing = undefined; }); return flushing;
 }
 export async function offlineStatus() { return { packs: await packCaches(), pending: (await offlineChanges.all()).filter((item) => item.owner === offlineOwner()).length }; }
