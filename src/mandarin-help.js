@@ -1,24 +1,22 @@
 import { element } from './ui.js';
+import { meaningChoices } from './meaning-choices.js';
 
-export function mandarinHelp(entry) {
+export function mandarinHelp(entry, choose = (values, label) => meaningChoices(values, { label }).root) {
   const box = element('div', 'mandarin-help');
   box.lang = 'en';
   const pronunciation = element('div', 'mandarin-pronunciation', entry.pinyin || 'Pronunciation unavailable');
   pronunciation.lang = 'zh-Latn'; box.append(pronunciation);
   box.append(element('div', 'word-sense-source', 'Whole word · English meaning (CC-CEDICT)'));
-  const senses = entry.senses.length ? entry.senses.slice(0, 4) : [{ meanings: ['No dictionary entry for this word.'] }];
-  for (const sense of senses) {
-    const row = element('div', 'word-gloss');
-    if (sense.pinyin) row.append(element('span', 'mandarin-reading', `${sense.pinyin} · `));
-    row.append(document.createTextNode(sense.meanings.slice(0, 5).join('; '))); box.append(row);
-  }
+  const senses = entry.senses.length ? entry.senses : [{ meanings: ['No dictionary entry for this word.'] }];
+  const meanings = senses.flatMap((sense) => sense.meanings.map((meaning) => (sense.pinyin ? `${sense.pinyin} · ` : '') + meaning));
+  box.append(choose(meanings, `${entry.word} meaning`, 'whole'));
   box.append(element('div', 'word-sense-source mandarin-character-heading', 'Individual characters · English meanings'));
-  for (const character of entry.characters) {
+  for (const [index, character] of entry.characters.entries()) {
     const row = element('div', 'mandarin-character');
     const head = element('div', 'mandarin-character-name');
     const glyph = element('strong', '', character.character); glyph.lang = 'zh';
     head.append(glyph, element('span', 'mandarin-reading', character.pinyin || 'Pronunciation unavailable'));
-    row.append(head, element('div', 'word-gloss', character.meanings.length ? character.meanings.slice(0, 5).join('; ') : 'Meaning unavailable in the bundled dictionaries.'));
+    row.append(head, choose(character.meanings.length ? character.meanings : ['Meaning unavailable in the bundled dictionaries.'], `${character.character} meaning`, `character-${index}`));
     const other = character.readings.filter((reading) => reading !== character.pinyin);
     if (other.length) row.append(element('div', 'word-sense-source', `Other readings: ${other.join(', ')}`));
     box.append(row);

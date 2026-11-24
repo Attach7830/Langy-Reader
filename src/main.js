@@ -19,8 +19,10 @@ import { readingVocabulary } from './reading-vocabulary.js';
 import { renderSummaryDetail } from './summary-detail.js';
 import { pageNavigation } from './page-navigation.js';
 import { discoveryScreen } from './ui-discovery.js';
+import { locationHistory } from './location-history.js';
+import { readingShortcut } from './reader-shortcuts.js';
 import { bookLanguages } from '../shared/language.js';
-import { eventKey, getProgress, getSettings, keyLabel, languageName, modes, saveProgress, saveSettings, syncDeviceId, updateAppearance } from './settings.js';
+import { getProgress, getSettings, keyLabel, languageName, modes, saveProgress, saveSettings, syncDeviceId, updateAppearance } from './settings.js';
 
 const viewer = $('#viewer');
 const stage = $('#stage');
@@ -40,6 +42,18 @@ let activeBook, renderer, loadController, activePosition, summaryController, act
 let moving = false, summaryQueued = false, fallbackFullscreen = false;
 let zoom = 1;
 let statusCheck = 0;
+const returnHistory = locationHistory({
+  location: () => activePosition && ({ target: activePosition.target, label: [activePosition.detail, activePosition.label].filter(Boolean).join(' · '), scrollTop: viewer.scrollTop, scrollLeft: viewer.scrollLeft }),
+  async go(target, saved) {
+    const moved = await move(0, target);
+    if (moved && saved) { viewer.scrollTop = saved.scrollTop; viewer.scrollLeft = saved.scrollLeft; }
+    return moved;
+  },
+  changed({ previous, busy }) {
+    const button = $('#return-location'); button.hidden = !previous; button.disabled = busy;
+    button.title = previous ? `Back to ${previous.label}${settings.keys.returnLocation ? ` (${keyLabel(settings.keys.returnLocation)})` : ''}` : 'Back to previous location';
+  },
+});
 const pageGestures = pageNavigation({ host: $('.reading-main'),
   enabled: () => Boolean(activeBook && renderer && !moving && !document.querySelector('dialog[open]')),
   canSwipe: () => !viewer.classList.contains('pdf-panning'),
@@ -59,8 +73,7 @@ const audio = narration({
   preferences: () => settings, renderer: () => renderer, book: () => activeBook,
   navigate: (target) => move(0, target),
   changePreferences: (values) => {
-    settings = { ...settings, ...values };
-    saveSettings(settings);
+    settings = saveSettings({ ...settings, ...values });
     audio.apply();
   },
 });
@@ -129,13 +142,13 @@ function applyAppearance() {
   $('#summarize').title = settings.keys.summary ? `Summarize page (${keyLabel(settings.keys.summary)})` : 'Summarize page';
   $('#previous').title = settings.keys.previous ? `Previous page (${keyLabel(settings.keys.previous)})` : 'Previous page';
   $('#next').title = settings.keys.next ? `Next page (${keyLabel(settings.keys.next)})` : 'Next page';
+  returnHistory.refresh();
 }
 
 function applySettings(updated, aiChanged) {
   const relayout = ['size', 'font', 'line', 'width', 'summaryLanguage', 'showPinyin'].some((key) => settings[key] !== updated[key]);
   const syncChanged = settings.progressSyncEnabled !== updated.progressSyncEnabled;
-  settings = updated;
-  saveSettings(settings);
+  settings = saveSettings(updated);
   words.clear();
   applyAppearance();
   syncFullscreen();
@@ -392,6 +405,7 @@ async function toggleFullscreen() {
 }
 
 function closeReader() {
+  returnHistory.reset();
   pageGestures.reset();
   vocabulary.stop();
   pinyin.clear();
@@ -448,6 +462,7 @@ async function openBook(book) {
       language: book.language, settings, signal,
       hooks: {
         keydown, bindWords: words.bind, bindPageNavigation: pageGestures.bind,
+        followLink: (target) => signal.aborted ? false : returnHistory.follow(target),
         layout: () => { pinyin.refresh(); vocabulary.refresh(); },
         position: (position) => { if (!signal.aborted) positionChanged(position); },
         error: (error) => { if (!signal.aborted) reportError(error); },
@@ -643,34 +658,28 @@ function contents() {
 function keydown(event) {
   if (!activeBook || !renderer || document.querySelector('dialog[open]') || event.defaultPrevented
     || event.target?.closest?.('input, textarea, select, [contenteditable]')) return;
+  if (words.keydown?.(event)) return;
   if (event.key === 'Escape') {
     if (fallbackFullscreen) { fallbackFullscreen = false; syncFullscreen(); }
     else if (!summaryPanel.hidden) closeSummary();
     return;
   }
-  const key = eventKey(event);
-  if (!key || (key === 'Space' && event.target?.closest?.('button, a'))) return;
-  if (key === 'Space' && settings.audioEnabled) {
-    event.preventDefault();
-    if (!event.repeat) audio.toggle();
-    return;
-  }
-  if (event.repeat) return;
-  const { previous, next, alternate, fullscreen, summary, playback, audioToolbar } = settings.keys;
-  if (![previous, next, alternate, fullscreen, summary, playback, audioToolbar].includes(key)) return;
-  event.preventDefault();
-  if (key === previous) void move(-1);
-  else if (key === next || key === alternate) void move(1);
-  else if (key === fullscreen) void toggleFullscreen();
-  else if (key === playback) audio.toggle();
-  else if (key === audioToolbar) toggleAudioToolbar();
-  else if (key === summary) {
+  const action = readingShortcut(event, settings);
+  if (action === 'previous') void move(-1);
+  else if (action === 'next') void move(1);
+  else if (action === 'fullscreen') void toggleFullscreen();
+  else if (action === 'playback') audio.toggle();
+  else if (action === 'audioToolbar') toggleAudioToolbar();
+  else if (action === 'pinyin') { applySettings({ ...settings, showPinyin: !settings.showPinyin }); toast(settings.showPinyin ? 'Pinyin shown' : 'Pinyin hidden'); }
+  else if (action === 'returnLocation') void returnHistory.back();
+  else if (action === 'summary') {
     if (summaryPanel.hidden) summarize();
     else closeSummary();
   }
 }
 
 $('#previous').addEventListener('click', () => { viewer.focus({ preventScroll: true }); void move(-1); });
+$('#return-location').addEventListener('click', () => { viewer.focus({ preventScroll: true }); void returnHistory.back(); });
 $('#next').addEventListener('click', () => { viewer.focus({ preventScroll: true }); void move(1); });
 $('#contents-button').addEventListener('click', contents);
 $('#sync-progress').addEventListener('click', () => void readingSync.check());
@@ -679,8 +688,7 @@ $('#sync-keep').addEventListener('click', () => void readingSync.keepLocal());
 $('#fullscreen').addEventListener('click', toggleFullscreen);
 function toggleAudioToolbar() {
   const visible = settings.audioEnabled && !settings.audioToolbarHidden;
-  settings = { ...settings, audioEnabled: true, audioToolbarHidden: visible };
-  saveSettings(settings);
+  settings = saveSettings({ ...settings, audioEnabled: true, audioToolbarHidden: visible });
   audio.apply();
   void audio.refresh();
   viewer.focus({ preventScroll: true });

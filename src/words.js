@@ -3,6 +3,7 @@ import { element } from './ui.js';
 import { hasHan, nodeLanguage } from '../shared/language.js';
 import { readingText } from '../shared/reading-text.js';
 import { mandarinHelp } from './mandarin-help.js';
+import { meaningChoices } from './meaning-choices.js';
 
 function caretAt(doc, x, y) {
   if (doc.caretPositionFromPoint) {
@@ -50,19 +51,42 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
   const answer = bubble.querySelector('[data-word-answer]');
   const lemmaLabel = bubble.querySelector('[data-word-lemma]');
   const cache = new Map();
-  let active, controller, timer;
-  bubble.addEventListener('pointerenter', () => clearTimeout(timer));
-  bubble.addEventListener('pointerleave', () => clear());
+  let active, controller, timer, interacting = false;
+  const selections = new Map();
+  let choosers = [], activeChooser;
+  function choose(values, label, key = 'word', render) {
+    if (!selections.has(key)) selections.set(key, { index: 0, expanded: false });
+    const control = meaningChoices(values, { label, state: selections.get(key), render,
+      activate: () => { activeChooser = key; }, changed: () => { if (active && !bubble.hidden) place(active.rect); } });
+    choosers.push({ key, ...control }); return control.root;
+  }
+  bubble.addEventListener('pointerenter', () => { interacting = true; clearTimeout(timer); });
+  bubble.addEventListener('focusin', () => clearTimeout(timer));
+  bubble.addEventListener('pointerleave', () => {
+    interacting = false; clearTimeout(timer);
+    if (!bubble.contains(document.activeElement)) timer = setTimeout(clear, 180);
+  });
+  bubble.addEventListener('focusout', (event) => { if (!interacting && !bubble.contains(event.relatedTarget)) { clearTimeout(timer); timer = setTimeout(clear, 180); } });
 
   function clear() {
     clearTimeout(timer);
     controller?.abort();
     controller = undefined;
     active = undefined;
+    interacting = false;
+    selections.clear(); choosers = []; activeChooser = undefined;
     bubble.hidden = true;
   }
 
   function place(rect) {
+    // Keep an expanded menu under the pointer/focus; let it scroll instead of
+    // moving the popup away from the user as its contents get taller.
+    if ((interacting || bubble.contains(document.activeElement)) && bubble.style.top) {
+      bubble.style.left = `${Math.max(8, Math.min(Number.parseFloat(bubble.style.left) || 8, window.innerWidth - bubble.offsetWidth - 8))}px`;
+      bubble.style.maxHeight = `${Math.max(48, Math.min(window.innerHeight * .8, window.innerHeight - Number.parseFloat(bubble.style.top) - 8))}px`;
+      return;
+    }
+    bubble.style.maxHeight = '80vh';
     const width = bubble.offsetWidth;
     const height = bubble.offsetHeight;
     const left = Math.min(window.innerWidth - width - 10, Math.max(10, (rect.left + rect.right - width) / 2));
@@ -101,10 +125,11 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
     if (attached?.length) lemmaLabel.textContent += ` · Pronouns: ${attached.join(' + ')}`;
     lemmaLabel.hidden = chinese || !detected?.lemma;
     function display(result) {
+      choosers = [];
       if (result.mandarin) {
         heading.textContent = result.mandarin.word;
         hint.textContent = 'Mandarin dictionary';
-        answer.replaceChildren(mandarinHelp(result.mandarin));
+        answer.replaceChildren(mandarinHelp(result.mandarin, choose));
         if (result.text) answer.append(element('div', 'word-sense', `${result.status === 'context' ? 'AI context explanation' : label}: ${result.text}`));
         return;
       }
@@ -115,7 +140,9 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
         : result.status === 'meaning' ? 'Dictionary meaning' : label;
       hint.textContent = result.lemma ? `${title} · ${result.lemma}` : title;
       if (result.senses?.length) {
-        answer.replaceChildren(...result.senses.map(({ label: meaning, labelLanguage, terms, source, lemma }) => {
+        const senses = result.senses;
+        const renderSense = (index) => {
+          const { label: meaning, labelLanguage, terms, source, lemma } = senses[index];
           const sense = element('div', 'word-sense');
           if (source) {
             const headword = lemma && lemma !== result.lemma && lemma !== item.word.toLocaleLowerCase(language);
@@ -133,7 +160,8 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
             sense.append(choices);
           }
           return sense;
-        }));
+        };
+        answer.replaceChildren(choose(senses.map((sense) => [sense.label, ...(sense.terms || [])].filter(Boolean).join(' · ') || sense.source || 'Dictionary meaning'), 'dictionary meaning', 'word', renderSense));
       }
     }
     heading.textContent = item.word;
@@ -227,5 +255,13 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
     return () => listeners.abort();
   }
 
-  return { clear, bind, reset: () => { clear(); cache.clear(); } };
+  function keydown(event) {
+    if (bubble.hidden || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return false;
+    if (event.key === 'Escape') { event.preventDefault(); clear(); return true; }
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return false;
+    const current = choosers.find((item) => item.key === activeChooser && item.count > 1) || choosers.find((item) => item.count > 1);
+    if (!current) return false;
+    event.preventDefault(); current.cycle(event.key === 'ArrowDown' ? 1 : -1); return true;
+  }
+  return { clear, bind, keydown, reset: () => { clear(); cache.clear(); } };
 }

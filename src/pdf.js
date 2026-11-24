@@ -2,6 +2,7 @@ import { getDocument, GlobalWorkerOptions, TextLayer, PasswordResponses } from '
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { trackText } from './text-tracking.js';
 import { hanPattern } from '../shared/language.js';
+import { pdfLinkLayer } from './book-links.js';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const baseUrl = new URL('/pdf-assets/', location.href);
@@ -102,6 +103,9 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
       active = new TextLayer({ textContentSource: content, container: layer, viewport });
       await active.render();
       if (id !== serial) return;
+      const annotations = await page.getAnnotations({ intent: 'display' }).catch(() => []);
+      if (id !== serial) return;
+      shell.append(pdfLinkLayer(annotations, viewport, (target) => hooks.followLink?.(target)));
       unbind = hooks.bindWords(layer, language, ({ word }) => {
         const offset = Math.max(0, text.toLocaleLowerCase().indexOf(word.toLocaleLowerCase()) - 420);
         return text.slice(offset, offset + 1100);

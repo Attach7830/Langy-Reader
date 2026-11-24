@@ -34,7 +34,8 @@ test('the book language picker adds named languages, persists variants, and rest
   form.querySelector('[aria-label="Remove English"]').click(); assert.deepEqual(picker.value(), ['zh']);
   picker.set(['zh-Hant', 'en']); assert.deepEqual(picker.value(), ['zh-Hant', 'en']);
   limit.checked = false; limit.dispatchEvent(new dom.window.Event('change')); assert.deepEqual(picker.value(), []);
-  picker.set([]); limit.checked = true; assert.throws(() => picker.value(), /at least one/u);
+  picker.set([]); limit.checked = true; limit.dispatchEvent(new dom.window.Event('change'));
+  assert.deepEqual(picker.value(), [], 'an unfinished language selection falls back to the automatic primary language');
 });
 
 test('reading records only visible source ranges with audio disabled, queues failed saves, and ignores a late page response', async (t) => {

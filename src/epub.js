@@ -7,6 +7,7 @@ import notoTC from '@fontsource/noto-sans-tc/400.css?inline';
 import { fonts, themes } from './settings.js';
 import { outlineDocument, spacingRules } from './epub-outline.js';
 import { trackText } from './text-tracking.js';
+import { bindBookLinks } from './book-links.js';
 import { annotateSyncPaths, koReaderXPath, parseKOReaderXPath, resolveKOReaderXPath,
   positionFraction, pointAtFraction, weightedPercentage, percentagePosition } from '../shared/epub-sync-position.js';
 
@@ -278,10 +279,8 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       doc.defaultView.frameElement?.setAttribute('title', 'EPUB page');
       hooks.bindPageNavigation?.(doc);
       doc.addEventListener('keydown', hooks.keydown);
-      doc.addEventListener('click', (event) => {
-        const href = event.target.closest?.('a[href]')?.getAttribute('href');
-        if (/^(?:[a-z]+:|\/\/)/i.test(href || '')) event.preventDefault();
-      }, true);
+      bindBookLinks(doc, { section: book.spine.get(contents.sectionIndex), spine: book.spine.spineItems,
+        follow: (target) => hooks.followLink?.(target), error: hooks.error });
       hooks.bindWords(contents.content, language, ({ node, word }) => {
         const paragraph = node.parentElement?.closest(blocks)?.textContent || node.data;
         const offset = Math.max(0, paragraph.toLocaleLowerCase().indexOf(word.toLocaleLowerCase()) - 400);
@@ -443,7 +442,7 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       },
       async go(target) {
         if (target?.sync) return resumeProgress(target.sync);
-        let location = target.cfi ?? target.index;
+        let location = typeof target === 'string' ? target : target.cfi ?? target.index;
         if (target.fragment) {
           const section = book.spine.get(target.index);
           await section.load(book.load.bind(book));

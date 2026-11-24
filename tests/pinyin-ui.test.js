@@ -69,10 +69,15 @@ test('the actual settings checkbox saves pinyin on and off while preserving hove
   assert.equal(getSettings().mode, 'translation');
   document.querySelector('[data-settings="language"]').click(); assert.equal(form.elements.showPinyin.checked, true);
   form.elements.showPinyin.checked = false;
+  document.querySelector('[data-settings-tab="shortcuts"]').click();
+  form.querySelector('[data-key="pinyin"]').click();
+  document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'j', bubbles: true, cancelable: true }));
+  assert.equal(form.querySelector('[data-key="pinyin"]').textContent, 'J');
   form.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
   await until(() => applied === 2);
   assert.equal(getSettings().showPinyin, false);
   assert.equal(getSettings().mode, 'translation');
+  assert.equal(getSettings().keys.pinyin, 'j');
 });
 
 test('hover in an English passage resolves a Chinese compound across inline markup and includes pinyin with inline pinyin off', async (t) => {

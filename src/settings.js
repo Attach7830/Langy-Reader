@@ -29,6 +29,8 @@ export const shortcuts = {
   summary: 'Toggle page summary',
   playback: 'Play or pause narration',
   audioToolbar: 'Show or hide audio toolbar',
+  pinyin: 'Show or hide pinyin',
+  returnLocation: 'Back to previous location',
 };
 
 export const defaults = {
@@ -37,7 +39,7 @@ export const defaults = {
   audioEnabled: false, audioToolbarHidden: false, podcastMode: false, audioHighlight: true, audioRate: 1,
   audioRecordings: {},
   progressSyncEnabled: true, syncDeviceName: 'Langy browser',
-  keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's', playback: 'p', audioToolbar: 'a' },
+  keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's', playback: 'p', audioToolbar: 'a', pinyin: 'y', returnLocation: 'b' },
   autoHideDocks: false,
 };
 
@@ -52,16 +54,21 @@ function write(key, value) {
 }
 
 export function getSettings() {
-  const saved = read('langy-settings-v1', {});
-  const keys = { ...defaults.keys, ...saved.keys };
-  // Preserve an existing custom assignment to A when introducing this shortcut.
-  if (!Object.hasOwn(saved.keys || {}, 'audioToolbar') && Object.values(saved.keys || {}).includes(defaults.keys.audioToolbar)) {
-    keys.audioToolbar = '';
-  }
-  return { ...defaults, ...saved, keys };
+  const object = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const saved = object(read('langy-settings-v1', {})), savedKeys = object(saved.keys);
+  const keys = { ...defaults.keys, ...savedKeys };
+  // New defaults must never take a key already assigned by an existing reader.
+  for (const [name, key] of Object.entries(defaults.keys))
+    if (!Object.hasOwn(savedKeys, name) && Object.values(savedKeys).includes(key)) keys[name] = '';
+  return { ...defaults, ...saved, keys, audioRecordings: { ...object(saved.audioRecordings) } };
 }
 
-export const saveSettings = (settings) => write('langy-settings-v1', settings);
+export function saveSettings(settings) {
+  const previous = getSettings();
+  const updated = { ...previous, ...settings, keys: { ...previous.keys, ...settings.keys } };
+  write('langy-settings-v1', updated);
+  return updated;
+}
 export const getProgress = () => read('langy-progress-v1', {});
 export const saveProgress = (progress) => write('langy-progress-v1', progress);
 

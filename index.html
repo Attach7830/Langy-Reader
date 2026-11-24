@@ -123,6 +123,7 @@
         </div>
       </div>
       <div class="reader-actions">
+        <button class="icon-button" id="return-location" type="button" title="Back to previous location" aria-label="Back to previous location" hidden><i data-lucide="arrow-left"></i></button>
         <button class="icon-button" id="sync-progress" type="button" title="Sync reading progress" aria-label="Sync reading progress" aria-controls="sync-notice" hidden><i data-lucide="rotate-ccw"></i></button>
         <button class="icon-button" id="contents-button" type="button" title="Contents" aria-label="Contents"><i data-lucide="list"></i></button>
         <button class="icon-button" type="button" data-settings="reading" title="Reading settings" aria-label="Reading settings"><span class="type-icon">Aa</span></button>
@@ -247,7 +248,7 @@
         <label class="field">Word help on hover or tap <select name="mode" id="help-options"></select></label>
         <label class="checkbox-row"><input name="synonymContextHelp" type="checkbox"> Explain missing synonym entries with AI</label>
         <label class="checkbox-row"><input name="showPinyin" type="checkbox"> Show pinyin above Chinese text</label>
-        <p class="field-note">Remembered on this browser. Hover pronunciation remains available when inline pinyin is off.</p>
+        <p class="field-note">Default pinyin hotkey: Y, customizable under Hotkeys. Reading preferences are saved on this browser across sessions. Hover pronunciation remains available when inline pinyin is off.</p>
         <div class="form-grid">
           <label class="field">Translation language
             <input name="translationLanguage" list="languages" maxlength="70" autocomplete="off" required>
@@ -396,7 +397,7 @@
           <label class="field">Add a language <input id="book-language-choice" list="languages" maxlength="70" placeholder="For example, Mandarin or English" autocomplete="off"></label>
           <button class="button secondary small" id="book-language-add" type="button">Add language</button>
           <div class="book-language-list" id="book-language-list" aria-live="polite"></div>
-          <p class="field-note">Analysis, word help and narration use only these languages. If the primary language is excluded, the first selection becomes primary. Saving reanalyzes the existing book.</p>
+          <p class="field-note">Leave the extra language field blank when finished. With no languages selected, the book uses its primary language, detected automatically if blank. Otherwise, analysis, word help and narration use the selected languages. Saving reanalyzes the existing book.</p>
         </div>
         <p class="field-note">Books use only their primary language by default. Enable multiple languages and choose the languages to detect within passages.</p>
         <p class="field-note" id="book-import-progress" role="status" hidden></p>

@@ -471,10 +471,14 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 #narration-time { font-variant-numeric: tabular-nums; font-size: 12px; }
 ::highlight(langy-narration) { background-color: #f6ca64; color: #262c24; }
 .word-help, .toast { position: fixed; z-index: 12; background: var(--raised); color: var(--ink); border: 1px solid var(--border); border-radius: 9px; box-shadow: var(--shadow); }
-.word-help { width: max-content; max-width: min(285px, 90vw); padding: 10px 13px; pointer-events: none; }
+.word-help { width: max-content; max-width: min(285px, 90vw); max-height: 80vh; overflow: auto; padding: 10px 13px; pointer-events: auto; }
 .word-mode { margin-bottom: 3px; color: var(--muted); font-size: 11px; font-weight: 700; }
 .word-help strong { font-size: 16px; }
 .word-answer { margin-top: 3px; font-size: 14px; line-height: 1.45; white-space: pre-line; overflow-wrap: anywhere; }
+.pdf-links { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.pdf-book-link { position: absolute; display: block; pointer-events: auto; }
+.pdf-book-link:hover { background: #6686bb22; }
+.pdf-book-link:focus-visible { outline: 2px solid var(--focus); }
 .word-sense + .word-sense { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--border); }
 .word-sense-label { color: var(--muted); font-size: 11px; }
 .word-sense-source { color: var(--muted); font-size: 10px; font-weight: 700; }
@@ -484,6 +488,11 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 .mandarin-character { border-top: 1px solid var(--border); padding-top: 5px; margin-top: 5px; }
 .mandarin-character-name { display: flex; align-items: baseline; gap: 8px; }
 .mandarin-reading { color: var(--muted); }
+.meaning-choices { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 4px; }
+.meaning-toggle { min-height: 28px; min-width: 42px; padding: 3px 5px; background: var(--well); color: var(--muted); border: 1px solid var(--border); border-radius: 5px; font-size: 11px; }
+.meaning-options { grid-column: 1 / -1; max-height: 170px; overflow: auto; border: 1px solid var(--border); border-radius: 5px; }
+.meaning-options button { display: block; width: 100%; padding: 7px; background: transparent; border: 0; color: var(--ink); text-align: left; font-size: 13px; }
+.meaning-options button:hover, .meaning-options button[aria-selected="true"] { background: var(--brand-soft); }
 .pinyin-layer { position: absolute; inset: 0; pointer-events: none; overflow: clip; z-index: 2; }
 .pinyin-layer span { position: absolute; display: block; white-space: nowrap; text-align: center; color: var(--muted); font-family: 'DM Sans', sans-serif; font-weight: 400; line-height: 1; }
 .vocabulary-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-block: 10px; }

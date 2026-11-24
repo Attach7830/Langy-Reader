@@ -8,6 +8,7 @@ export function bookLanguagePicker(form) {
   let selected = [];
   function render() {
     panel.hidden = !limit.checked;
+    input.disabled = !limit.checked;
     list.replaceChildren(...selected.map((code) => {
       const button = document.createElement('button');
       button.type = 'button'; button.className = 'button quiet small';
@@ -17,6 +18,8 @@ export function bookLanguagePicker(form) {
     }));
   }
   function add() {
+    input.setCustomValidity('');
+    if (!input.value.trim()) return;
     const code = parseLanguage(input.value);
     if (!code) throw new Error('Choose a language or enter a valid language code.');
     if (!selected.some((value) => baseLanguage(value) === baseLanguage(code))) {
@@ -28,14 +31,19 @@ export function bookLanguagePicker(form) {
   const attempt = () => { try { add(); } catch (error) { input.setCustomValidity(error.message); input.reportValidity(); } };
   form.querySelector('#book-language-add').addEventListener('click', attempt);
   input.addEventListener('input', () => input.setCustomValidity(''));
-  input.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); attempt(); } });
+  input.addEventListener('blur', () => { if (!input.value.trim()) input.setCustomValidity(''); });
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    if (input.value.trim()) { event.preventDefault(); attempt(); }
+    else input.setCustomValidity(''); // An empty optional field lets Enter save the book.
+  });
   limit.addEventListener('change', () => { input.setCustomValidity(''); render(); });
   return {
     set(languages = []) { selected = [...languages]; limit.checked = selected.length > 1; input.value = ''; input.setCustomValidity(''); render(); },
     value() {
       if (!limit.checked) return [];
+      input.setCustomValidity('');
       if (input.value.trim()) add();
-      if (!selected.length) throw new Error('Add at least one language contained in this book.');
       return [...selected];
     },
   };
