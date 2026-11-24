@@ -63,15 +63,20 @@ test('adding a pack closes its dialog immediately and download progress stays vi
   finish(); await queue.idle(); assert.ok(queue.snapshot().every((job) => job.state === 'complete'));
 });
 
-test('the Android fullscreen channel tracks both browser fullscreen and CSS fallback without exposing other native capabilities', async (t) => {
+test('Android settings keep server controls available without a title bar, while fullscreen state and cleanup remain intact', async (t) => {
   const dom = await browser(t, { runScripts: 'outside-only' }), messages = []; let closed = false;
   dom.window.eval(await readFile(new URL('../android/app/src/main/assets/reader-fullscreen.js', import.meta.url), 'utf8'));
   const port = { postMessage: (value) => messages.push(value), close: () => { closed = true; } };
   dom.window.dispatchEvent(new dom.window.MessageEvent('message', { data: 'wrong', ports: [port] })); assert.deepEqual(messages, []);
   dom.window.dispatchEvent(new dom.window.MessageEvent('message', { data: '__LANGY_FULLSCREEN_TOKEN__', ports: [port] })); assert.deepEqual(messages, ['exit']);
+  const controls = dom.window.document.querySelector('[data-settings-panel="devices"] #android-app-controls');
+  assert.ok(controls);
+  const buttons = controls.querySelectorAll('button'); buttons[0].click(); buttons[1].click();
+  assert.deepEqual(messages.slice(-2), ['connection', 'reload']);
   dom.window.document.documentElement.classList.add('focus-mode'); await delay(0); assert.equal(messages.at(-1), 'enter');
   dom.window.document.documentElement.classList.remove('focus-mode'); await delay(0); assert.equal(messages.at(-1), 'exit');
   Object.defineProperty(dom.window.document, 'fullscreenElement', { configurable: true, value: dom.window.document.body });
   dom.window.document.dispatchEvent(new dom.window.Event('fullscreenchange')); assert.equal(messages.at(-1), 'enter');
   dom.window.__langyFullscreenCleanup(); assert.equal(closed, true);
+  assert.equal(dom.window.document.querySelector('#android-app-controls'), null);
 });

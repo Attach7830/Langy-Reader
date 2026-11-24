@@ -11,8 +11,6 @@ import android.os.Environment;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
-import android.view.Menu;
-import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -20,6 +18,7 @@ import android.webkit.HttpAuthHandler;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceError;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -52,6 +51,7 @@ public class MainActivity extends Activity {
     private boolean triedSavedLogin;
     private boolean readerFullscreen;
     private WebMessagePort fullscreenPort;
+    private AlertDialog connectionDialog;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -75,6 +75,9 @@ public class MainActivity extends Activity {
             }
             @Override public void onPageFinished(WebView view, String url) {
                 if (sameServer(Uri.parse(url))) connectFullscreen();
+            }
+            @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                if (request.isForMainFrame()) connection();
             }
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 if (!request.isForMainFrame()) return false;
@@ -124,7 +127,6 @@ public class MainActivity extends Activity {
     }
     private void setReaderFullscreen(boolean enabled) {
         readerFullscreen = enabled;
-        if (getActionBar() != null) { if (enabled) getActionBar().hide(); else getActionBar().show(); }
         if (enabled) getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
         else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
         getWindow().getDecorView().setSystemUiVisibility(enabled
@@ -145,10 +147,12 @@ public class MainActivity extends Activity {
                     if (port != fullscreenPort || !sameServer(Uri.parse(web.getUrl() == null ? "" : web.getUrl()))) return;
                     if ("enter".equals(message.getData())) setReaderFullscreen(true);
                     else if ("exit".equals(message.getData()) && custom == null) setReaderFullscreen(false);
+                    else if ("connection".equals(message.getData())) connection();
+                    else if ("reload".equals(message.getData())) web.reload();
                 }
             });
-            // Only the configured HTTPS origin receives this channel. It accepts
-            // fullscreen state alone, with no login or filesystem interface.
+            // Only the configured HTTPS origin receives this channel. Commands
+            // control fullscreen or open native UI; they never return credentials.
             web.evaluateJavascript(script, ignored -> {
                 if (fullscreenPort == channel[0] && sameServer(Uri.parse(web.getUrl() == null ? "" : web.getUrl()))) {
                     try { web.postWebMessage(new WebMessage(token, new WebMessagePort[] { channel[1] }), Uri.parse(server)); }
@@ -189,12 +193,15 @@ public class MainActivity extends Activity {
         preferences.edit().putString("server", server).putString("login", Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + ":" + Base64.encodeToString(content, Base64.NO_WRAP)).apply();
     }
     private void connection() {
+        if (isFinishing() || isDestroyed() || connectionDialog != null && connectionDialog.isShowing()) return;
         LinearLayout panel = new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL); panel.setPadding(32, 16, 32, 16);
         TextView note = new TextView(this); note.setText("Connect to your personal Langy server over HTTPS. Save offline adds books to Downloads, where you can check progress. Keep Langy open while downloads run; the queue resumes after reopening. Reading changes sync when you reconnect."); panel.addView(note);
         EditText url = new EditText(this); url.setHint("https://books.srtw.win"); url.setInputType(17); url.setText(server); panel.addView(url);
         EditText user = new EditText(this); user.setHint("Langy username"); user.setText(username); panel.addView(user);
         EditText secret = new EditText(this); secret.setHint("Langy password"); secret.setInputType(129); secret.setText(password); panel.addView(secret);
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Langy connection").setView(panel).setNegativeButton("Cancel", null).setPositiveButton("Connect", null).create();
+        connectionDialog = dialog;
+        dialog.setOnDismissListener(ignored -> connectionDialog = null);
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
             try {
                 URI parsed = new URI(url.getText().toString().trim());
@@ -203,13 +210,6 @@ public class MainActivity extends Activity {
                 triedSavedLogin = false; web.clearHistory(); web.loadUrl(server); dialog.dismiss();
             } catch (Exception error) { url.setError("Use an HTTPS server address without a path or embedded login."); }
         })); dialog.show();
-    }
-    @Override public boolean onCreateOptionsMenu(Menu menu) { menu.add("Book sections"); menu.add("Downloads"); menu.add("Server connection"); menu.add("Reload"); return true; }
-    @Override public boolean onOptionsItemSelected(MenuItem item) {
-        if (item.getTitle().equals("Reload")) web.reload();
-        else if (item.getTitle().equals("Downloads")) openReaderControl("open-offline-downloads");
-        else if (item.getTitle().equals("Book sections")) openReaderControl("contents-button");
-        else connection(); return true;
     }
     private void openReaderControl(String id) {
         if (sameServer(Uri.parse(web.getUrl() == null ? "" : web.getUrl()))) web.evaluateJavascript("document.getElementById(" + JSONObject.quote(id) + ")?.click()", null);
