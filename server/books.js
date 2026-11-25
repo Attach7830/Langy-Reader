@@ -200,10 +200,22 @@ export async function openLibrary(dir, limits = null) {
   db.prepare('INSERT OR IGNORE INTO library_meta VALUES (?, ?)').run('updatedAt', String(Date.now()));
   const touch = () => db.prepare("UPDATE library_meta SET value = ? WHERE key = 'updatedAt'").run(String(Date.now()));
 
-  const bookScope = limits ? "(owner = ? OR id = 'sample')" : 'owner = ?';
+  if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'shared')) db.exec('ALTER TABLE books ADD COLUMN shared INTEGER NOT NULL DEFAULT 0');
+  const scope = (visitor) => limits ? { sql: "(owner=? OR id='sample')", args: [editable(visitor)] }
+    : visitor ? { sql: '(owner=? OR shared=1)', args: [editable(visitor)] } : { sql: '1', args: [] };
   const categoryScope = limits ? "(owner = ? OR id = 'spanish')" : 'owner = ?';
   const editable = (visitor) => visitor?.id ?? shared;
-  const publicBook = ({ owner, expires, bytes, ...book }) => ({ ...book, languages: typeof book.languages === 'string' ? JSON.parse(book.languages) : book.languages });
+  const publicBook = ({ owner, expires, bytes, ...book }, visitor) => ({ ...book, shared: Boolean(book.shared),
+    canEdit: !visitor || owner === editable(visitor), sharedWithMe: Boolean(!limits && book.shared && visitor && owner !== editable(visitor)),
+    categoryId: !limits && visitor && owner !== editable(visitor) ? null : book.categoryId,
+    languages: typeof book.languages === 'string' ? JSON.parse(book.languages) : book.languages });
+  function sharing(value, previous = false) {
+    if (value === undefined) return Number(previous);
+    if (![true, false, 'true', 'false'].includes(value)) throw new RequestError(422, 'Choose whether to share this book.');
+    const share = value === true || value === 'true';
+    if (limits && share) throw new RequestError(403, 'Book sharing is available on self-hosted installations.');
+    return Number(share);
+  }
   const publicCategory = ({ id, name, language = null }) => ({ id, name, language });
   const readAt = (id, visitor) => db.prepare('SELECT readAt FROM book_read_status WHERE book=? AND owner=? AND (expires IS NULL OR expires>?)')
     .get(id, editable(visitor), Date.now())?.readAt ?? null;
@@ -213,9 +225,10 @@ export async function openLibrary(dir, limits = null) {
     .get(id, editable(visitor), Date.now())?.setAsideAt ?? null;
 
   function getBook(id, visitor) {
-    const book = db.prepare(`SELECT * FROM books WHERE id = ? AND ${bookScope}`).get(id, editable(visitor));
+    const visible = scope(visitor);
+    const book = db.prepare(`SELECT * FROM books WHERE id=? AND ${visible.sql}`).get(id, ...visible.args);
     if (!book) throw new RequestError(404, 'Book not found.');
-    return { ...book, languages: JSON.parse(book.languages), readAt: readAt(id, visitor), starredAt: starredAt(id, visitor), setAsideAt: setAsideAt(id, visitor) };
+    return { ...book, canEdit: !visitor || book.owner === editable(visitor), sharedWithMe: Boolean(!limits && book.shared && visitor && book.owner !== editable(visitor)), languages: JSON.parse(book.languages), readAt: readAt(id, visitor), starredAt: starredAt(id, visitor), setAsideAt: setAsideAt(id, visitor) };
   }
 
   function categoryId(value, visitor) {
@@ -273,10 +286,11 @@ export async function openLibrary(dir, limits = null) {
       return { bookmarks: this.bookmarks(id, visitor) };
     },
     readBooks(visitor) {
+      const owner = editable(visitor);
       return db.prepare(`SELECT b.id,b.language,r.readAt,r.expires FROM book_read_status r JOIN books b ON b.id=r.book
         WHERE r.owner=? AND (r.expires IS NULL OR r.expires>?) AND (b.expires IS NULL OR b.expires>?)
-          AND ${limits ? "(b.owner=? OR b.id='sample')" : 'b.owner=?'}`)
-        .all(editable(visitor), Date.now(), Date.now(), editable(visitor));
+          AND ${limits ? "(b.owner=? OR b.id='sample')" : '(b.owner=? OR b.shared=1)'}`)
+        .all(owner, Date.now(), Date.now(), owner);
     },
     async storage(visitor) {
       if (limits) {
@@ -300,18 +314,18 @@ export async function openLibrary(dir, limits = null) {
       }
     },
     snapshot(visitor) {
-      const owner = editable(visitor);
+      const owner = editable(visitor), visible = scope(visitor);
       const statuses = new Map(db.prepare('SELECT book,readAt FROM book_read_status WHERE owner=? AND (expires IS NULL OR expires>?)')
         .all(owner, Date.now()).map((row) => [row.book, row.readAt]));
       const stars = new Map(db.prepare('SELECT book,starredAt FROM currently_reading WHERE owner=? AND (expires IS NULL OR expires>?)')
         .all(owner, Date.now()).map((row) => [row.book, row.starredAt]));
       const aside = new Map(db.prepare('SELECT book,setAsideAt FROM books_set_aside WHERE owner=? AND (expires IS NULL OR expires>?)').all(owner, Date.now()).map((row) => [row.book, row.setAsideAt]));
       return {
-        demo: Boolean(limits), maxUpload: limits?.upload ?? maxUpload,
+        demo: Boolean(limits), sharingAvailable: !limits && Boolean(visitor?.authenticated), maxUpload: limits?.upload ?? maxUpload,
         updatedAt: Number(db.prepare("SELECT value FROM library_meta WHERE key = 'updatedAt'").get().value),
         categories: db.prepare(`SELECT id, name, language FROM categories WHERE ${categoryScope} ORDER BY name COLLATE NOCASE`).all(owner),
-        books: db.prepare(`SELECT * FROM books WHERE ${bookScope} ORDER BY addedAt DESC, id`).all(owner)
-          .map((book) => publicBook({ ...book, readAt: statuses.get(book.id) ?? null, starredAt: stars.get(book.id) ?? null, setAsideAt: aside.get(book.id) ?? null })),
+        books: db.prepare(`SELECT * FROM books WHERE ${visible.sql} ORDER BY addedAt DESC,id`).all(...visible.args)
+          .map((book) => publicBook({ ...book, readAt: statuses.get(book.id) ?? null, starredAt: stars.get(book.id) ?? null, setAsideAt: aside.get(book.id) ?? null }, visitor)),
       };
     },
     saveCategory(id, body, isNew, visitor) {
@@ -358,6 +372,7 @@ export async function openLibrary(dir, limits = null) {
       const owner = editable(visitor);
       let saved = false;
       try {
+        const sharedBook = sharing(body.shared);
         const coverStyle = body.coverStyle ?? 'auto';
         if (!validCoverStyle(coverStyle)) throw new RequestError(422, 'Choose one of the available book covers.');
         const metadata = await readMetadata(file.path, format);
@@ -386,9 +401,10 @@ export async function openLibrary(dir, limits = null) {
           id, title, author, assignment.language, format, assignment.categoryId,
           metadata.thumbnail ? metadata.thumbnailType : null, Date.now(), owner, visitor?.expires ?? null, file.size, Date.now(), JSON.stringify(assignment.languages), coverStyle,
         );
+        db.prepare('UPDATE books SET shared=? WHERE id=?').run(sharedBook, id);
         saved = true;
         touch();
-        return publicBook(getBook(id, visitor));
+        return publicBook(getBook(id, visitor), visitor);
       } finally {
         if (!saved) {
           await Promise.allSettled([file.path, filePath(book), coverPath(book)].map((path) => rm(path, { force: true })));
@@ -397,7 +413,7 @@ export async function openLibrary(dir, limits = null) {
     },
     async resolveBookDetails(id, body, visitor) {
       const book = getBook(id, visitor);
-      if (book.owner !== editable(visitor)) throw new RequestError(403, 'The sample book is read-only.');
+      if (book.owner !== editable(visitor)) throw new RequestError(403, 'Only the book owner can edit or remove this book.');
       const blank = (name) => !asText(body[name], name === 'title' ? 250 : 200);
       if (!['title', 'author', 'language'].some(blank)) return body;
       let metadata = {};
@@ -411,7 +427,8 @@ export async function openLibrary(dir, limits = null) {
     },
     editBook(id, body, visitor) {
       const book = getBook(id, visitor);
-      if (book.owner !== editable(visitor)) throw new RequestError(403, 'The sample book is read-only.');
+      if (book.owner !== editable(visitor)) throw new RequestError(403, 'Only the book owner can edit or remove this book.');
+      const sharedBook = sharing(body.shared, book.shared);
       const title = asText(body.title, 250);
       const coverStyle = body.coverStyle ?? book.coverStyle;
       if (!validCoverStyle(coverStyle)) throw new RequestError(422, 'Choose one of the available book covers.');
@@ -422,8 +439,9 @@ export async function openLibrary(dir, limits = null) {
       const assignment = folderAssignment(body.categoryId, language, languages, visitor);
       db.prepare('UPDATE books SET title = ?, author = ?, language = ?, categoryId = ?, updatedAt = ?, languages = ?, coverStyle = ? WHERE id = ?')
         .run(title, asText(body.author, 200), assignment.language, assignment.categoryId, Date.now(), JSON.stringify(assignment.languages), coverStyle, id);
+      db.prepare('UPDATE books SET shared=? WHERE id=?').run(sharedBook, id);
       touch();
-      return publicBook(getBook(id, visitor));
+      return publicBook(getBook(id, visitor), visitor);
     },
     setReadStatus(id, body, visitor) {
       getBook(id, visitor);
@@ -460,7 +478,7 @@ export async function openLibrary(dir, limits = null) {
     },
     async removeBook(id, visitor) {
       const book = getBook(id, visitor);
-      if (book.owner !== editable(visitor)) throw new RequestError(403, 'The sample book is read-only.');
+      if (book.owner !== editable(visitor)) throw new RequestError(403, 'Only the book owner can edit or remove this book.');
       db.prepare('DELETE FROM books WHERE id = ?').run(id);
       touch();
       const cleanup = await Promise.allSettled([filePath(book), coverPath(book)].map((path) => rm(path, { force: true })));
