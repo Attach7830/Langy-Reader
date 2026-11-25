@@ -224,3 +224,21 @@ test('the background worker exports ready audio after connecting without an open
   for (let n = 0; n < 100 && f.service.status(f.book).jobs.at(-1)?.state !== 'exported'; n++) await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(f.calls.filter((call) => call.path === '/abs/api/upload').length, 1);
 });
+
+test('saving a new category destination replaces waiting automatic exports that used the old default', async (t) => {
+  const f = await fixture(t); f.addReady(); await f.connect(); f.failCatalog(true); await f.service.pump(); f.failCatalog(false);
+  await f.connect({ categoryDestinations: { spanish: { libraryId: 'other-lib', folderId: 'other-folder' } } });
+  assert.equal(f.service.status(f.book).jobs[0].state, 'cancelled'); await f.service.pump();
+  const sent = f.calls.find((call) => call.path === '/abs/api/upload').options.body;
+  assert.equal(sent.get('library'), 'other-lib'); assert.equal(sent.get('folder'), 'other-folder');
+});
+
+test('an unavailable mapped folder blocks export and correcting its mapping retries in the intended library', async (t) => {
+  const f = await fixture(t); f.addReady(); await f.connect({ categoryDestinations: { spanish: { libraryId: 'lib', folderId: 'spanish-folder' } } });
+  f.remoteLibraries[0].folders = f.remoteLibraries[0].folders.filter((folder) => folder.id !== 'spanish-folder');
+  await f.service.pump(); assert.equal(f.service.status(f.book).jobs[0].state, 'error');
+  assert.equal(f.calls.some((call) => call.path === '/abs/api/upload'), false);
+  await f.connect({ categoryDestinations: { spanish: { libraryId: 'other-lib', folderId: 'other-folder' } } }); await f.service.pump();
+  const body = f.calls.find((call) => call.path === '/abs/api/upload').options.body;
+  assert.equal(body.get('library'), 'other-lib'); assert.equal(body.get('folder'), 'other-folder');
+});

@@ -109,6 +109,11 @@ test('adding a pack closes its dialog immediately and download progress stays vi
   report({ phase: 'audio-updated', label: 'Downloading complete audiobook', loaded: 1536, total: 2048, percent: 80 });
   assert.equal(document.querySelector('[data-download="a"] button'), cancel, 'live progress must not remove the Cancel button during a tap');
   assert.equal(document.querySelector('[data-download="a"] progress').value, 80);
+  const downloads = document.querySelector('#downloads-dialog');
+  downloads.getBoundingClientRect = () => ({ left: 50, top: 50, right: 350, bottom: 450 });
+  for (const type of ['pointerdown', 'click']) downloads.dispatchEvent(new dom.window.MouseEvent(type, { bubbles: true, clientX: 5, clientY: 5, button: 0 }));
+  assert.equal(downloads.open, false, 'tapping the Downloads backdrop closes the dialog');
+  assert.deepEqual(queue.snapshot().map((job) => job.state), ['downloading', 'queued'], 'dismissing Downloads does not cancel the transfer queue');
   finish(); await queue.idle(); assert.ok(queue.snapshot().every((job) => job.state === 'complete'));
 });
 
