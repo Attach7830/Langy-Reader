@@ -209,6 +209,7 @@ try {
     const paths = ['**/api/books/' + book.id + '/narration*', '**/api/books/' + book.id + '/learning'];
     for (const path of paths) await page.route(path, unavailable);
     try {
+      await page.reload();
       await open();
       for (let n = 0; n < 60 && aborted < 2; n++) await delay(50);
       assert.ok(aborted >= 2); await delay(100);
