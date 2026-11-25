@@ -1,6 +1,6 @@
 import {
   createIcons, ArrowLeft, BookOpen, ChevronLeft, ChevronRight, Coffee, Folder, Info, Languages,
-  LibraryBig, List, Maximize, Minus, Pencil, Plus, RotateCcw, Search, Settings2, SkipBack, SkipForward, Sparkles, Star, Upload, X, Headphones, Bookmark,
+  LibraryBig, List, Maximize, Minus, Pencil, Plus, RotateCcw, Search, Settings2, SkipBack, SkipForward, Sparkles, Star, Upload, X, Headphones, Bookmark, Download,
 } from 'lucide';
 import { offlineRequest } from './offline.js';
 
@@ -23,7 +23,7 @@ export function icon(name) {
 
 export function drawIcons() {
   createIcons({ icons: { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, Coffee, Folder, Info, Languages,
-    LibraryBig, List, Maximize, Minus, Pencil, Plus, RotateCcw, Search, Settings2, SkipBack, SkipForward, Sparkles, Star, Upload, X, Headphones, Bookmark } });
+    LibraryBig, List, Maximize, Minus, Pencil, Plus, RotateCcw, Search, Settings2, SkipBack, SkipForward, Sparkles, Star, Upload, X, Headphones, Bookmark, Download } });
 }
 
 export async function api(path, { body, method, signal, keepalive } = {}) {

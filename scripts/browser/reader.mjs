@@ -64,7 +64,7 @@ try {
     const before = await position(); await swipe(-180, 10, true); await changed(before);
   });
   await check('a center word tap opens word help without toggling fullscreen', async () => {
-    const host = await page.locator('.reading-main').boundingBox(), frame = page.frames().find((f) => f.url().startsWith('blob:'));
+    const host = await page.locator('.reading-main').boundingBox(), frame = await (await page.locator('#viewer iframe').first().elementHandle()).contentFrame();
     assert.ok(frame, 'An EPUB frame must be present');
     const point = await frame.evaluate(({ host }) => {
       const offset = window.frameElement.getBoundingClientRect(), walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -89,6 +89,8 @@ try {
 finally {
   await writeFile(join(output, 'report.json'), JSON.stringify({ results, errors }, null, 2));
   await writeFile(join(output, 'server.log'), serverLog.join(''));
-  await context?.close(); await browser?.close(); server.kill('SIGTERM'); await rm(dir, { recursive: true, force: true });
+  await context?.close(); await browser?.close();
+  if (server.exitCode == null) { const stopped = new Promise((resolve) => server.once('exit', resolve)); server.kill('SIGTERM'); await stopped; }
+  await rm(dir, { recursive: true, force: true });
 }
 if (results.some((result) => !result.pass)) process.exitCode = 1;

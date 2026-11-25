@@ -7,7 +7,7 @@ test('rapid page turns keep a bounded queue, respect order and do not let audio 
   let finish; const first = new Promise((resolve) => { finish = resolve; }), calls = [], states = [];
   const queue = pageTurnQueue({ async perform(direction) { calls.push(direction); if (calls.length === 1) await first; return true; }, busy: (state) => states.push(state) });
   const a = queue.request(1), b = queue.request(1), c = queue.request(-1);
-  assert.equal(await queue.request(1), false); assert.equal(await queue.request(0, { index: 5 }), false); assert.deepEqual(calls, [1]);
+  assert.equal(await queue.request(1), false); assert.equal(await queue.request(0, { index: 5 }, { audio: true }), false); assert.deepEqual(calls, [1]);
   finish(); assert.deepEqual(await Promise.all([a, b, c]), [true, true, true]); assert.deepEqual(calls, [1, 1, -1]);
   assert.deepEqual(states, [true, false]);
 });
@@ -18,6 +18,14 @@ test('closing a book discards queued turns and late callbacks cannot unlock a ne
   const active = queue.request(1), stale = queue.request(1); queue.reset(); assert.equal(await stale, false);
   assert.equal(await queue.request(-1), true); finish(); await active;
   assert.deepEqual(calls, [1, -1]); assert.deepEqual(states, [true, false, true, false]);
+});
+
+test('an explicit section or hyperlink jump replaces waiting page turns and runs after the active render', async () => {
+  let finish; const first = new Promise((resolve) => { finish = resolve; }), calls = [];
+  const queue = pageTurnQueue({ async perform(direction, target) { calls.push(target ?? direction); if (calls.length === 1) await first; return true; } });
+  const active = queue.request(1), discarded = queue.request(1), jump = queue.request(0, { index: 5 });
+  assert.equal(await discarded, false); finish();
+  assert.deepEqual(await Promise.all([active, jump]), [true, true]); assert.deepEqual(calls, [1, { index: 5 }]);
 });
 
 test('layout changes, page turns and source jumps never render concurrently, and a failure releases the next task', async () => {

@@ -4,6 +4,7 @@ import { trackText } from './text-tracking.js';
 import { hanPattern } from '../shared/language.js';
 import { pdfLinkLayer } from './book-links.js';
 import { serializeRenderer } from './reader-navigation.js';
+import { savedReadingFile } from './book-source.js';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const baseUrl = new URL('/pdf-assets/', location.href);
@@ -30,8 +31,11 @@ function pdfContents(items, depth = 0) {
 }
 
 export async function openPdf({ host, url, position, language, hooks, signal }) {
+  const saved = await savedReadingFile(url, { signal });
+  const source = saved ? { data: new Uint8Array(await saved.arrayBuffer()) } : { url };
+  signal.throwIfAborted();
   const loading = getDocument({
-    url, cMapUrl: asset('cmaps'), cMapPacked: true, standardFontDataUrl: asset('standard_fonts'),
+    ...source, cMapUrl: asset('cmaps'), cMapPacked: true, standardFontDataUrl: asset('standard_fonts'),
     wasmUrl: asset('wasm'), iccUrl: asset('iccs'), enableXfa: false, isEvalSupported: false,
   });
   signal.addEventListener('abort', () => { void loading.destroy().catch(() => {}); }, { once: true });

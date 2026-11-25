@@ -51,6 +51,7 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
   const answer = bubble.querySelector('[data-word-answer]');
   const lemmaLabel = bubble.querySelector('[data-word-lemma]');
   const cache = new Map();
+  const boundRoots = new WeakMap();
   let active, controller, timer, interacting = false;
   const selections = new Map();
   let choosers = [], activeChooser;
@@ -226,6 +227,10 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
     let segmenter;
     try { segmenter = new Intl.Segmenter(language, { granularity: 'word' }); }
     catch { /* Use the Unicode word pattern if segmentation is unavailable. */ }
+    let roots = boundRoots.get(root.ownerDocument);
+    if (!roots) { roots = new Map(); boundRoots.set(root.ownerDocument, roots); }
+    for (const [previous] of roots) if (!previous.isConnected) roots.delete(previous);
+    roots.set(root, segmenter);
 
     function inspect(event, tap = false) {
       if (event.pointerType === 'touch' && !tap) return;
@@ -250,10 +255,11 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
     root.addEventListener('pointerdown', (event) => { if (event.pointerType !== 'touch') clear(); }, options);
     root.addEventListener('pointerup', (event) => { if (event.pointerType === 'touch') inspect(event, true); }, options);
     root.addEventListener('click', (event) => {
+      if (event.pointerType === 'touch' || event.sourceCapabilities?.firesTouchEvents) return;
       const item = wordAt(root, event, segmenter);
       if (item) seekWord(item.node, item.index);
     }, options);
-    return () => listeners.abort();
+    return () => { roots.delete(root); listeners.abort(); };
   }
 
   function keydown(event) {
@@ -264,5 +270,9 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
     if (!current) return false;
     event.preventDefault(); current.cycle(event.key === 'ArrowDown' ? 1 : -1); return true;
   }
-  return { clear, bind, keydown, reset: () => { clear(); cache.clear(); } };
+  return { clear, bind, keydown, hitTest(event) {
+    const doc = event.target?.ownerDocument;
+    for (const [root, segmenter] of boundRoots.get(doc) || []) if (root.contains(event.target) && wordAt(root, event, segmenter)) return true;
+    return false;
+  }, reset: () => { clear(); cache.clear(); } };
 }

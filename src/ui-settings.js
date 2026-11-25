@@ -5,6 +5,7 @@ import { narrationSettings } from './ui-narration-settings.js';
 import { archiveSettings } from './ui-archive-settings.js';
 import { deviceSettings } from './ui-device-settings.js';
 import { readingLanguagesPicker } from './reading-languages.js';
+import { readingFontSize, fontSizeChange, touchReader } from './touch-preferences.js';
 
 export function settingsDialog({ preferences, apply }) {
   const narration = narrationSettings();
@@ -114,7 +115,9 @@ export function settingsDialog({ preferences, apply }) {
       fields[key].value = current[key];
     }
     fields.autoHideDocks.checked = current.autoHideDocks;
-    for (const key of ['tapToTurn', 'swipeToTurn', 'tapCenterFullscreen']) fields[key].checked = current[key] ?? defaults[key];
+    for (const key of ['doubleTapToTurn', 'swipeToTurn', 'tapCenterFullscreen']) fields[key].checked = current[key] ?? defaults[key];
+    fields.size.value = readingFontSize(current);
+    $('#font-size-device-note').textContent = touchReader() ? 'Phone/tablet text size. Desktop text size is saved separately.' : 'Desktop text size. Phone/tablet text size is saved separately.';
     fields.immersionMode.checked = current.immersionMode;
     fields.quietLibrary.checked = current.quietLibrary;
     fields.pdfNight.checked = current.pdfNight;
@@ -243,9 +246,9 @@ export function settingsDialog({ preferences, apply }) {
       progressSyncEnabled: fields.progressSyncEnabled.checked,
       syncDeviceName: fields.syncDeviceName.value.trim() || 'Langy browser',
       background: fields.background.value, font: fields.font.value, width: fields.width.value,
-      size: fields.size.valueAsNumber, line: fields.line.valueAsNumber,
+      ...fontSizeChange(fields.size.valueAsNumber), line: fields.line.valueAsNumber,
       autoHideDocks: fields.autoHideDocks.checked,
-      tapToTurn: fields.tapToTurn.checked, swipeToTurn: fields.swipeToTurn.checked, tapCenterFullscreen: fields.tapCenterFullscreen.checked,
+      doubleTapToTurn: fields.doubleTapToTurn.checked, swipeToTurn: fields.swipeToTurn.checked, tapCenterFullscreen: fields.tapCenterFullscreen.checked,
       immersionMode: fields.immersionMode.checked, quietLibrary: fields.quietLibrary.checked,
       pdfNight: fields.pdfNight.checked, keys: { ...shadowKeys },
     };

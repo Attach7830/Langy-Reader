@@ -45,6 +45,8 @@ test('library read controls show saved status, filter books, prevent duplicate s
   assert.equal(card('one').querySelector('.book-read-badge'), null);
   assert.equal(card('two').querySelector('.book-read-badge').textContent, 'Read');
   assert.equal(card('one').querySelector('.book-word-count').textContent, '3,000 words');
+  assert.equal(card('one').querySelector('.book-learning .book-word-count'), null, 'Book options never contains reading statistics');
+  assert.equal(card('one').querySelector('.book-reading-details').hidden, false);
   assert.equal(card('two').querySelector('.book-word-count').textContent, '2,000 words · 20 Mandarin characters');
   assert.equal(document.querySelector('#reading-summary').textContent, 'Total words read: 2,000 · Mandarin characters read: 20');
   const sort = document.querySelector('#book-sort');
@@ -84,6 +86,7 @@ test('library read controls show saved status, filter books, prevent duplicate s
   await library.refresh(); sort.value = 'familiar'; sort.dispatchEvent(new dom.window.Event('change'));
   assert.deepEqual(links(), ['#read/two', '#read/one'], 'zero unfamiliarity ranks before unavailable analysis');
   document.querySelector('#library-details-toggle').click();
+  assert.ok([...document.querySelectorAll('.book-reading-details')].every((detail) => detail.hidden), 'reading statistics are visible only after Show reading details');
   assert.equal(document.querySelector('#reading-filter').hidden, false); assert.equal(document.querySelector('#book-sort').hidden, false);
   assert.ok([...document.querySelectorAll('.book-learning')].every((detail) => !detail.open), 'quiet mode collapses book details');
   document.querySelector('#open-reading-history').click(); assert.equal(document.querySelector('#reading-history-dialog').open, true);

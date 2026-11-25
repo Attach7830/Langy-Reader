@@ -365,6 +365,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   audio.addEventListener('error', () => { if (audio.getAttribute('src')) status.textContent = 'This book recording could not be played. Try generating it again.'; });
   return {
     refresh, apply, stop, toggle, skipBy,
+    get ready() { return ready(); },
     beginNavigation() { manualNavigation = true; return ++navigationVersion; },
     async endNavigation(version, { seekToPage = true } = {}) {
       if (version !== navigationVersion) return;

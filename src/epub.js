@@ -7,6 +7,7 @@ import notoTC from '@fontsource/noto-sans-tc/400.css?inline';
 import { fonts, themes } from './settings.js';
 import { outlineDocument, spacingRules } from './epub-outline.js';
 import { serializeRenderer } from './reader-navigation.js';
+import { readingFile } from './book-source.js';
 import { trackText } from './text-tracking.js';
 import { bindBookLinks } from './book-links.js';
 import { annotateSyncPaths, koReaderXPath, parseKOReaderXPath, resolveKOReaderXPath,
@@ -216,7 +217,7 @@ async function inferOutline(book, signal) {
 }
 
 export async function openEpub({ host, url, position, language, settings, hooks, signal }) {
-  const response = await fetch(url, { signal });
+  const response = await readingFile(url, { signal });
   if (!response.ok) throw new Error('Could not retrieve this EPUB.');
   const buffer = await response.arrayBuffer();
   signal.throwIfAborted();

@@ -20,6 +20,8 @@ import { renderSummaryDetail } from './summary-detail.js';
 import { pageNavigation } from './page-navigation.js';
 import { bookContents } from './book-contents.js';
 import { pageTurnQueue, readerDeadline } from './reader-navigation.js';
+import { readingPreferences, readingFontSize, fontSizeChange } from './touch-preferences.js';
+import { temporaryControls } from './reader-peek.js';
 import { discoveryScreen } from './ui-discovery.js';
 import { locationHistory } from './location-history.js';
 import { readingShortcut } from './reader-shortcuts.js';
@@ -51,6 +53,7 @@ const summaries = new Map();
 let settings = getSettings();
 let activeBook, renderer, loadController, activePosition, summaryController, activeSummary;
 let moving = false, summaryQueued = false, fallbackFullscreen = false;
+let hasReturnLocation = false, temporaryAudioVisible = false, pinchStart;
 let zoom = 1;
 let statusCheck = 0;
 const returnHistory = locationHistory({
@@ -61,8 +64,10 @@ const returnHistory = locationHistory({
     return moved;
   },
   changed({ previous, busy }) {
+    hasReturnLocation = Boolean(previous);
     const button = $('#return-location'); button.hidden = !previous; button.disabled = busy;
     button.title = previous ? `Back to ${previous.label}${settings.keys.returnLocation ? ` (${keyLabel(settings.keys.returnLocation)})` : ''}` : 'Back to previous location';
+    syncFullscreen();
   },
 });
 const pageTurns = pageTurnQueue({ perform: performMove, busy(value) {
@@ -72,9 +77,14 @@ const pageTurns = pageTurnQueue({ perform: performMove, busy(value) {
 const pageGestures = pageNavigation({ host: $('.reading-main'),
   enabled: () => Boolean(activeBook && renderer && !document.querySelector('dialog[open]')),
   canSwipe: () => settings.swipeToTurn !== false && !viewer.classList.contains('pdf-panning'),
-  canTap: () => settings.tapToTurn === true,
+  canDoubleTap: () => settings.doubleTapToTurn !== false,
   canCenterTap: () => settings.tapCenterFullscreen !== false,
-  centerTap: () => void toggleFullscreen(),
+  wordAt: (event) => words.hitTest(event),
+  canPan: () => viewer.classList.contains('pdf-panning'),
+  centerTap: () => { words.clear(); void toggleFullscreen(); },
+  centerDoubleTap: () => void togglePlaybackFromGesture(),
+  swipeUp: () => showTemporaryAudio(), swipeDown: () => contents(),
+  pinch: pinchText,
   turn: (direction) => { viewer.focus({ preventScroll: true }); void move(direction); },
 });
 const pinyin = pinyinOverlay({ host: viewer, preferences: () => settings, renderer: () => renderer, book: () => activeBook, request: api });
@@ -94,13 +104,18 @@ const words = wordHelp({
   onWord: readingTime.activity,
 });
 const audio = narration({
-  preferences: () => settings, renderer: () => renderer, book: () => activeBook,
+  preferences: () => temporaryAudioVisible ? { ...settings, audioToolbarHidden: false } : settings, renderer: () => renderer, book: () => activeBook,
   navigate: (target) => move(0, target, { audio: true }),
   changePreferences: (values) => {
     settings = saveSettings({ ...settings, ...values });
     audio.apply();
   },
 });
+const audioPeek = temporaryControls({ changed(visible) { temporaryAudioVisible = visible; audio.apply(); syncFullscreen(); } });
+for (const type of ['input', 'change', 'click', 'wheel', 'focusin']) $('#narration-player').addEventListener(type, audioPeek.activity, { passive: true });
+$('#narration-player').addEventListener('pointerdown', audioPeek.hold, { passive: true });
+document.addEventListener('pointerup', audioPeek.release, { passive: true });
+document.addEventListener('pointercancel', audioPeek.release, { passive: true });
 const absProgress = audiobookshelfProgress({ audio, request: api });
 const library = libraryScreen({
   preferences: () => settings, changePreferences: (updated) => { applySettings({ ...settings, ...updated }); },
@@ -188,7 +203,7 @@ function applyAppearance() {
 
 function applySettings(updated, aiChanged, notify = true) {
   if (JSON.stringify(settings) === JSON.stringify(updated) && !aiChanged) return;
-  const relayout = ['size', 'font', 'line', 'width', 'summaryLanguage', 'showPinyin'].some((key) => settings[key] !== updated[key]);
+  const relayout = ['size', 'touchSize', 'font', 'line', 'width', 'summaryLanguage', 'showPinyin'].some((key) => settings[key] !== updated[key]);
   const syncChanged = settings.progressSyncEnabled !== updated.progressSyncEnabled;
   const libraryChanged = settings.nativeLanguage !== updated.nativeLanguage || settings.quietLibrary !== updated.quietLibrary;
   settings = saveSettings(updated, { notify });
@@ -205,7 +220,8 @@ function applySettings(updated, aiChanged, notify = true) {
     void checkAI();
   }
   if (relayout || aiChanged) resetSummary();
-  Promise.resolve(renderer?.apply?.(settings)).then(() => {
+  Promise.resolve(renderer?.apply?.(readingPreferences(settings))).then(() => {
+    pageGestures.refresh();
     pinyin.refresh();
     vocabulary.refresh();
     if (syncChanged && activeBook && renderer) void readingSync.start(activeBook, renderer);
@@ -231,6 +247,10 @@ async function checkAI() {
 }
 
 function showScreen(screen) {
+  $('#mobile-navigation').hidden = screen === 'reader';
+  for (const link of document.querySelectorAll('.mobile-navigation a')) {
+    if (link.hash === `#${screen}`) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
+  }
   readerScreen.hidden = screen !== 'reader';
   $('#library-screen').hidden = screen !== 'library';
   $('#about-screen').hidden = screen !== 'about';
@@ -437,7 +457,7 @@ function syncFullscreen() {
   $('#fullscreen').setAttribute('aria-pressed', String(fullscreen));
   $('#fullscreen').setAttribute('aria-label', fullscreen ? 'Exit full screen' : 'Full screen');
   $('#fullscreen').title = fullscreen ? 'Exit full screen' : 'Full screen';
-  setDockAutoHide(Boolean(activeBook && fullscreen && settings.autoHideDocks && $('#sync-notice').hidden));
+  setDockAutoHide(Boolean(activeBook && fullscreen && settings.autoHideDocks && !hasReturnLocation && !temporaryAudioVisible && $('#sync-notice').hidden));
 }
 
 async function toggleFullscreen() {
@@ -453,6 +473,8 @@ async function toggleFullscreen() {
 }
 
 function closeReader() {
+  audioPeek.reset();
+  pinchText({ phase: 'cancel' });
   absProgress.stop();
   readingTime.stop();
   returnHistory.reset();
@@ -514,7 +536,7 @@ async function openBook(book) {
     signal.throwIfAborted();
     const opened = await open({
       host: viewer, url: `/api/books/${book.id}/file`, position: progress[book.id]?.target,
-      language: book.language, settings, signal,
+      language: book.language, settings: readingPreferences(settings), signal,
       hooks: {
         keydown, bindWords: words.bind, bindPageNavigation: pageGestures.bind,
         followLink: (target) => signal.aborted ? false : returnHistory.follow(target),
@@ -531,7 +553,7 @@ async function openBook(book) {
       contentsButton.title = 'Book sections';
       contentsButton.setAttribute('aria-label', contentsButton.title);
     }
-    if (!$('#settings').open) await renderer.apply?.(settings);
+    if (!$('#settings').open) await renderer.apply?.(readingPreferences(settings));
     if (signal.aborted) return;
     contentsButton.disabled = false;
     audio.apply();
@@ -623,6 +645,7 @@ async function zoomPDF(factor) {
   words.clear();
   try {
     await renderer.setZoom(zoom);
+    pageGestures.refresh();
     readerMessage();
   } catch (error) { reportError(error); }
 }
@@ -668,12 +691,45 @@ $('#sync-resume').addEventListener('click', () => void readingSync.resume());
 $('#sync-keep').addEventListener('click', () => void readingSync.keepLocal());
 $('#fullscreen').addEventListener('click', toggleFullscreen);
 function toggleAudioToolbar() {
-  const visible = settings.audioEnabled && !settings.audioToolbarHidden;
+  const visible = temporaryAudioVisible || settings.audioEnabled && !settings.audioToolbarHidden;
+  audioPeek.hide();
   settings = saveSettings({ ...settings, audioEnabled: true, audioToolbarHidden: visible });
   audio.apply();
   void audio.refresh();
   viewer.focus({ preventScroll: true });
   toast(visible ? 'Audio toolbar hidden' : 'Audio toolbar shown');
+}
+function showTemporaryAudio() {
+  words.clear();
+  if (!settings.audioEnabled) settings = saveSettings({ ...settings, audioEnabled: true, audioToolbarHidden: true });
+  if (settings.audioToolbarHidden) audioPeek.show();
+  audio.apply(); void audio.refresh();
+}
+async function togglePlaybackFromGesture() {
+  words.clear();
+  const book = activeBook;
+  if (!settings.audioEnabled) { showTemporaryAudio(); await audio.refresh(); }
+  if (book !== activeBook) return;
+  if (!audio.ready) showTemporaryAudio(); else audio.toggle();
+}
+function pinchText({ phase, factor = 1, center }) {
+  const feedback = $('#text-size-feedback');
+  if (phase === 'start') {
+    words.clear(); pinchStart = { book: activeBook, size: readingFontSize(settings), zoom, format: activeBook?.format, box: viewer.getBoundingClientRect() };
+  }
+  if (!pinchStart) return;
+  if (phase === 'move') {
+    const box = pinchStart.box;
+    viewer.style.transformOrigin = `${center.x - box.left}px ${center.y - box.top}px`; viewer.style.transform = `scale(${factor})`;
+    feedback.hidden = false; feedback.textContent = pinchStart.format === 'pdf' ? `${Math.round(pinchStart.zoom * factor * 100)}%` : `${Math.max(13, Math.min(40, Math.round(pinchStart.size * factor)))} px`;
+  }
+  if (phase === 'end' || phase === 'cancel') {
+    const start = pinchStart; pinchStart = undefined; viewer.style.removeProperty('transform'); viewer.style.removeProperty('transform-origin'); feedback.hidden = true;
+    if (phase === 'end' && start.book === activeBook) {
+      if (start.format === 'pdf') void zoomPDF(start.zoom * factor);
+      else applySettings({ ...settings, ...fontSizeChange(start.size * factor) });
+    }
+  }
 }
 $('#audio-toggle').addEventListener('click', toggleAudioToolbar);
 $('#summarize').addEventListener('click', summarize);
@@ -687,6 +743,9 @@ $('#ai-status').addEventListener('click', checkAI);
 document.addEventListener('fullscreenchange', syncFullscreen);
 document.addEventListener('keydown', keydown);
 window.addEventListener('resize', words.clear);
+if (typeof matchMedia === 'function') matchMedia('(pointer: coarse)').addEventListener('change', () => {
+  words.clear(); void renderer?.apply?.(readingPreferences(settings)).then(() => { pinyin.refresh(); vocabulary.refresh(); }).catch(reportError);
+});
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { void readingSync.flush(); void account.flush({ keepalive: true }); }
   else { void readingSync.check(); void account.resume(); }

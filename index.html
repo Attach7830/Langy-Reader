@@ -20,6 +20,7 @@
       <a class="button quiet" href="#discover" aria-label="Discover books"><i data-lucide="sparkles"></i><span>Discover</span></a>
       <button class="button quiet" type="button" data-settings="reading" aria-label="Settings"><i data-lucide="settings-2"></i><span>Settings</span></button>
     </div>
+    <details class="mobile-library-menu"><summary class="icon-button" aria-label="More library options">•••</summary><div class="library-menu-panel"><button class="button quiet" type="button" id="mobile-reading-history">Reading history</button><button class="button quiet" type="button" id="mobile-new-category">New collection</button><a class="button quiet" id="mobile-about-link" href="#about" hidden>About</a></div></details>
   </header>
 
   <main id="library-screen" class="library-layout">
@@ -40,6 +41,7 @@
         <button class="button primary" id="import-book" type="button"><i data-lucide="plus"></i><span>Import book</span></button>
       </div>
       <div class="library-view-actions"><button id="open-reading-history" class="button quiet small" type="button">Reading history</button><button id="library-details-toggle" class="button quiet small" type="button" aria-pressed="false">Show reading details</button><button id="open-offline-downloads" class="button quiet small" type="button" aria-controls="downloads-dialog">Downloads<span id="offline-queue-count"></span></button></div>
+      <div class="mobile-collections"><select id="mobile-category" aria-label="Collection"><option value="all">All books</option></select><button type="button" class="icon-button" id="mobile-edit-category" aria-label="Edit selected collection" disabled><i data-lucide="pencil"></i></button><button type="button" class="icon-button" id="mobile-add-category" aria-label="New collection"><i data-lucide="plus"></i></button></div>
       <div class="storage-status" id="library-storage" hidden>
         <span id="storage-summary"></span>
         <button class="button quiet small" id="refresh-storage" type="button" aria-label="Refresh available storage">Refresh</button>
@@ -59,12 +61,13 @@
           <i data-lucide="search"></i>
           <input type="search" id="search" placeholder="Search…" aria-label="Search title or author" autocomplete="off">
         </label>
-        <select id="reading-filter" aria-label="Estimated reading demand">
+        <button class="button quiet small mobile-filters-toggle" id="mobile-filters-toggle" type="button" aria-expanded="false" aria-controls="library-filters"><i data-lucide="settings-2"></i><span>Filters</span></button>
+        <div class="library-filters" id="library-filters"><select id="reading-filter" aria-label="Estimated reading demand">
           <option value="">Any level</option><option>Novice</option><option>Intermediate</option>
           <option>Advanced</option><option>Superior</option><option>Distinguished</option>
         </select>
         <select id="book-sort" aria-label="Sort books" title="Unique unfamiliar lemmas per 1,000 words, or Mandarin characters per 1,000 characters. Lower comes first."><option value="recent">Recent</option><option value="familiar">Unfamiliar ↓</option><option value="known">Below threshold ↓</option></select>
-        <select id="book-status-filter" aria-label="Reading status"><option value="shelf" selected>On shelf</option><option value="">All books</option><option value="unread">Unread</option><option value="read">Read</option><option value="set-aside">Set aside</option></select>
+        <select id="book-status-filter" aria-label="Reading status"><option value="shelf" selected>On shelf</option><option value="">All books</option><option value="unread">Unread</option><option value="read">Read</option><option value="set-aside">Set aside</option></select></div>
         <span class="muted" id="book-count"></span>
       </div>
       <p class="field-note" id="offline-status" role="status" hidden></p>
@@ -130,7 +133,6 @@
         <button class="button quiet reader-primary-action" id="audio-toggle" type="button" title="Narration" aria-label="Narration" aria-pressed="false"><i data-lucide="headphones"></i><span>Audio</span></button>
         <button class="icon-button" id="fullscreen" type="button" title="Full screen" aria-label="Full screen" aria-pressed="false"><i data-lucide="maximize"></i></button>
         <details id="reader-more" class="reader-more"><summary class="icon-button" aria-label="More reading tools" title="More reading tools">•••</summary><div class="reader-more-menu">
-        <button class="icon-button" id="return-location" type="button" title="Back to previous location" aria-label="Back to previous location" hidden><i data-lucide="arrow-left"></i></button>
         <button class="icon-button" id="sync-progress" type="button" title="Sync reading progress" aria-label="Sync reading progress" aria-controls="sync-notice" hidden><i data-lucide="rotate-ccw"></i></button>
         <button class="icon-button" id="bookmarks-button" type="button" title="Bookmarks (M)" aria-label="Bookmarks"><i data-lucide="bookmark"></i></button>
         <button class="icon-button" id="book-tools-button" type="button" title="Search book and character guide" aria-label="Search book and character guide"><i data-lucide="search"></i></button>
@@ -151,6 +153,7 @@
       <div class="reading-main">
         <div id="viewer" class="viewer" tabindex="0" aria-label="Current page"></div>
         <div id="reader-message" class="reader-message" role="status" hidden></div>
+        <output id="text-size-feedback" class="text-size-feedback" role="status" hidden></output>
       </div>
       <aside id="summary-panel" class="summary-panel" aria-labelledby="summary-title" hidden>
         <div class="summary-heading">
@@ -221,12 +224,14 @@
         <span class="page-label" id="page-label" aria-live="polite"></span>
         <button class="icon-button page-arrow" id="next" type="button" aria-label="Next page"><i data-lucide="chevron-right"></i></button>
       </div>
-      <div class="footer-end"><span id="position-detail"></span><span class="progress-track" aria-hidden="true"><span id="progress-fill"></span></span></div>
+      <div class="footer-end"><button class="button quiet small return-location" id="return-location" type="button" title="Back to previous location" aria-label="Back to text before the hyperlink" hidden><i data-lucide="arrow-left"></i><span>Back to text</span></button><span id="position-detail"></span><span class="progress-track" aria-hidden="true"><span id="progress-fill"></span></span></div>
     </footer>
     <div class="reader-dock-edge top-edge" aria-hidden="true"></div>
     <div class="reader-dock-edge bottom-edge" aria-hidden="true"></div>
   </section>
 
+  <nav class="mobile-navigation" id="mobile-navigation" aria-label="App navigation"><a href="#library" aria-label="Library"><i data-lucide="library-big"></i><span>Library</span></a><button type="button" data-open-downloads aria-label="Downloads"><i data-lucide="download"></i><span>Downloads</span><span id="mobile-download-count" hidden></span></button><a href="#discover" aria-label="Discover books"><i data-lucide="sparkles"></i><span>Discover</span></a><button type="button" data-settings="reading" aria-label="Settings"><i data-lucide="settings-2"></i><span>Settings</span></button></nav>
+  <dialog class="modal mobile-actions-modal" id="book-actions-dialog" aria-labelledby="book-actions-title"><header class="modal-header"><h2 id="book-actions-title">Book options</h2><button class="icon-button" type="button" data-close aria-label="Close book options"><i data-lucide="x"></i></button></header><div class="modal-body form-stack" id="book-actions-body"></div></dialog>
   <dialog class="modal" id="reading-history-dialog" aria-labelledby="reading-history-title">
     <header class="modal-header"><h2 id="reading-history-title">Reading history</h2><button class="icon-button" type="button" data-close aria-label="Close reading history"><i data-lucide="x"></i></button></header>
     <div class="modal-body form-stack">
@@ -276,9 +281,9 @@
       <section class="modal-body" data-settings-panel="reading">
         <fieldset class="form-stack"><legend>Reading controls</legend>
           <label class="checkbox-row"><input name="swipeToTurn" type="checkbox" checked> Swipe to turn pages</label>
-          <label class="checkbox-row"><input name="tapToTurn" type="checkbox"> Tap left or right edge to turn pages</label>
-          <label class="checkbox-row"><input name="tapCenterFullscreen" type="checkbox" checked> Tap center to toggle full screen</label>
-          <p class="field-note">Swipe is on by default. Center-tap works in the middle third of the reading area. Links, controls, long presses and pinch zoom keep their normal actions.</p>
+          <label class="checkbox-row"><input name="doubleTapToTurn" type="checkbox" checked> Double-tap left or right to turn pages</label>
+          <label class="checkbox-row"><input name="tapCenterFullscreen" type="checkbox" checked> Tap blank center space for full screen</label>
+          <p class="field-note">Tap words for help. Double-tap the center to play/pause audio. Swipe up for audio controls; swipe down for sections and bookmarks. Pinch to resize text.</p>
         </fieldset>
         <label class="checkbox-row"><input name="immersionMode" type="checkbox"> Immersion mode</label>
         <p class="field-note">Hide page numbers, progress bars and audio clocks. Word help and reading controls stay available.</p>
@@ -301,7 +306,7 @@
           <label class="field">Page width
             <select name="width"><option value="narrow">Narrow</option><option value="balanced">Balanced</option><option value="wide">Wide</option></select>
           </label>
-          <label class="field">Font size <input name="size" type="number" min="13" max="40" step="1" required></label>
+          <label class="field">Font size <input name="size" type="number" min="13" max="40" step="1" required><small class="field-note" id="font-size-device-note"></small></label>
           <label class="field">Line spacing <input name="line" type="number" min="1.2" max="2.4" step="0.05" required></label>
         </div>
         <label class="checkbox-row"><input name="pdfNight" type="checkbox"> Dim PDF pages in dark themes</label>

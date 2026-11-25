@@ -1,6 +1,7 @@
 export const defaults = {
   mode: 'translation', synonymContextHelp: false, showPinyin: false, translationLanguage: 'en', summaryLanguage: 'en', theme: 'paper', background: 'grain',
   font: 'spectral', size: 20, line: 1.65, width: 'balanced', pdfNight: true,
+  touchSize: null,
   audioEnabled: false, audioToolbarHidden: false, podcastMode: false, audioHighlight: true, audioRate: 1, audioRecordings: {},
   readingLanguages: ['es', 'en', 'pt', 'zh'],
   uiLanguage: 'en', nativeLanguage: '',
@@ -8,6 +9,7 @@ export const defaults = {
   keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's', playback: 'p', audioToolbar: 'a', pinyin: 'y', returnLocation: 'b', rewindAudio: '[', forwardAudio: ']', bookmarks: 'm' },
   autoHideDocks: false,
   tapToTurn: false, swipeToTurn: true, tapCenterFullscreen: true,
+  doubleTapToTurn: true,
   immersionMode: false, quietLibrary: true,
 };
 
@@ -41,6 +43,7 @@ export function validatePreferences(value) {
     if (enums[key]) valid = enums[key].includes(setting);
     else if (typeof defaults[key] === 'boolean') valid = typeof setting === 'boolean';
     else if (key === 'size') valid = Number.isInteger(setting) && setting >= 13 && setting <= 40;
+    else if (key === 'touchSize') valid = setting === null || Number.isInteger(setting) && setting >= 13 && setting <= 40;
     else if (key === 'line') valid = Number.isFinite(setting) && setting >= 1.2 && setting <= 2.4;
     else if (key === 'audioRate') valid = Number.isFinite(setting) && setting >= .5 && setting <= 2;
     else if (key === 'readingLanguages') {

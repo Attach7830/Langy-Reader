@@ -15,12 +15,14 @@ import { bookLanguageSuggestions } from './reading-languages.js';
 import { showReadingTime } from './ui-reading-time.js';
 import { audiobookshelfBook } from './audiobookshelf-ui.js';
 import { offlineDownloads } from './offline-downloads.js';
+import { downloadedBooks } from './book-source.js';
 
 const vocabularyLabel = (vocabulary) => vocabulary?.byLanguage?.map((item) => `${item.count.toLocaleString()} ${item.language === 'zh' ? 'Mandarin Han characters' : `${languageName(item.language)} ${item.unit}`}`).join(' · ');
 const wordCountLabel = (analysis) => bookCountLabel(analysis?.counts)
   || (analysis?.counting?.state === 'error' ? 'Word count unavailable' : 'Counting words…');
 
 export function libraryScreen({ progress, onRemove, detectMetadata, readingLanguages = () => null, onSnapshot = () => {}, preferences = () => ({ quietLibrary: true }), changePreferences = () => {} }) {
+  const surface = window;
   const search = $('#search');
   const books = $('#books');
   const bookDialog = $('#book-dialog');
@@ -48,6 +50,15 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   const audioUI = audioTools({ book: () => learningBook, refresh: learningStatus });
   const absBook = audiobookshelfBook({ book: () => learningBook, changed: learningStatus });
   const offline = offlineDownloads();
+  let downloaded = new Set(), downloadScan = 0, disposed = false;
+  async function refreshDownloaded() {
+    const version = ++downloadScan, next = await downloadedBooks();
+    if (disposed || version !== downloadScan) return;
+    const changed = next.size !== downloaded.size || [...next].some((id) => !downloaded.has(id)); downloaded = next;
+    if (changed) render();
+  }
+  surface.addEventListener('langy-packs-changed', refreshDownloaded); surface.addEventListener('langy-offline-account', refreshDownloaded);
+  void refreshDownloaded();
   $('#refresh-storage').addEventListener('click', () => void refreshStorage());
   const storageTimer = setInterval(() => {
     if (!document.hidden && !$('#library-screen').hidden) void refreshStorage();
@@ -131,20 +142,23 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
       finally { pendingStars.delete(book.id); render(); }
     });
     card.append(star);
+    if (downloaded.has(book.id)) card.append(element('span', 'book-download-badge', 'Downloaded'));
     const analysis = book.learning;
-    const detail = element('details', 'book-learning'); detail.open = preferences().quietLibrary === false || expandedDetails.has(book.id);
+    const detail = element('details', 'book-learning'); detail.open = expandedDetails.has(book.id);
     detail.append(element('summary', '', 'Book options'));
+    const readingDetails = element('div', 'book-reading-details'); readingDetails.hidden = preferences().quietLibrary !== false;
     const wordCount = element('span', 'book-meta book-word-count', wordCountLabel(analysis));
     wordCount.title = analysis?.counting?.error || '';
-    detail.append(wordCount);
+    readingDetails.append(wordCount);
     const count = analysis?.vocabulary?.count ?? analysis?.lemmaCount;
     const vocabulary = analysis?.nativeExcluded ? 'L1 vocabulary excluded' : vocabularyLabel(analysis?.vocabulary) || (count == null ? '' : `${count.toLocaleString()} ${analysis.vocabulary?.unit === 'characters' ? 'Han characters' : analysis.method === 'word forms' ? 'word forms' : 'lemmas'}`);
     const estimate = analysis?.reading?.band ? `Est. ${analysis.reading.band}` : '';
-    detail.append(element('span', 'book-meta', [vocabulary, estimate].filter(Boolean).join(' · ')));
+    readingDetails.append(element('span', 'book-meta', [vocabulary, estimate].filter(Boolean).join(' · ')));
     if (book.familiarity) {
       const belowThreshold = $('#book-sort').value === 'known';
-      detail.append(element('span', 'book-meta', (belowThreshold ? 'Below threshold: ' : 'Not yet seen: ') + unfamiliarLabel(book.familiarity, belowThreshold)));
+      readingDetails.append(element('span', 'book-meta', (belowThreshold ? 'Below threshold: ' : 'Not yet seen: ') + unfamiliarLabel(book.familiarity, belowThreshold)));
     }
+    card.append(readingDetails);
     const tools = element('button', 'button quiet small', 'Analysis & audio');
     tools.type = 'button';
     tools.setAttribute('aria-label', `Analysis and audio for ${book.title}`);
@@ -184,14 +198,23 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
       finally { pendingAside.delete(book.id); render(); }
     }); detail.append(aside);
     card.append(detail);
-    if (!snapshot.demo || book.id !== 'sample') card.append(editButton(`Edit ${book.title}`, () => showBook(book), 'book-edit'));
+    const edit = !snapshot.demo || book.id !== 'sample' ? editButton(`Edit ${book.title}`, () => showBook(book), 'book-edit') : null;
+    if (edit) card.append(edit);
+    const mobileActions = element('button', 'icon-button book-mobile-menu', '•••'); mobileActions.type = 'button'; mobileActions.setAttribute('aria-label', `Book options for ${book.title}`);
+    mobileActions.addEventListener('click', () => {
+      const dialog = $('#book-actions-dialog'), content = $('#book-actions-body'); $('#book-actions-title').textContent = book.title;
+      const open = element('a', 'button primary', saved ? 'Resume reading' : 'Read book'); open.href = link.href; open.addEventListener('click', () => dialog.close());
+      const buttons = [...detail.querySelectorAll('button'), ...(edit ? [edit] : [])].map((source) => {
+        const button = element('button', 'button secondary', source === edit ? 'Edit book details' : source.textContent); button.type = 'button'; button.disabled = source.disabled;
+        button.addEventListener('click', () => { dialog.close(); source.click(); }); return button;
+      }); content.replaceChildren(open, ...buttons); dialog.showModal();
+    }); card.append(mobileActions);
     return card;
   }
 
   function render() {
     const quiet = preferences().quietLibrary !== false;
-    expandedDetails = previousQuiet !== undefined && previousQuiet !== quiet ? new Set()
-      : new Set([...books.querySelectorAll('.book-card details[open]')].map((detail) => detail.closest('.book-card').dataset.book));
+    expandedDetails = new Set([...books.querySelectorAll('.book-card details[open]')].map((detail) => detail.closest('.book-card').dataset.book));
     previousQuiet = quiet;
     books.dataset.quiet = String(quiet);
     $('#library-details-toggle').textContent = quiet ? 'Show reading details' : 'Hide reading details';
@@ -204,6 +227,9 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     $('#library-description').textContent = category === 'all'
       ? 'Choose a book to read.'
       : current?.language ? `${languageName(current.language)} folder · Books added here inherit this language.` : current ? 'Books in this category.' : 'Books without a category.';
+    $('#mobile-category').replaceChildren(new Option('All books', 'all'), ...snapshot.categories.map((entry) => new Option(entry.name, entry.id)), new Option('Uncategorized', 'uncategorized'));
+    $('#mobile-category').value = category; $('#mobile-edit-category').disabled = !current || snapshot.demo && current.id === 'spanish';
+    $('#mobile-about-link').hidden = !snapshot.demo;
     $('#demo-note').hidden = !snapshot.demo;
     const categoryRows = snapshot.categories.map((entry) => {
       const row = element('div', 'category-row');
@@ -568,6 +594,14 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   $('#open-reading-history').addEventListener('click', () => $('#reading-history-dialog').showModal());
   $('#open-vocabulary').addEventListener('click', () => $('#reading-history-dialog').close(), true);
   $('#library-details-toggle').addEventListener('click', () => { changePreferences({ quietLibrary: preferences().quietLibrary === false }); render(); });
+  $('#mobile-filters-toggle').addEventListener('click', () => {
+    const button = $('#mobile-filters-toggle'), open = button.getAttribute('aria-expanded') !== 'true';
+    button.setAttribute('aria-expanded', String(open)); $('.library-toolbar').dataset.filtersOpen = String(open);
+  });
+  $('#mobile-category').addEventListener('change', () => { category = $('#mobile-category').value; render(); });
+  for (const id of ['#mobile-add-category', '#mobile-new-category']) $(id).addEventListener('click', () => { $('.mobile-library-menu').open = false; showCategory(); });
+  $('#mobile-edit-category').addEventListener('click', () => { const current = snapshot.categories.find((item) => item.id === category); if (current) showCategory(current); });
+  $('#mobile-reading-history').addEventListener('click', () => { $('.mobile-library-menu').open = false; $('#open-reading-history').click(); });
   function showSlowImport(job) {
     slowImport = job;
     $('#archive-slow-download').hidden = false;
@@ -747,5 +781,5 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   bookDialog.addEventListener('close', () => metadataFields.cancel());
   categoryDialog.addEventListener('cancel', (event) => { if (categoryPending) event.preventDefault(); });
 
-  return { refresh, render, dispose() { offline.dispose(); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
+  return { refresh, render, dispose() { disposed = true; surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
 }
