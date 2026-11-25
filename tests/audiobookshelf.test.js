@@ -271,3 +271,8 @@ test('category changes during duplicate checking cancel the old upload and never
   await f.connect({ categoryDestinations: { unmapped: { libraryId: 'other-lib', folderId: 'other-folder' } } });
   await f.service.pump(); assert.equal(f.calls.find((call) => call.path === '/abs/api/upload').options.body.get('folder'), 'other-folder');
 });
+
+test('automatic exports never send another user’s private book to the owner’s Audiobookshelf account', async (t) => {
+  const f = await fixture(t); f.book.owner = 'another-reader'; await f.connect(); f.ready.push({ book: f.book.id, recording: 'recording' });
+  await f.service.pump(); assert.equal(f.service.status(f.book).jobs.length, 0); assert.equal(f.calls.some((call) => call.url?.includes('/upload')), false);
+});
