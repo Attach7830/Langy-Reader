@@ -15,7 +15,7 @@ async function fixture(t) {
     originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
     Object.defineProperty(globalThis, name, { configurable: true, value: dom.window[name] });
   }
-  const oldFetch = globalThis.fetch, writes = []; let librariesUnavailable = false;
+  const oldFetch = globalThis.fetch, writes = [], transfers = []; let librariesUnavailable = false;
   let config = { configurable: true, connected: true, baseUrl: 'https://abs.test', hasKey: true, libraryId: 'books', folderId: 'default', categoryDestinations: {} };
   const libraries = [{ id: 'books', name: 'Books', folders: [{ id: 'default', path: '/books' }, { id: 'spanish-folder', path: '/books/es' }] },
     { id: 'chinese-library', name: 'Chinese library', folders: [{ id: 'chinese-folder', path: '/chinese' }] }];
@@ -29,6 +29,7 @@ async function fixture(t) {
     if (path === '/api/settings/opds' || path === '/api/settings/sync') return Response.json({ available: false });
     if (path === '/api/books/book/narration') return Response.json({ audio: { state: 'ready', id: 'recording' }, recordings: [] });
     if (path.startsWith('/api/audiobookshelf/libraries/')) return Response.json({ results: [], total: 0 });
+    if (path === '/api/books/book/audiobookshelf/export') { transfers.push(JSON.parse(options.body)); return Response.json({ state: 'queued' }); }
     if (path === '/api/books/book/audiobookshelf') return Response.json({ jobs: [] });
     assert.fail('Unexpected request: ' + path);
   };
@@ -36,7 +37,7 @@ async function fixture(t) {
     globalThis.fetch = oldFetch; dom.window.close();
     for (const [name, descriptor] of originals) if (descriptor) Object.defineProperty(globalThis, name, descriptor); else delete globalThis[name];
   });
-  return { dom, writes, failLibraries() { librariesUnavailable = true; }, config(value) { config = { ...config, ...value }; } };
+  return { dom, writes, transfers, failLibraries() { librariesUnavailable = true; }, config(value) { config = { ...config, ...value }; } };
 }
 
 test('the Settings page saves distinct category folders through its main Save settings button', async (t) => {
@@ -50,6 +51,8 @@ test('the Settings page saves distinct category folders through its main Save se
     lib.value = library; lib.dispatchEvent(new f.dom.window.Event('change'));
     row.querySelector('[data-abs-folder]').value = folder;
   }
+  assert.equal(document.querySelector('#abs-auto-export').checked, true);
+  document.querySelector('#abs-auto-export').checked = false;
   choose('spanish', 'books', 'spanish-folder'); choose('chinese', 'chinese-library', 'chinese-folder');
   const form = document.querySelector('#settings-form'); form.dispatchEvent(new f.dom.window.Event('submit', { cancelable: true }));
   await until(() => returned === 1);
@@ -57,9 +60,11 @@ test('the Settings page saves distinct category folders through its main Save se
   assert.deepEqual(f.writes[0].categoryDestinations, { spanish: { libraryId: 'books', folderId: 'spanish-folder' }, chinese: { libraryId: 'chinese-library', folderId: 'chinese-folder' } });
   assert.equal(f.writes[0].libraryId, 'books'); assert.equal(f.writes[0].folderId, 'default');
   assert.equal(f.writes[0].apiKey, '');
+  assert.equal(f.writes[0].autoExport, false);
   page.open('devices'); await until(() => document.querySelector('[aria-label="Mandarin export folder"]')?.value === 'chinese-folder');
   assert.equal(document.querySelector('[aria-label="Spanish export folder"]').value, 'spanish-folder');
   assert.equal(document.querySelector('#abs-key').value, '');
+  assert.equal(document.querySelector('#abs-auto-export').checked, false);
 });
 
 test('book exports preview their mapped destination and do not offer unavailable destinations', async (t) => {
@@ -87,4 +92,21 @@ test('saving another Settings preference preserves destinations when ABS librari
   document.querySelector('#settings-form').dispatchEvent(new f.dom.window.Event('submit', { cancelable: true }));
   await until(() => returned === 1);
   assert.equal(f.writes.length, 0, 'unavailable library choices must not clear existing destinations');
+});
+
+
+test('manual export sends the selected library and folder instead of the saved default', async (t) => {
+  const f = await fixture(t); document.querySelector('#learning-dialog').open = true;
+  const panel = audiobookshelfBook({ book: () => ({ id: 'book', categoryId: null }), changed() {} });
+  await panel.show();
+  assert.equal(document.querySelector('#abs-export-library').value, 'books');
+  const select = document.querySelector('#abs-export-library'); select.value = 'chinese-library'; select.dispatchEvent(new f.dom.window.Event('change'));
+  assert.equal(document.querySelector('#abs-export-folder').value, 'chinese-folder');
+  assert.match(document.querySelector('#abs-export-destination').textContent, /Chinese library/u);
+  document.querySelector('#abs-export').click(); await until(() => f.transfers.length === 1);
+  await until(() => !document.querySelector('#abs-export').disabled);
+  assert.deepEqual(f.transfers[0].destination, { libraryId: 'chinese-library', folderId: 'chinese-folder' });
+  const browse = document.querySelector('#abs-book-library'); browse.value = 'books'; browse.dispatchEvent(new f.dom.window.Event('change'));
+  assert.equal(document.querySelector('#abs-export-library').value, 'chinese-library', 'browsing import titles cannot overwrite the explicit export destination');
+  await delay(0);
 });

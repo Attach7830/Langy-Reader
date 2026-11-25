@@ -47,7 +47,7 @@ export function audiobookshelfSettings() {
       try {
         const next = await api('/api/settings/audiobookshelf'); if (version !== epoch) return;
         config = next; $('#abs-connection').hidden = !config.configurable; $('#abs-demo-note').hidden = config.configurable;
-        url.value = config.baseUrl; key.value = ''; $('#abs-clear-key').checked = false;
+        url.value = config.baseUrl; key.value = ''; $('#abs-clear-key').checked = false; $('#abs-auto-export').checked = config.autoExport !== false;
         key.placeholder = config.hasKey ? 'Saved key' : 'Audiobookshelf API key';
         if (config.connected) await loadLibraries(version);
         else { library.replaceChildren(); folder.replaceChildren(); library.disabled = folder.disabled = true; }
@@ -62,7 +62,7 @@ export function audiobookshelfSettings() {
       const lib = row.querySelector('[data-abs-library]'), target = row.querySelector('[data-abs-folder]');
       return lib.value ? [[row.dataset.absCategory, { libraryId: lib.value, folderId: target.value }]] : [];
     })) : config.categoryDestinations || {};
-    return { baseUrl, apiKey: key.value, clearKey: $('#abs-clear-key').checked,
+    return { baseUrl, apiKey: key.value, clearKey: $('#abs-clear-key').checked, autoExport: $('#abs-auto-export').checked,
       libraryId: changedServer ? '' : choicesLoaded ? library.value : config.libraryId || '',
       folderId: changedServer ? '' : choicesLoaded ? folder.value : config.folderId || '',
       categoryDestinations: changedServer ? {} : categoryDestinations };
@@ -74,7 +74,7 @@ export function audiobookshelfSettings() {
     const body = draft();
     const ordered = (value) => JSON.stringify(Object.entries(value || {}).sort(([a], [b]) => a.localeCompare(b)));
     const changed = body.baseUrl !== config.baseUrl || body.apiKey || body.clearKey || body.libraryId !== config.libraryId
-      || body.folderId !== config.folderId || ordered(body.categoryDestinations) !== ordered(config.categoryDestinations);
+      || body.folderId !== config.folderId || body.autoExport !== (config.autoExport !== false) || ordered(body.categoryDestinations) !== ordered(config.categoryDestinations);
     if (!changed && !force) return;
     const version = epoch;
     const next = await api('/api/settings/audiobookshelf', { method: 'PUT', body });
@@ -97,6 +97,22 @@ export function audiobookshelfSettings() {
 export function audiobookshelfBook({ book, changed }) {
   let epoch = 0, timer, current, page = 0;
   const library = $('#abs-book-library'), items = $('#abs-book-item'), recording = $('#abs-book-recording');
+  const exportLibrary = $('#abs-export-library'), exportFolder = $('#abs-export-folder');
+  let exportChoices = [];
+  function updateExport() {
+    const lib = exportChoices.find((item) => item.id === exportLibrary.value), folder = lib?.folders?.find((item) => item.id === exportFolder.value);
+    $('#abs-export').disabled = !recording.options.length || !folder;
+    $('#abs-export-destination').textContent = folder ? `Export destination: ${lib.name} · ${folder.fullPath || folder.path || folder.id}`
+      : 'Choose a valid export library and folder. Configure category destinations in Settings → Devices → Audiobookshelf.';
+  }
+  function exportFolders(selected = '', chooseSingle = false) {
+    const folders = exportChoices.find((item) => item.id === exportLibrary.value)?.folders || [];
+    exportFolder.replaceChildren(new Option('Choose an export folder', ''), ...folders.map((item) => new Option(item.fullPath || item.path || item.id, item.id)));
+    exportFolder.value = folders.some((item) => item.id === selected) ? selected : chooseSingle && folders.length === 1 ? folders[0].id : '';
+    exportFolder.disabled = !exportLibrary.value; updateExport();
+  }
+  exportLibrary.addEventListener('change', () => exportFolders('', true));
+  exportFolder.addEventListener('change', updateExport);
   function error(text) { message('#abs-book-status', text); }
   async function loadItems(append = false) {
     const version = epoch; if (!append) page = 0;
@@ -122,21 +138,20 @@ export function audiobookshelfBook({ book, changed }) {
     try {
       const config = await api('/api/settings/audiobookshelf');
       if (version !== epoch || !config.connected) return;
-      const [choices, audio] = await Promise.all([api('/api/audiobookshelf/libraries'), api(`/api/books/${book().id}/narration`)]);
+      const [choices, audio, state] = await Promise.all([api('/api/audiobookshelf/libraries'), api(`/api/books/${book().id}/narration`), api(`/api/books/${book().id}/audiobookshelf`)]);
       if (version !== epoch) return;
       library.replaceChildren(...choices.libraries.map((item) => new Option(item.name, item.id)));
       const mappings = config.categoryDestinations || {}, category = book().categoryId || 'uncategorized';
-      const destination = Object.hasOwn(mappings, category) ? mappings[category] : config;
+      const destination = state.destination || (Object.hasOwn(mappings, category) ? mappings[category] : config);
       const targetLibrary = choices.libraries.find((item) => item.id === destination.libraryId);
-      const targetFolder = targetLibrary?.folders?.find((item) => item.id === destination.folderId);
       if (targetLibrary) library.value = targetLibrary.id;
-      $('#abs-export-destination').textContent = targetFolder
-        ? `Export destination: ${targetLibrary.name} · ${targetFolder.fullPath || targetFolder.path || targetFolder.id}`
-        : 'Choose a default export destination or map this category in Settings → Devices → Audiobookshelf.';
+      exportChoices = choices.libraries;
+      exportLibrary.replaceChildren(new Option('Choose an export library', ''), ...exportChoices.map((item) => new Option(item.name, item.id)));
+      exportLibrary.value = targetLibrary?.id || '';
       const recordings = [...(audio.audio.state === 'ready' ? [{ id: audio.audio.id, name: audio.audio.name || 'Generated narration' }] : []), ...(audio.recordings || [])];
       recording.replaceChildren(...recordings.filter((item, index) => recordings.findIndex((other) => other.id === item.id) === index).map((item) => new Option(item.name, item.id)));
       $('#abs-link').disabled = !recordings.length;
-      $('#abs-export').disabled = !recordings.length || !targetFolder;
+      exportFolders(destination.folderId);
       $('#abs-book-tools').hidden = false; if (library.value) await loadItems(); await status(version);
     } catch (cause) { if (version === epoch) error(cause.message); }
   }
@@ -145,12 +160,13 @@ export function audiobookshelfBook({ book, changed }) {
   for (const action of ['export', 'import', 'link']) $('#abs-' + action).addEventListener('click', async (event) => {
     if (!book()) return; const version = epoch; event.target.disabled = true;
     try {
-      await api(`/api/books/${book().id}/audiobookshelf/${action}`, { method: 'POST', body: { recording: recording.value, item: items.value, sameRecording: $('#abs-same-recording').checked } });
+      await api(`/api/books/${book().id}/audiobookshelf/${action}`, { method: 'POST', body: { recording: recording.value, item: items.value, sameRecording: $('#abs-same-recording').checked,
+        ...(action === 'export' ? { destination: { libraryId: exportLibrary.value, folderId: exportFolder.value } } : {}) } });
       if (version !== epoch) return;
       if (action === 'link') { toast('Recording linked to Audiobookshelf'); error('Listening positions will sync when you use this recording in Langy.'); }
       else await status(version);
     } catch (cause) { if (version === epoch) error(cause.message); }
-    finally { if (version === epoch) event.target.disabled = false; }
+    finally { if (version === epoch) { event.target.disabled = false; if (action === 'export') updateExport(); } }
   });
   $('#learning-dialog').addEventListener('close', () => { epoch++; clearTimeout(timer); });
   return { show };

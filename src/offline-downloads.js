@@ -2,6 +2,7 @@ import { $, api, element, message, toast } from './ui.js';
 import { offlineOwner, packCaches, packPrefix } from './offline-store.js';
 import { readingPackQueue } from './offline-download-queue.js';
 import { fetchPackResource, measuredResponse, downloadProgressLabel } from './offline-transfer.js';
+import { dismissOnBackdrop } from './dialog-backdrop.js';
 import { notifyDownloadedBooks } from './book-source.js';
 
 let shellUpdate;
@@ -83,6 +84,7 @@ export async function saveReadingPack(book, { recording, audio, progress = () =>
 
 export function offlineDownloads({ queue = readingPackQueue({ download: saveReadingPack }) } = {}) {
   const surface = window, dialog = $('#offline-dialog'), list = $('#offline-download-list'); let selected, epoch = 0, loading = false, authorized = false, listVersion;
+  dismissOnBackdrop(dialog); dismissOnBackdrop($('#downloads-dialog'));
   const pending = (job) => ['queued', 'downloading', 'waiting'].includes(job?.state);
   const describe = (job) => `${({ queued: 'Queued', downloading: 'Downloading', waiting: 'Waiting for connection', complete: 'Downloaded', failed: 'Download failed', cancelled: 'Cancelled' })[job.state]} · ${job.error || downloadProgressLabel(job.progress)}`;
   const unsubscribe = queue.subscribe((jobs) => {
