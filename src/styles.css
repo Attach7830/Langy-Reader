@@ -478,6 +478,8 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 .recording-item .button-row { flex-wrap: wrap; }
 .recording-choice { display: flex; gap: 8px; align-items: center; min-width: 0; font-size: 12px; }
 .recording-choice select { min-width: 0; max-width: 240px; font-size: 12px; padding: 4px 20px 4px 6px; }
+.abs-category-row { min-width: 0; padding: 12px; margin: 0; border: 1px solid var(--border); border-radius: 8px; }
+.abs-category-row legend { padding-inline: 5px; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
 .tabs { display: flex; flex-wrap: wrap; gap: 7px; padding: 9px 17px 0; }
 .tabs button { border: 0; border-radius: 7px; padding: 8px 10px; background: transparent; color: var(--muted); white-space: nowrap; font-size: 13px; font-weight: 650; }
 .tabs button[aria-current="true"] { color: var(--ink); background: var(--brand-soft); }

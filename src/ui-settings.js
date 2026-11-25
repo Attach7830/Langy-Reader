@@ -246,6 +246,8 @@ export function settingsPage({ preferences, apply, navigate, back }) {
       await narration.save();
       saveSection = 'sources';
       await archive.save();
+      saveSection = 'devices';
+      await devices.save();
       saveSection = 'ai';
       if (canConfigureAI && aiConfig && (draft.provider !== aiConfig.provider || draft.baseUrl !== aiConfig.baseUrl
         || draft.model !== aiConfig.model || draft.apiKey || draft.clearKey)) {

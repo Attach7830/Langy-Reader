@@ -17,7 +17,7 @@ function atTime(items, time, field = 'start') {
   }
   return found;
 }
-export function narration({ preferences, renderer, book, navigate, changePreferences }) {
+export function narration({ preferences, renderer, book, navigate, changePreferences, readingPosition = () => null }) {
   const player = $('#narration-player'), audio = $('#narration-audio');
   const play = $('#narration-play'), generate = $('#narration-generate');
   const status = $('#narration-status'), seek = $('#narration-seek');
@@ -392,8 +392,8 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
       catch (error) { if (version === navigationVersion && error?.name !== 'AbortError') status.textContent = 'Waiting for this page’s audio timing. You can keep reading.'; }
       finally { if (version === navigationVersion) { manualNavigation = false; void follow(); } }
     },
-    playbackPosition() { return ready() && audio.getAttribute('src') === recording.url && Number.isFinite(audio.duration)
-      ? { book: book().id, recording: recording.id, time: audio.currentTime, duration: recording.duration, absConnected } : null; },
+    playbackPosition() { return ready() && !initialSeek && !waitingForMetadata && !manualNavigation && audio.getAttribute('src') === recording.url && Number.isFinite(audio.duration)
+      ? { book: book().id, recording: recording.id, time: audio.currentTime, duration: recording.duration, absConnected, readingTarget: readingPosition() } : null; },
     async resumeAt(time) { seekTo(time); await follow(true); },
     async seekSource(key, from) {
       if (!enabled || !ready()) return;

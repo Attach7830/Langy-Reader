@@ -109,6 +109,7 @@ const words = wordHelp({
 });
 const audio = narration({
   preferences: () => temporaryAudioVisible ? { ...settings, audioToolbarHidden: false } : settings, renderer: () => renderer, book: () => activeBook,
+  readingPosition: () => activePosition?.target,
   navigate: (target) => move(0, target, { audio: true }),
   changePreferences: (values) => {
     settings = saveSettings({ ...settings, ...values });
