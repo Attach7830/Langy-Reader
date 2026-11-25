@@ -480,9 +480,14 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
           <label class="field">Server URL <input id="abs-url" type="url" placeholder="http://192.168.1.20:13378" spellcheck="false"></label>
           <label class="field">API key <input id="abs-key" type="password" autocomplete="new-password" placeholder="Audiobookshelf API key"></label>
           <label class="checkbox-row"><input id="abs-clear-key" type="checkbox"> Remove saved API key</label>
-          <label class="field">Export library <select id="abs-library"></select></label>
-          <label class="field">Export folder <select id="abs-folder"></select></label>
-          <button id="abs-save" class="button secondary" type="button">Save and connect Audiobookshelf</button>
+          <label class="field">Default export library <select id="abs-library"></select></label>
+          <label class="field">Default export folder <select id="abs-folder"></select></label>
+          <section id="abs-category-destinations" class="form-stack" aria-labelledby="abs-category-title" hidden>
+            <h4 id="abs-category-title">Category destinations</h4>
+            <p class="field-note">Send each Langy category to its own Audiobookshelf library and folder. Unmapped categories use the default destination. Folders come from your Audiobookshelf library configuration.</p>
+            <div id="abs-category-rows" class="form-stack"></div>
+          </section>
+          <button id="abs-save" class="button secondary" type="button">Save Audiobookshelf</button>
         </div><p id="abs-settings-status" class="field-note" role="status" hidden></p>
         <h3>OPDS library</h3>
         <p class="field-note">Browse and download your books on an OPDS reader. On Xteink with CrossPoint firmware, open Settings → Connectivity → OPDS Servers → Add Server.</p>
@@ -641,6 +646,7 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
         <section id="abs-book-tools" class="form-stack" hidden>
           <h3>Audiobookshelf</h3>
           <label class="field">Langy recording <select id="abs-book-recording"></select></label>
+          <p id="abs-export-destination" class="field-note"></p>
           <button id="abs-export" class="button secondary" type="button">Export audio, book and cover to ABS</button>
           <label class="field">ABS library <select id="abs-book-library"></select></label>
           <label class="field">ABS title <select id="abs-book-item"></select></label>
