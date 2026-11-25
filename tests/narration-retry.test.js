@@ -62,6 +62,7 @@ test('retry replaces unusable cached sections, keeps valid audio, and completes 
       await delay(50);
     }
     assert.equal(complete.state, 'ready');
+    assert.ok(learning.readyAudiobooks().some((item) => item.book === book.id && item.recording === complete.id), 'completed book audio is discovered by the automatic export worker');
     assert.equal(speechCalls, 2, 'only the failed heading and numeric heading need generation');
     assert.equal(complete.approximateSections, 2);
     assert.equal(complete.segments[0].approximate, false);
