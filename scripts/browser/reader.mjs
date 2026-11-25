@@ -344,7 +344,7 @@ try {
     await page.locator('#clear-ai-cache').click(); await page.locator('#ai-cache-status').filter({ hasText: 'Saved AI answers cleared.' }).waitFor();
     await page.locator('#settings-back').click();
   });
-  const desktop = await browser.newContext({ viewport: { width: 1280, height: 900 }, extraHTTPHeaders: adminHeaders }), desktopPage = await desktop.newPage();
+  const desktop = await browser.newContext({ viewport: { width: 1280, height: 900 }, extraHTTPHeaders: adminHeaders, serviceWorkers: 'block' }), desktopPage = await desktop.newPage();
   desktopPage.on('pageerror', (error) => errors.push(error.message));
   await check('desktop library and project pages retain their full layout', async () => {
     await desktopPage.goto(base + '/#library'); await desktopPage.locator('#books a').first().waitFor();
