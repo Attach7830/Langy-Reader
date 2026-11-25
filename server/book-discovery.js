@@ -47,7 +47,7 @@ async function jsonResponse(response) {
 }
 
 export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl = process.env.READER_SEARCH_URL ?? 'http://search:8080',
-  fetcher = (...args) => fetch(...args), catalogueDelay = 1100, timeoutMs = 240000, withAI = (_visitor, task) => task() } = {}) {
+  fetcher = (...args) => fetch(...args), catalogueDelay = 1100, timeoutMs = 240000, withAI = (_visitor, task) => task(), visitorForOwner = (id, expires) => id ? { id, expires } : undefined } = {}) {
   const db = new DatabaseSync(join(dir, 'discovery.sqlite'));
   db.exec(`PRAGMA journal_mode=WAL;
     CREATE TABLE IF NOT EXISTS discoveries (
@@ -141,7 +141,7 @@ export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl = 
   }
   async function generate(row, signal) {
     const input = JSON.parse(row.request);
-    const visitor = row.owner ? { id: row.owner, expires: row.expires } : undefined;
+    const visitor = visitorForOwner(row.owner, row.expires);
     const all = booksFor(visitor), ordered = [...all].sort((a, b) => Number(b.read) - Number(a.read) || b.addedAt - a.addedAt);
     const sample = ordered.length <= 40 ? ordered : [...ordered.slice(0, 20), ...Array.from({ length: 20 }, (_, n) => ordered[20 + Math.floor(n * (ordered.length - 20) / 20)])];
     const selected = boundedRows(sample, 14000);
@@ -207,7 +207,7 @@ export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl = 
     if (!row) return;
     active = { id: row.id, control: new AbortController() };
     const signal = AbortSignal.any([active.control.signal, AbortSignal.timeout(timeoutMs)]);
-    running = abortable(() => withAI(row.owner ? { id: row.owner, expires: row.expires } : undefined, () => generate(row, signal)), signal).catch((error) => {
+    running = abortable(() => withAI(visitorForOwner(row.owner, row.expires), () => generate(row, signal)), signal).catch((error) => {
       if (stopped || active?.control.signal.aborted) return;
       const message = error instanceof RequestError ? error.message : error.name === 'TimeoutError' ? 'Book discovery timed out. Retry or choose a faster local model.' : 'Book discovery failed. Check the AI connection and search service, then retry.';
       db.prepare("UPDATE discoveries SET state='error',error=? WHERE owner=? AND id=? AND state!='cancelled'").run(message, row.owner, row.id);
