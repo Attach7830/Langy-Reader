@@ -10,7 +10,7 @@ async function fallback(request) {
   const url = new URL(request.url), account = await (await caches.open(control)).match(accountURL), id = account && await account.text();
   if (id) for (const name of await caches.keys()) if (name.startsWith(`langy-pack-${id}-`)) {
     const cache = await caches.open(name); if (!await cache.match('/__langy_pack_ready__')) continue;
-    const response = await cache.match(request.url, { ignoreVary: true });
+    const response = await cache.match(request.url, { ignoreVary: true, ignoreSearch: /\/api\/books\/[^/]+\/cover$/u.test(url.pathname) });
     if (response) { const headers = new Headers(response.headers); headers.set('X-Langy-Cached', '1');
       return cachedRange(new Response(response.body, { status: response.status, headers }), request.headers.get('Range')); }
   }
