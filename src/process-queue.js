@@ -10,7 +10,8 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
   const version = (job) => `${job.id}:${job.state}:${job.created || 0}`;
   function render() {
     const minutes = getSettings().processDismissMinutes;
-    $('#process-dismiss-minutes').value = minutes;
+    // Polling must not replace a number while the reader is editing it.
+    if (document.activeElement !== $('#process-dismiss-minutes')) $('#process-dismiss-minutes').value = minutes;
     history.update([...jobs, ...local.tasks]);
     const entries = history.visible(minutes).filter((job) => !dismissed.has(version(job)));
     clearTimeout(expiry); const remaining = history.expiresIn(minutes);
