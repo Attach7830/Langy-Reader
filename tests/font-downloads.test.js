@@ -21,3 +21,12 @@ test('free-font downloads use trusted direct files and catalogue variants, valid
   assert.deepEqual(await readFile(fonts.file(font.id.slice(7),'one').path),bytes);assert.throws(()=>fonts.file(font.id.slice(7),'two'),{status:404});
   invalid=true;await assert.rejects(service.download({url:'https://fonts.gstatic.com/s/font.woff2'},{id:'two'}),{status:422});assert.deepEqual(await fonts.list('two'),[]);
 });
+
+test('cancelling a streaming font download removes its partial file and never registers a font',async(t)=>{
+  const dir=await mkdtemp(join(tmpdir(),'langy-font-cancel-')),fonts=await openFonts(dir);t.after(async()=>{fonts.close();await rm(dir,{recursive:true,force:true});});
+  const {PassThrough}=await import('node:stream'),{readdir}=await import('node:fs/promises');let started;const began=new Promise(resolve=>{started=resolve;});
+  const stream=Object.assign(new PassThrough(),{statusCode:200,headers:{}});stream.write(Buffer.from('partial font'));
+  const service=fontDownloads({fonts,uploads:dir,request:async()=>{started();return stream;}}),controller=new AbortController();
+  const pending=service.download({url:'https://fonts.gstatic.com/s/test/font.woff2'},{id:'reader'},controller.signal);await began;controller.abort();
+  await assert.rejects(pending,{name:'AbortError'});assert.deepEqual(await fonts.list('reader'),[]);assert.equal((await readdir(dir)).some(name=>name.endsWith('.part')),false);
+});
