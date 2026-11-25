@@ -9,7 +9,7 @@ export function readingPackQueue({ download, store = offlineDownloadJobs, owner 
   const listeners = new Set();
   const snapshot = () => jobs.map((job) => structuredClone(job));
   const emit = () => { for (const listener of listeners) listener(snapshot()); };
-  const persist = (job) => { const copy = structuredClone(job); return writes = writes.catch(() => {}).then(() => store.put(copy)); };
+  const persist = (job) => { const copy = structuredClone(job); return writes = writes.catch(() => {}).then(() => { if (!disposed && owner() === copy.owner) return store.put(copy); }); };
   async function load() {
     const current = owner();
     if (!current || disposed) return false;
@@ -25,8 +25,7 @@ export function readingPackQueue({ download, store = offlineDownloadJobs, owner 
       for (const job of jobs) if (job.state === 'downloading') {
         job.state = 'queued'; job.progress = { label: 'Queued after the app was closed', percent: 0 }; await persist(job);
       }
-      // Old account jobs must not start under a newly signed-in account.
-      for (const job of saved) if (job.owner !== current) await store.remove(job.id);
+      // Retain other accounts' queues without loading or running their jobs.
       emit(); return true;
     })().finally(() => { if (epoch === generation) loading = undefined; });
     return loading;

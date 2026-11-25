@@ -44,6 +44,12 @@ test('offline packs show only downloaded books, bookmarks survive lost acknowled
   assert.equal(exposure.queued, true); assert.equal(exposure.saved, true);
   const readingTime = await offlineRequest('/api/books/book/reading-time', { method: 'POST', body: { accountId: 'first', events: [{ id: 'offline-time', start: 1000, end: 2000 }] } });
   assert.equal(readingTime.queued, true); assert.equal([...changeMap.values()].filter((item) => item.kind === 'reading-statistic').length, 2);
-  await setOfflineAccount('second'); assert.equal(changeMap.size, 0); assert.deepEqual(await caches.keys(), []);
+  const retained = changeMap.size;
+  await setOfflineAccount('second'); assert.equal(changeMap.size, retained); assert.deepEqual(await caches.keys(), ['langy-pack-first-book']);
   await assert.rejects(offlineRequest('/api/library'), /Download a book/u);
+  await setOfflineAccount('first'); assert.equal((await offlineRequest('/api/library')).books[0].id, 'book'); assert.equal(changeMap.size, retained);
+  let finishRegistration; const messages = [];
+  Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: { getRegistration: () => new Promise((resolve) => { finishRegistration = resolve; }), controller: { postMessage: (message) => messages.push(message) } } });
+  const setup = setOfflineAccount('first'); localStorage.removeItem('langy-offline-owner'); finishRegistration(); await setup;
+  assert.deepEqual(messages, [], 'a delayed registration must not reactivate downloads after sign-out');
 });

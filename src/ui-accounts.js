@@ -72,11 +72,15 @@ export function accountPanel(session) {
     catch (failure) { message('#account-reset-error', failure.message); }
     finally { button.disabled = false; }
   });
-  for (const button of document.querySelectorAll('[data-sign-out]')) button.addEventListener('click', async () => {
+  for (const button of document.querySelectorAll('[data-sign-out]')) button.addEventListener('click', () => {
     const action = button.hasAttribute('data-switch-user') ? 'Switch user' : 'Log out';
-    if (!window.confirm(`${action} and remove this account’s downloaded books from this device? Your server library will stay saved.`)) return;
-    button.disabled = true;
-    try { await signOut(); } catch { const text = 'Reconnect to your server to log out or switch users. Your offline books have been kept.'; error(text); toast(text); button.disabled = false; }
+    $('#sign-out-form').reset(); $('#sign-out-title').textContent = action; $('#sign-out-confirm').textContent = action;
+    message('#sign-out-error'); $('#sign-out-dialog').showModal();
+  });
+  $('#sign-out-form').addEventListener('submit', async (event) => {
+    event.preventDefault(); const button = $('#sign-out-confirm'); if (button.disabled) return; button.disabled = true;
+    try { await signOut({ removeDownloads: $('#sign-out-remove-downloads').checked }); }
+    catch { const text = 'Reconnect to your server to log out or switch users. Your offline books have been kept.'; message('#sign-out-error', text); toast(text); button.disabled = false; }
   });
   function route() { if (location.hash === '#settings/account') void loadUsers(); }
   window.addEventListener('hashchange', route);

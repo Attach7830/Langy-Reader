@@ -9,6 +9,8 @@ export function requestProcessLabel(path, method = 'GET') {
   if (/\/recommendations/u.test(path)) return 'Compare book vocabulary';
   if (/\/(?:character-guide|question)$/u.test(path)) return 'Explain book passage';
   if (/\/api\/books$/u.test(path) && method === 'POST') return 'Import book';
+  if (/\/api\/books\/[^/]+\/cover$/u.test(path) && method === 'POST') return 'Import book cover';
+  if (path === '/api/fonts' && method === 'POST') return 'Import font';
   if (path === '/api/discovery' && method === 'GET') return '';
   if (/\/api\/discovery/u.test(path)) return 'Prepare book recommendations';
   if (/\/api\/imports/u.test(path)) return 'Prepare book download';

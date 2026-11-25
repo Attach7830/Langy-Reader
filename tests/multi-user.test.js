@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -83,6 +83,16 @@ test('self-hosted users have private libraries, owner-controlled sharing and iso
     await f.api('/api/admin/users/' + one.id, member, { method: 'PATCH', body: { role: 'admin' }, status: 403 });
     await f.api('/api/admin/users', admin, { body: { username: 'MEMBER', password: memberPass }, status: 409 });
   });
+  await t.test('font imports and downloads are private to their account and remain removable', async () => {
+    const bytes = await readFile(new URL('../node_modules/@fontsource/spectral/files/spectral-latin-400-normal.woff2', import.meta.url));
+    const form = new FormData(); form.set('file', new Blob([bytes]), 'reading.woff2'); form.set('name', 'Private reading font');
+    const font = await f.api('/api/fonts', member, { body: form, status: 201 }); assert.match(font.id, /^custom-/u);
+    assert.equal((await f.api('/api/fonts', member)).fonts.length, 1); assert.equal((await f.api('/api/fonts', third)).fonts.length, 0);
+    assert.equal((await fetch(f.base() + font.url, { headers: member })).status, 200);
+    await f.api(font.url, third, { status: 404 }); await f.api('/api/fonts', {}, { status: 401 });
+    await f.api('/api/fonts/' + font.id.slice(7), third, { method: 'DELETE', status: 404 });
+    await f.api('/api/fonts/' + font.id.slice(7), member, { method: 'DELETE' }); await f.api(font.url, member, { status: 404 });
+  });
   await t.test('private uploads and categories cannot be accessed by another account, including direct URLs', async () => {
     privateBook = await f.upload(member, 'Private member title');
     for (const suffix of ['/file', '/cover', '/learning', '/narration', '/recordings', '/bookmarks', '/offline', '/progress']) await f.api(`/api/books/${privateBook.id}${suffix}`, admin, { status: 404 });
@@ -96,7 +106,7 @@ test('self-hosted users have private libraries, owner-controlled sharing and iso
     const fromAdmin = (await f.api('/api/library', admin)).books.find((book) => book.id === sharedBook.id); assert.equal(fromAdmin.sharedWithMe, true); assert.equal(fromAdmin.canEdit, false);
     await f.api(`/api/books/${privateBook.id}`, member, { method: 'PATCH', body: { title: privateBook.title, language: 'es', shared: true } });
     assert.ok((await f.api('/api/library', third)).books.some((book) => book.id === privateBook.id));
-    for (const [method, suffix] of [['PATCH',''], ['DELETE',''], ['POST','/narration'], ['POST','/learning'], ['POST','/ocr'], ['POST','/recordings']]) await f.api(`/api/books/${sharedBook.id}${suffix}`, third, { method, body: {}, status: 403 });
+    for (const [method, suffix] of [['PATCH',''], ['DELETE',''], ['POST','/cover'], ['POST','/narration'], ['POST','/learning'], ['POST','/ocr'], ['POST','/recordings']]) await f.api(`/api/books/${sharedBook.id}${suffix}`, third, { method, body: {}, status: 403 });
     for (const suffix of ['/NARRATION', '/RECORDINGS', '/OCR']) await f.api(`/api/books/${sharedBook.id}${suffix}`, third, { method: 'POST', body: {}, status: 404 });
     assert.equal((await fetch(f.base() + `/api/books/${sharedBook.id}/file`, { headers: third })).status, 200);
     await f.api(`/api/books/${privateBook.id}`, member, { method: 'PATCH', body: { title: privateBook.title, language: 'es', shared: false } });

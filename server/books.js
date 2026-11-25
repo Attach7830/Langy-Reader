@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import yauzl from 'yauzl';
 import { sampleBook } from './sample.js';
 import { demoSamples } from './demo-samples.js';
+import { downloadCover } from './cover-images.js';
 import { baseLanguage } from '../shared/language.js';
 import { archivePath, bookText, epubMetadataValues, filenameTitle, inferBookLanguage, parseEpubContainer, parseEpubPackage } from '../shared/book-metadata.js';
 import { validCoverStyle } from '../shared/book-covers.js';
@@ -125,7 +126,7 @@ async function readMetadata(file, format) {
   }
 }
 
-export async function openLibrary(dir, limits = null) {
+export async function openLibrary(dir, limits = null, { coverDownload = downloadCover } = {}) {
   const folder = join(dir, 'books');
   const uploads = join(dir, 'uploads');
   await mkdir(folder, { recursive: true });
@@ -179,6 +180,7 @@ export async function openLibrary(dir, limits = null) {
     db.exec("ALTER TABLE books ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'");
   }
   if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'coverStyle')) db.exec("ALTER TABLE books ADD COLUMN coverStyle TEXT NOT NULL DEFAULT 'auto'");
+  if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'coverRevision')) db.exec("ALTER TABLE books ADD COLUMN coverRevision TEXT NOT NULL DEFAULT ''");
   if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'contentRevision')) db.exec("ALTER TABLE books ADD COLUMN contentRevision TEXT NOT NULL DEFAULT ''");
   if (!db.prepare('PRAGMA table_info(categories)').all().some(({ name }) => name === 'language')) {
     db.exec('ALTER TABLE categories ADD COLUMN language TEXT');
@@ -281,7 +283,7 @@ export async function openLibrary(dir, limits = null) {
   }
 
   function filePath(book) { return join(folder, `${book.id}${book.contentRevision ? '.' + book.contentRevision : ''}.${book.format}`); }
-  function coverPath(book) { return join(folder, `${book.id}.cover`); }
+  function coverPath(book) { return join(folder, `${book.id}${book.coverRevision ? '.' + book.coverRevision : ''}.cover`); }
 
   return {
     uploads, getBook, filePath, coverPath, instanceId,
@@ -402,6 +404,8 @@ export async function openLibrary(dir, limits = null) {
         const coverStyle = body.coverStyle ?? 'auto';
         if (!validCoverStyle(coverStyle)) throw new RequestError(422, 'Choose one of the available book covers.');
         const metadata = await readMetadata(file.path, format);
+        if (body.coverUrl !== undefined && typeof body.coverUrl !== 'string') throw new RequestError(422, 'Paste a valid cover image URL.');
+        if (body.coverUrl?.trim()) Object.assign(metadata, await coverDownload(body.coverUrl));
         const providedLanguage = asText(body.language, 35);
         const languages = normalizeBookLanguages(body.languages);
         const language = primaryLanguage(normalizeLanguage(providedLanguage) || metadata.language || 'es', languages);
@@ -487,6 +491,21 @@ export async function openLibrary(dir, limits = null) {
         language: blank('language') ? metadata.language || book.language || 'es' : body.language,
       };
     },
+    async importCover(id, url, visitor) {
+      const original = getBook(id, visitor);
+      if (original.owner !== editable(visitor)) throw new RequestError(403, 'Only the book owner can replace its cover.');
+      const cover = await coverDownload(url), revision = randomUUID(), target = coverPath({ id, coverRevision: revision }); let saved = false;
+      try {
+        await writeFile(target, cover.thumbnail, { flag: 'wx', mode: 0o600 });
+        const current = getBook(id, visitor);
+        if (current.owner !== original.owner || current.coverRevision !== original.coverRevision) throw new RequestError(409, 'This cover changed during the download. Try again.');
+        db.prepare('UPDATE books SET thumbnailType=?,coverRevision=?,coverStyle=\'auto\',updatedAt=? WHERE id=?')
+          .run(cover.thumbnailType, revision, Math.max(Date.now(), current.updatedAt + 1), id);
+        touch(); saved = true;
+        if (current.coverRevision) await rm(coverPath(current), { force: true }).catch(() => {});
+        return publicBook(getBook(id, visitor), visitor);
+      } finally { if (!saved) await rm(target, { force: true }); }
+    },
     editBook(id, body, visitor) {
       const book = getBook(id, visitor);
       if (book.owner !== editable(visitor)) throw new RequestError(403, 'Only the book owner can edit or remove this book.');
@@ -543,7 +562,7 @@ export async function openLibrary(dir, limits = null) {
       if (book.owner !== editable(visitor)) throw new RequestError(403, 'Only the book owner can edit or remove this book.');
       db.prepare('DELETE FROM books WHERE id = ?').run(id);
       touch();
-      const cleanup = await Promise.allSettled([...new Set([filePath(book), filePath({ ...book, contentRevision: '' }), coverPath(book)])].map((path) => rm(path, { force: true })));
+      const cleanup = await Promise.allSettled([...new Set([filePath(book), filePath({ ...book, contentRevision: '' }), coverPath(book), coverPath({ ...book, coverRevision: '' })])].map((path) => rm(path, { force: true })));
       if (cleanup.some((result) => result.status === 'rejected')) console.error('Could not remove every file for book', id);
     },
     async pruneDemoBooks() {

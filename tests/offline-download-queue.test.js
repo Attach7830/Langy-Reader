@@ -40,7 +40,8 @@ test('interrupted downloads restart after reopening, offline jobs wait, and anot
   f.online(true); await f.queue.resume(); await f.queue.idle(); assert.deepEqual(calls, ['a', 'b']);
   f.online(false); await f.queue.enqueue(book('private'), { audio: false });
   f.account('two'); await f.queue.resume(); f.online(true); await f.queue.resume(); await f.queue.idle();
-  assert.deepEqual(f.queue.snapshot(), []); assert.equal(f.values.size, 0); assert.equal(calls.includes('private'), false);
+  assert.deepEqual(f.queue.snapshot(), []); assert.ok(f.values.size > 0); assert.equal(calls.includes('private'), false);
+  f.account('one'); await f.queue.resume(); await f.queue.idle(); assert.equal(calls.at(-1), 'private');
 });
 
 test('cancelling an active transfer releases the next book; connection failures wait and can be retried', async (t) => {

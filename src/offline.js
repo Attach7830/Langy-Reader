@@ -1,6 +1,7 @@
 import { offlineChanges, offlineOwner, packCaches, cachedResponse, cacheJSON, savedPack } from './offline-store.js';
 import { offlineLookup } from './offline-data.js';
 import { learningLanguages } from '../shared/learning-languages.js';
+import { accountSession } from './auth.js';
 
 let activeBook, flushing, notifiedOwner;
 function statusChange(book, operation, body, created) {
@@ -19,14 +20,14 @@ async function rememberStatus(id, result) {
 export const setOfflineBook = (id) => { activeBook = id; };
 export async function setOfflineAccount(id) {
   if (!globalThis.caches || !id) return;
-  const previous = offlineOwner();
+  const session = accountSession();
+  if (session?.enabled && (session.readerAccountId !== id || !localStorage.getItem('langy-auth-account'))) return;
   localStorage.setItem('langy-offline-owner', id);
   const registration = await navigator.serviceWorker?.getRegistration?.();
+  if (offlineOwner() !== id) return;
   (navigator.serviceWorker?.controller || registration?.active)?.postMessage({ type: 'ACCOUNT', id });
-  if (previous && previous !== id) {
-    for (const name of await caches.keys()) if (name.startsWith('langy-pack-') && !name.startsWith(`langy-pack-${id}-`)) await caches.delete(name);
-    for (const change of await offlineChanges.all()) if (change.owner !== id) await offlineChanges.remove(change.id);
-  }
+  // Keep other accounts' downloads and outboxes; every access remains scoped
+  // to the authenticated owner, including when that owner returns later.
   if (notifiedOwner !== id && typeof window !== 'undefined' && window.CustomEvent) {
     notifiedOwner = id; window.dispatchEvent(new window.CustomEvent('langy-offline-account', { detail: { id } }));
   }

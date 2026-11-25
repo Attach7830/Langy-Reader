@@ -40,7 +40,7 @@ export function validatePreferences(value) {
     background: ['grain', 'plain', 'linen', 'grid'], font: ['spectral', 'georgia', 'sans', 'mono', 'chinese'], width: ['narrow', 'balanced', 'wide'], uiLanguage: ['en', 'es', 'pt', 'zh'], libraryLayout: ['auto','1','2','3','4','list'] };
   for (const [key, setting] of Object.entries(value)) {
     let valid = true;
-    if (enums[key]) valid = enums[key].includes(setting);
+    if (enums[key]) valid = enums[key].includes(setting) || key === 'font' && typeof setting === 'string' && /^custom-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(setting);
     else if (typeof defaults[key] === 'boolean') valid = typeof setting === 'boolean';
     else if (key === 'size') valid = Number.isInteger(setting) && setting >= 13 && setting <= 40;
     else if (key === 'touchSize') valid = setting === null || Number.isInteger(setting) && setting >= 13 && setting <= 40;

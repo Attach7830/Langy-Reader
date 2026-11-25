@@ -6,6 +6,7 @@ import { dismissOnBackdrop } from './dialog-backdrop.js';
 import { processTasks } from './process-tasks.js';
 import { notifyDownloadedBooks } from './book-source.js';
 import { getSettings, subscribeSettings } from './settings.js';
+import { userFonts } from './user-fonts.js';
 
 let shellUpdate;
 const fetchOK = fetchPackResource;
@@ -76,6 +77,7 @@ export async function saveReadingPack(book, { recording, audio, progress = () =>
     }
     progress({ phase: 'reader', label: 'Saving the reader for offline use…', percent: 90 });
     await cacheReaderShell((label, count) => { signal?.throwIfAborted(); progress({ phase: 'reader', label, percent: count ? 90 + 9 * count.complete / count.total : 90 }); });
+    await userFonts.cacheSelected(getSettings().font);
     signal?.throwIfAborted();
     if (offlineOwner() !== owner) throw new Error('The signed-in account changed during this download. Retry from the current account.');
     await cache.put('/__langy_pack_ready__', new Response(JSON.stringify({ book: book.id, owner, created: Date.now() })));
