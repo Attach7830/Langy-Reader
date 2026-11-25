@@ -18,16 +18,7 @@ try {
   browser = await chromium.launch({ headless: true });
   context = await browser.newContext({ viewport: { width: 393, height: 851 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, serviceWorkers: 'block' });
   await context.addInitScript(() => { if (window.top === window) { const prefs = JSON.parse(localStorage.getItem('langy-settings-v1') || '{}'); localStorage.setItem('langy-settings-v1', JSON.stringify({ ...prefs, progressSyncEnabled: false })); } });
-  await context.addInitScript(() => {
-    const clock = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime');
-    Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', { ...clock, set(time) {
-      clock.set.call(this, time);
-      if (this.id === 'narration-audio') console.log('Resume clock', time, this.currentTime, this.readyState, this.duration,
-        Array.from({ length: this.seekable.length }, (_, i) => [this.seekable.start(i), this.seekable.end(i)]), new Error('clock setter').stack);
-    } });
-  });
   page = await context.newPage(); page.on('pageerror', (error) => errors.push(error.message));
-  page.on('console', (message) => { if (message.text().startsWith('Resume ')) console.log(message.text()); });
   await page.route('**/api/ai/word', (route) => route.fulfill({ json: { text: 'A useful dictionary definition.', language: 'en' } }));
   const zip = new JSZip(); zip.file('mimetype', 'application/epub+zip');
   zip.file('META-INF/container.xml', '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>');
@@ -136,9 +127,10 @@ try {
   await check('hyperlink jumps expose an immediately usable Back to text control', async () => {
     await page.goto(base + '/#library'); await page.evaluate(() => localStorage.removeItem('langy-progress-v1')); await page.reload(); await open();
     await page.frameLocator('#viewer iframe').first().getByText('Leer nota', { exact: true }).tap();
-    await page.waitForTimeout(350); assert.equal(await page.locator('#return-location').isVisible(), true);
-    await page.locator('#return-location').click(); await page.waitForTimeout(200);
-    assert.equal(await page.frameLocator('#viewer iframe').first().getByText('Leer nota', { exact: true }).isVisible(), true);
+    await page.locator('#return-location').waitFor({ state: 'visible', timeout: 5000 });
+    await page.locator('#return-location').click();
+    await page.locator('#return-location').waitFor({ state: 'hidden', timeout: 5000 });
+    await page.frameLocator('#viewer iframe').first().getByText('Leer nota', { exact: true }).waitFor({ state: 'visible', timeout: 5000 });
   });
   await check('section boundaries remain stable after forward/back turns and a viewport resize', async () => {
     await page.locator('#contents-button').click();
@@ -231,11 +223,6 @@ try {
   });
   await check('Settings opens as its own page, keeps drafts between tabs and returns to the saved book position', async () => {
     const before = await position();
-    await page.evaluate((id) => {
-      const audio = document.querySelector('#narration-audio');
-      for (const name of ['emptied', 'loadedmetadata', 'seeking', 'seeked']) audio.addEventListener(name, () => console.log('Resume media', name, audio.currentTime, document.querySelector('#position-detail').textContent));
-      new MutationObserver(() => console.log('Resume reader', document.querySelector('#page-label').textContent, document.querySelector('#position-detail').textContent, JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target)).observe(document.querySelector('#page-label'), { childList: true, subtree: true });
-    }, book.id);
     await page.locator('#reader-more > summary').click(); await page.locator('#reader-more [data-settings="reading"]').click();
     await page.waitForURL('**/#settings/reading'); await page.locator('#settings').waitFor({ state: 'visible' });
     assert.equal(await page.locator('dialog#settings').count(), 0); assert.equal(await page.locator('#reader-screen').isVisible(), false);
@@ -245,7 +232,6 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({ path: output + '/settings-mobile.png' });
     await page.locator('#settings-back').click(); await page.waitForURL('**/#read/' + book.id);
-    console.log('Expected resumed position', before);
     await page.waitForFunction(({ id, before }) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target === before, { id: book.id, before });
     await page.locator('#viewer iframe').first().waitFor();
     assert.equal(await page.locator('#pinyin-toggle').isVisible(), false);
