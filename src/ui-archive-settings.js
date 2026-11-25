@@ -18,6 +18,7 @@ export function archiveSettings() {
       config = next;
       $('#archive-settings').hidden = !config.configurable;
       $('#archive-demo-note').hidden = config.configurable;
+      if (config.managed) $('#archive-demo-note').textContent = 'Your administrator manages the shared book-source connection. Imports go into your own private library.';
       fields.aa_baseUrl.replaceChildren(...(config.mirrors || []).map((url) => new Option(new URL(url).hostname, url)));
       fields.aa_baseUrl.value = config.baseUrl || '';
       fields.aa_apiKey.value = '';
