@@ -25,12 +25,15 @@ export function audioRescans({ db, folder, library, languageCall, publishUploade
   ) STRICT, WITHOUT ROWID;
   CREATE TABLE IF NOT EXISTS auto_rescans(recording TEXT PRIMARY KEY,signature TEXT NOT NULL,version INTEGER NOT NULL) STRICT;
   UPDATE audio_rescans SET state='queued' WHERE state='running';`);
+  if (!db.prepare('PRAGMA table_info(audio_rescans)').all().some((column) => column.name === 'served')) db.exec('ALTER TABLE audio_rescans ADD COLUMN served INTEGER NOT NULL DEFAULT 0');
+  let turn = db.prepare('SELECT COALESCE(MAX(served),0) AS value FROM audio_rescans').get().value;
   function status(book, recording) {
     const value = db.prepare('SELECT * FROM audio_rescans WHERE book=? AND recording=?').get(book.id, recording);
     if (!value) return null;
     const count = JSON.parse(value.windows).length;
+    const order = db.prepare("SELECT recording FROM audio_rescans WHERE state IN ('queued','running') ORDER BY state='running' DESC,served,created,id").all();
     return { state: value.state, added: value.added, matchedBefore: value.matchedBefore, totalWords: value.totalWords,
-      completed: value.cursor, windows: count, progress: count ? value.cursor / count : 1, error: value.error };
+      completed: value.cursor, windows: count, progress: count ? value.cursor / count : 1, queuePosition: pending.has(value.state) ? order.findIndex((item) => item.recording === recording) + 1 : null, error: value.error };
   }
   const busy = (id) => pending.has(db.prepare('SELECT state FROM audio_rescans WHERE recording=?').get(id)?.state);
   function snapshot(book, id) {
@@ -115,7 +118,7 @@ export function audioRescans({ db, folder, library, languageCall, publishUploade
     const data = snapshot(book, job.recording);
     if (data.signature !== job.signature) throw new RequestError(409, 'The recording or text changed during rescanning. Start a new rescan.');
     const valid = () => db.prepare("SELECT id FROM audio_rescans WHERE id=? AND state='running'").get(job.id);
-    db.prepare("UPDATE audio_rescans SET state='running' WHERE id=?").run(job.id);
+    db.prepare("UPDATE audio_rescans SET state='running',served=? WHERE id=?").run(++turn, job.id);
     const timings = data.timings;
     for (const match of db.prepare('SELECT word,start,end FROM rescan_matches WHERE job=? ORDER BY word').all(job.id)) timings[match.word] = { start: match.start, end: match.end, review: false };
     const windows = JSON.parse(job.windows), window = windows[job.cursor];
@@ -160,7 +163,7 @@ export function audioRescans({ db, folder, library, languageCall, publishUploade
     if (data.timings.some((stamp) => !stamp)) queue(book, id);
   }
   return { status, queue, busy, process, automatic,
-    next: () => db.prepare("SELECT * FROM audio_rescans WHERE state='queued' ORDER BY created LIMIT 1").get(),
+    next: () => db.prepare("SELECT * FROM audio_rescans WHERE state='queued' ORDER BY served,created,id LIMIT 1").get(),
     fail(job, error) { db.prepare("UPDATE audio_rescans SET state='error',error=? WHERE id=? AND state!='cancelled'").run(error, job.id); },
     cancel(book, recording) { db.prepare("UPDATE audio_rescans SET state='cancelled',error=NULL WHERE book=? AND recording=? AND state IN ('queued','running')").run(book.id, recording); return status(book, recording); },
     files: (book) => db.prepare('SELECT id FROM audio_rescans WHERE book=?').all(book).map(({ id }) => join(folder, `rescan-${id}`)),
