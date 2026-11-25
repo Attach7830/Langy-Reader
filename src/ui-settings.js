@@ -6,6 +6,7 @@ import { archiveSettings } from './ui-archive-settings.js';
 import { deviceSettings } from './ui-device-settings.js';
 import { readingLanguagesPicker } from './reading-languages.js';
 import { readingFontSize, fontSizeChange, touchReader } from './touch-preferences.js';
+import { credentialRemoval } from './credential-removal.js';
 
 export function settingsPage({ preferences, apply, navigate, back }) {
   const narration = narrationSettings();
@@ -35,6 +36,8 @@ export function settingsPage({ preferences, apply, navigate, back }) {
   let shadowKeys = {}, recording, aiConfig, pending = false;
   let canConfigureAI = false;
   let renderingAI = false;
+  const removeKey = credentialRemoval({ button: $('#clear-key-field'), input: fields.apiKey, endpoint: '/api/settings/ai/key',
+    status: '#settings-error', revision: () => visit, changed(config) { aiConfig = config; updateProvider(); apply(preferences(), true); } });
   let active = false, visit = 0;
 
   function renderKeys() {
@@ -68,6 +71,7 @@ export function settingsPage({ preferences, apply, navigate, back }) {
 
   function updateProvider() {
     const external = fields.provider.value !== 'bundled';
+    removeKey.refresh(aiConfig);
     $('#ai-url-field').hidden = !external;
     $('#api-key-field').hidden = !external;
     $('#clear-key-field').hidden = !external || !aiConfig?.hasKey;
@@ -99,7 +103,7 @@ export function settingsPage({ preferences, apply, navigate, back }) {
     return {
       provider: fields.provider.value,
       baseUrl: fields.provider.value === 'bundled' ? '' : fields.baseUrl.value.trim().replace(/\/+$/u, ''),
-      model: fields.aiModel.value.trim(), apiKey: fields.apiKey.value, clearKey: fields.clearKey.checked,
+      model: fields.aiModel.value.trim(), apiKey: fields.apiKey.value,
     };
   }
 
@@ -180,7 +184,6 @@ export function settingsPage({ preferences, apply, navigate, back }) {
   fields.provider.addEventListener('change', () => {
     fields.aiModel.value = fields.provider.value === aiConfig?.provider ? aiConfig.model : '';
     fields.apiKey.value = '';
-    fields.clearKey.checked = false;
     updateProvider();
   });
   $('#load-models').addEventListener('click', async () => {
@@ -250,7 +253,7 @@ export function settingsPage({ preferences, apply, navigate, back }) {
       await devices.save();
       saveSection = 'ai';
       if (canConfigureAI && aiConfig && (draft.provider !== aiConfig.provider || draft.baseUrl !== aiConfig.baseUrl
-        || draft.model !== aiConfig.model || draft.apiKey || draft.clearKey)) {
+        || draft.model !== aiConfig.model || draft.apiKey)) {
         aiConfig = await api('/api/settings/ai', { method: 'PUT', body: draft });
         aiChanged = true;
       }
