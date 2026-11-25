@@ -14,7 +14,7 @@ const adminPassword = 'browser-administrator-test-password', memberPassword = 'b
 const adminHeaders = { Authorization: 'Basic ' + Buffer.from(`reader:${adminPassword}`).toString('base64') };
 const server = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, PORT: '19391', READER_DATA: dir, READER_DEMO: '0', READER_USER: 'reader', READER_PASSWORD: adminPassword, READER_SYNC_USER: '', READER_SYNC_PASSWORD: '', READER_LANGUAGE_URL: 'http://127.0.0.1:1' }, stdio: ['ignore', 'pipe', 'pipe'] });
 for (const pipe of [server.stdout, server.stderr]) pipe.on('data', (part) => { if (serverLog.length < 200) serverLog.push(part.toString()); });
-let browser, context, page;
+let browser, context, page, demoServer;
 try {
   for (let i = 0; i < 100; i++) { if (await fetch(base + '/healthz').then((r) => r.ok).catch(() => false)) break; if (server.exitCode != null) throw new Error('Server failed: ' + serverLog.join('')); await delay(100); }
   browser = await chromium.launch({ headless: true });
@@ -565,6 +565,26 @@ try {
     assert.equal((await (await memberContext.request.get(base + '/api/account')).json()).authenticated, false);
     await memberPage.screenshot({ path: output + '/sign-in-mobile.png' }); await memberContext.close();
   });
+  await check('demo starts with Mandarin and English story folders and both sample EPUBs open on mobile', async () => {
+    const demoBase = 'http://127.0.0.1:19392';
+    demoServer = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, PORT: '19392', READER_DATA: join(dir, 'demo'), READER_DEMO: '1', READER_PASSWORD: '', READER_LANGUAGE_URL: 'http://127.0.0.1:1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    for (const pipe of [demoServer.stdout, demoServer.stderr]) pipe.on('data', (part) => { if (serverLog.length < 400) serverLog.push(part.toString()); });
+    for (let index = 0; index < 100; index++) { if (await fetch(demoBase + '/healthz').then((response) => response.ok).catch(() => false)) break; await delay(100); }
+    const demoContext = await browser.newContext({ viewport: { width: 393, height: 851 }, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
+    try {
+      const demoPage = await demoContext.newPage(); demoPage.on('pageerror', (error) => errors.push(error.message));
+      for (const [folder, id, title] of [['demo-mandarin', 'demo-story-zh', '蓝色的伞'], ['demo-english', 'demo-story-en', 'The Note in the Book']]) {
+        await demoPage.goto(demoBase + '/#library'); await demoPage.locator('#mobile-category').selectOption(folder);
+        await demoPage.waitForFunction(() => document.querySelectorAll('#books .book-card').length === 1);
+        assert.equal(await demoPage.locator('#books .book-card').count(), 1);
+        await demoPage.locator('#books a[href="#read/' + id + '"]').click(); await demoPage.locator('#viewer iframe').first().waitFor();
+        await demoPage.waitForFunction((title) => document.querySelector('#reading-title')?.textContent.includes(title), title);
+        if (id === 'demo-story-zh') await demoPage.locator('#pinyin-toggle').waitFor({ state: 'visible' });
+        assert.equal(await demoPage.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+        await demoPage.screenshot({ path: output + '/' + id + '-mobile.png' });
+      }
+    } finally { await demoContext.close(); }
+  });
   await desktop.close(); assert.deepEqual(errors, [], 'the app must not emit uncaught browser errors');
 } catch (error) { results.push({ name: 'browser setup', pass: false, error: error.stack }); console.error(error); }
 finally {
@@ -572,6 +592,7 @@ finally {
   await writeFile(join(output, 'server.log'), serverLog.join(''));
   await context?.close(); await browser?.close();
   if (server.exitCode == null) { const stopped = new Promise((resolve) => server.once('exit', resolve)); server.kill('SIGTERM'); await stopped; }
+  if (demoServer?.exitCode === null) { const stopped = new Promise((resolve) => demoServer.once('exit', resolve)); demoServer.kill('SIGTERM'); await stopped; }
   await rm(dir, { recursive: true, force: true });
 }
 if (results.some((result) => !result.pass)) process.exitCode = 1;
