@@ -10,6 +10,7 @@ import { readerDocks } from './reader-docks.js';
 import { $, $$, api, drawIcons, element, message, toast } from './ui.js';
 import { libraryScreen } from './ui-library.js';
 import { settingsPage } from './ui-settings.js';
+import { phraseHelp } from './phrase-help.js';
 import { wordHelp } from './words.js';
 import { earlierPageContext } from './reading-context.js';
 import { narration } from './narration.js';
@@ -34,6 +35,8 @@ import { setOfflineAccount, setOfflineBook, flushOfflineChanges } from './offlin
 import { pageQuestions } from './page-question.js';
 import { audiobookshelfProgress } from './audiobookshelf-progress.js';
 import { setInterfaceLanguage } from './i18n.js';
+import { processTasks } from './process-tasks.js';
+import { processQueue } from './process-queue.js';
 import { refreshOfflineReader } from './offline-downloads.js';
 import { bookLanguages } from '../shared/language.js';
 import { getProgress, getSettings, keyLabel, languageName, modes, saveProgress, saveSettings, subscribeSettings, syncDeviceId, updateAppearance } from './settings.js';
@@ -108,6 +111,7 @@ const words = wordHelp({
   seekWord: (node, offset) => audio.seekWord(node, offset),
   onWord: readingTime.activity,
 });
+const phrases = phraseHelp({ book: () => activeBook, preferences: () => settings, request: api, onSelection: () => words.clear() });
 const audio = narration({
   preferences: () => temporaryAudioVisible ? { ...settings, audioToolbarHidden: false } : settings, renderer: () => renderer, book: () => activeBook,
   readingPosition: () => activePosition?.target,
@@ -128,9 +132,10 @@ $('#narration-player').addEventListener('pointerdown', audioPeek.hold, { passive
 document.addEventListener('pointerup', audioPeek.release, { passive: true });
 document.addEventListener('pointercancel', audioPeek.release, { passive: true });
 const absProgress = audiobookshelfProgress({ audio, request: api });
+const processes = processQueue();
 const library = libraryScreen({
   preferences: () => settings, changePreferences: (updated) => { applySettings({ ...settings, ...updated }); },
-  progress, readingLanguages: () => settings.readingLanguages, onSnapshot: (snapshot) => { readingTime.setAccount(snapshot.readingTime?.accountId); void setOfflineAccount(snapshot.readingTime?.accountId).catch(() => {}); },
+  progress, readingLanguages: () => settings.readingLanguages, onSnapshot: (snapshot) => { processes.setAccount(snapshot.readingTime?.accountId); readingTime.setAccount(snapshot.readingTime?.accountId); void setOfflineAccount(snapshot.readingTime?.accountId).catch(() => {}); },
   onRemove(id) { delete progress[id]; saveProgress(progress); },
 });
 const bookmarks = readingBookmarks({ book: () => activeBook, position: () => activePosition, go: (target) => returnHistory.follow(target), request: api });
@@ -223,7 +228,7 @@ function applySettings(updated, aiChanged, notify = true) {
   document.documentElement.dataset.immersion = String(settings.immersionMode);
   $('#immersion-toggle').setAttribute('aria-pressed', String(settings.immersionMode));
   if (libraryChanged && !activeBook) void library.refresh().catch((error) => message('#library-error', error.message));
-  words.clear();
+  words.clear(); phrases.clear();
   applyAppearance();
   syncFullscreen();
   audio.apply();
@@ -307,7 +312,7 @@ function positionChanged(position) {
   $('#next').disabled = !position.next;
   $('#progress-fill').style.width = `${Math.round((position.percent || 0) * 100)}%`;
   if (changed || position.reflowed) {
-    words.clear();
+    words.clear(); phrases.clear();
     resetSummary();
     if (!summaryPanel.hidden) void generateSummary();
   }
@@ -432,7 +437,7 @@ function summarize() {
 
 async function generateSummary() {
   if (!renderer || summaryPanel.hidden || summaryController) return;
-  words.clear();
+  words.clear(); phrases.clear();
   $('#summary-location').textContent = [activePosition?.label, languageName(settings.summaryLanguage)].filter(Boolean).join(' · ');
   const page = renderer.summaryPage();
   if (!page) {
@@ -514,7 +519,7 @@ function closeReader() {
   bookmarks.reset();
   bookTools.reset();
   moving = false;
-  words.clear();
+  words.clear(); phrases.clear();
   showSummary(false);
   if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
   fallbackFullscreen = false;
@@ -526,6 +531,7 @@ function closeReader() {
 
 async function openBook(book) {
   closeReader();
+  const finishOpening = processTasks.begin('Open book', { bookId: book.id, title: book.title });
   activeBook = book;
   setOfflineBook(book.id);
   loadController = new AbortController();
@@ -559,7 +565,7 @@ async function openBook(book) {
       host: viewer, url: `/api/books/${book.id}/file`, position: progress[book.id]?.target,
       language: book.language, settings: readingPreferences(settings), signal,
       hooks: {
-        keydown, bindWords: words.bind, bindPageNavigation: pageGestures.bind,
+        keydown, bindWords: (...args) => { const wordCleanup = words.bind(...args), phraseCleanup = phrases.bind(args[0]); return () => { wordCleanup?.(); phraseCleanup(); }; }, bindPageNavigation: pageGestures.bind,
         followLink: (target) => signal.aborted ? false : returnHistory.follow(target),
         layout: () => { pinyin.refresh(); vocabulary.refresh(); },
         position: (position) => { if (!signal.aborted) positionChanged(position); },
@@ -583,8 +589,9 @@ async function openBook(book) {
     readerMessage();
     if (!document.querySelector('dialog[open]')) viewer.focus({ preventScroll: true });
   } catch (error) {
+    finishOpening(signal.aborted ? signal.reason : error);
     if (!signal.aborted) reportError(error);
-  }
+  } finally { finishOpening(signal.aborted ? signal.reason : undefined); }
 }
 
 function openSettings(tab = 'reading') {
@@ -656,7 +663,7 @@ function move(direction, target, context) { return pageTurns.request(direction, 
 async function performMove(direction, target, context) {
   if (!renderer) return false;
   if (target == null && (direction > 0 ? !activePosition?.next : !activePosition?.previous)) return false;
-  words.clear();
+  words.clear(); phrases.clear();
   resetSummary();
   const signal = loadController.signal;
   const current = renderer;
@@ -688,7 +695,7 @@ async function zoomPDF(factor) {
   $('#zoom-out').disabled = zoom <= 1;
   $('#zoom-in').disabled = zoom >= 3;
   $('#zoom-reset').textContent = zoom === 1 ? 'Fit' : `${Math.round(zoom * 100)}%`;
-  words.clear();
+  words.clear(); phrases.clear();
   try {
     await renderer.setZoom(zoom);
     pageGestures.refresh();
@@ -706,7 +713,7 @@ for (const id of ['jump-page', 'page-label']) $(`#${id}`).addEventListener('clic
 function keydown(event) {
   if (!activeBook || !renderer || document.querySelector('dialog[open]') || event.defaultPrevented
     || event.target?.closest?.('input, textarea, select, [contenteditable]')) return;
-  if (words.keydown?.(event)) return;
+  if (phrases.keydown(event) || words.keydown?.(event)) return;
   if (event.key === 'Escape') {
     if (fallbackFullscreen) { fallbackFullscreen = false; syncFullscreen(); }
     else if (!summaryPanel.hidden) closeSummary();
@@ -715,6 +722,7 @@ function keydown(event) {
   const action = readingShortcut(event, settings);
   if (action === 'previous') void move(-1);
   else if (action === 'next') void move(1);
+  else if (action === 'previousSection' || action === 'nextSection') void skipSection(action === 'previousSection' ? -1 : 1);
   else if (action === 'fullscreen') void toggleFullscreen();
   else if (action === 'playback') audio.toggle();
   else if (action === 'rewindAudio') audio.skipBy(-10);
@@ -727,6 +735,15 @@ function keydown(event) {
     if (summaryPanel.hidden) summarize();
     else closeSummary();
   }
+}
+
+async function skipSection(direction) {
+  const view = renderer;
+  try {
+    const target = await view?.sectionTarget?.(direction);
+    if (view !== renderer || target == null) return;
+    await returnHistory.follow(target);
+  } catch (error) { reportError(error); }
 }
 
 $('#previous').addEventListener('click', () => { viewer.focus({ preventScroll: true }); void move(-1); });
@@ -758,13 +775,13 @@ function closeAudioToolbar() {
 }
 $('#narration-close').addEventListener('click', closeAudioToolbar);
 function showTemporaryAudio() {
-  words.clear();
+  words.clear(); phrases.clear();
   if (!settings.audioEnabled) settings = saveSettings({ ...settings, audioEnabled: true, audioToolbarHidden: true });
   if (settings.audioToolbarHidden) audioPeek.show();
   audio.apply(); void audio.refresh();
 }
 async function togglePlaybackFromGesture() {
-  words.clear();
+  words.clear(); phrases.clear();
   const book = activeBook;
   if (!settings.audioEnabled) { showTemporaryAudio(); await audio.refresh(); }
   if (book !== activeBook) return;
@@ -780,7 +797,7 @@ async function playWordFromGesture(word) {
 function pinchText({ phase, factor = 1 }) {
   const feedback = $('#text-size-feedback');
   if (phase === 'start') {
-    words.clear(); pinchStart = { book: activeBook, size: readingFontSize(settings), zoom, format: activeBook?.format };
+    words.clear(); phrases.clear(); pinchStart = { book: activeBook, size: readingFontSize(settings), zoom, format: activeBook?.format };
   }
   if (!pinchStart) return;
   if (phase === 'move') {
@@ -814,7 +831,7 @@ for (const button of document.querySelectorAll('[data-document-section]')) butto
   const section = document.getElementById(button.dataset.documentSection); section?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
 if (typeof matchMedia === 'function') matchMedia('(pointer: coarse)').addEventListener('change', () => {
-  words.clear(); void renderer?.apply?.(readingPreferences(settings)).then(() => { pinyin.refresh(); vocabulary.refresh(); }).catch(reportError);
+  words.clear(); phrases.clear(); void renderer?.apply?.(readingPreferences(settings)).then(() => { pinyin.refresh(); vocabulary.refresh(); }).catch(reportError);
 });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { void readingSync.flush(); void account.flush({ keepalive: true }); }
