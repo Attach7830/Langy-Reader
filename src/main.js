@@ -714,19 +714,20 @@ async function togglePlaybackFromGesture() {
   if (book !== activeBook) return;
   if (!audio.ready) showTemporaryAudio(); else audio.toggle();
 }
-function pinchText({ phase, factor = 1, center }) {
+function pinchText({ phase, factor = 1 }) {
   const feedback = $('#text-size-feedback');
   if (phase === 'start') {
-    words.clear(); pinchStart = { book: activeBook, size: readingFontSize(settings), zoom, format: activeBook?.format, box: viewer.getBoundingClientRect() };
+    words.clear(); pinchStart = { book: activeBook, size: readingFontSize(settings), zoom, format: activeBook?.format };
   }
   if (!pinchStart) return;
   if (phase === 'move') {
-    const box = pinchStart.box;
-    viewer.style.transformOrigin = `${center.x - box.left}px ${center.y - box.top}px`; viewer.style.transform = `scale(${factor})`;
+    // Keep the iframe coordinate space fixed throughout the gesture. Scaling
+    // it under the fingers feeds its transformed coordinates into the next
+    // pointer event and can cancel or reverse the size change.
     feedback.hidden = false; feedback.textContent = pinchStart.format === 'pdf' ? `${Math.round(pinchStart.zoom * factor * 100)}%` : `${Math.max(13, Math.min(40, Math.round(pinchStart.size * factor)))} px`;
   }
   if (phase === 'end' || phase === 'cancel') {
-    const start = pinchStart; pinchStart = undefined; viewer.style.removeProperty('transform'); viewer.style.removeProperty('transform-origin'); feedback.hidden = true;
+    const start = pinchStart; pinchStart = undefined; feedback.hidden = true;
     if (phase === 'end' && start.book === activeBook) {
       if (start.format === 'pdf') void zoomPDF(start.zoom * factor);
       else applySettings({ ...settings, ...fontSizeChange(start.size * factor) });

@@ -29,6 +29,16 @@ try {
   zip.file('OEBPS/notes.xhtml', '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Notas</title></head><body><h1 id="note">Una nota del libro</h1><p>Esta explicación ayuda a comprender el pasaje.</p></body></html>');
   const uploaded = await context.request.post(base + '/api/books', { multipart: { title: 'Reader interactions', language: 'es', file: { name: 'reader.epub', mimeType: 'application/epub+zip', buffer: await zip.generateAsync({ type: 'nodebuffer' }) } } });
   assert.equal(uploaded.status(), 201, await uploaded.text()); const book = await uploaded.json();
+  const samples = 120 * 8000, wav = Buffer.alloc(44 + samples * 2);
+  wav.write('RIFF', 0); wav.writeUInt32LE(36 + samples * 2, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(8000, 24); wav.writeUInt32LE(16000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(samples * 2, 40);
+  await page.route('**/browser-audio.wav', (route) => route.fulfill({ body: wav, contentType: 'audio/wav' }));
+  await page.route('**/api/books/' + book.id + '/narration*', (route) => route.fulfill({ json: { connected: true, recordings: [], audio: {
+    id: 'browser', state: 'ready', url: '/browser-audio.wav', duration: 120,
+    segments: [{ key: 'epub:0', start: 0, end: 50, scale: 1 }, { key: 'epub:1', start: 50, end: 110, scale: 1 }, { key: 'epub:2', start: 110, end: 120, scale: 1 }],
+    markers: [{ title: 'Primera parte', time: 0 }, { title: 'Segunda parte', time: 50 }],
+  } } }));
+  await page.route('**/api/books/' + book.id + '/chapters/*', (route) => route.fulfill({ json: { key: decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-1)), tokens: [], audio: { timings: [] } } }));
   const cdp = await context.newCDPSession(page);
   const position = () => page.evaluate((id) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target, book.id);
   async function open() {
@@ -136,9 +146,9 @@ try {
     const before = await page.evaluate(() => JSON.parse(localStorage.getItem('langy-settings-v1')));
     const box = await page.locator('.reading-main').boundingBox(), x = box.x + box.width / 2, y = box.y + box.height / 2;
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ id: 1, x: x - 35, y }, { id: 2, x: x + 35, y }] });
-    for (let i = 1; i <= 6; i++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ id: 1, x: x - 35 - i * 3, y }, { id: 2, x: x + 35 + i * 3, y }] });
+    for (let i = 1; i <= 6; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ id: 1, x: x - 35 - i * 3, y }, { id: 2, x: x + 35 + i * 3, y }] }); await delay(20); }
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    await page.waitForFunction((size) => JSON.parse(localStorage.getItem('langy-settings-v1')).touchSize > size, before.touchSize || before.size);
+    await page.waitForFunction((size) => JSON.parse(localStorage.getItem('langy-settings-v1')).touchSize > size, before.touchSize || before.size, { timeout: 4000 });
     const after = await page.evaluate(() => JSON.parse(localStorage.getItem('langy-settings-v1')));
     assert.equal(after.size, before.size); assert.equal(await page.evaluate(() => visualViewport.scale), 1);
     await delay(500);
@@ -151,20 +161,10 @@ try {
     await page.locator('.toc-bookmarks').getByText('No bookmarks yet.').waitFor();
     await page.locator('#contents-dialog [data-close]').click(); assert.equal(await position(), before);
   });
-  const samples = 120 * 8000, wav = Buffer.alloc(44 + samples * 2);
-  wav.write('RIFF', 0); wav.writeUInt32LE(36 + samples * 2, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16);
-  wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(8000, 24); wav.writeUInt32LE(16000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(samples * 2, 40);
-  await page.route('**/browser-audio.wav', (route) => route.fulfill({ body: wav, contentType: 'audio/wav' }));
-  await page.route('**/api/books/' + book.id + '/narration*', (route) => route.fulfill({ json: { connected: true, recordings: [], audio: {
-    id: 'browser', state: 'ready', url: '/browser-audio.wav', duration: 120,
-    segments: [{ key: 'epub:0', start: 0, end: 50, scale: 1 }, { key: 'epub:1', start: 50, end: 110, scale: 1 }, { key: 'epub:2', start: 110, end: 120, scale: 1 }],
-    markers: [{ title: 'Primera parte', time: 0 }, { title: 'Segunda parte', time: 50 }],
-  } } }));
-  await page.route('**/api/books/' + book.id + '/chapters/*', (route) => route.fulfill({ json: { key: decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-1)), tokens: [], audio: { timings: [] } } }));
   await check('swiping up reveals the player temporarily and center double taps play and pause', async () => {
     const before = await position(); await swipe(0, -160);
     await page.locator('#narration-player').waitFor({ state: 'visible' });
-    await page.waitForFunction(() => !document.querySelector('#narration-play').disabled);
+    await page.waitForFunction(() => !document.querySelector('#narration-play').disabled, null, { timeout: 5000 });
     assert.equal(await position(), before);
     const doubleCenter = async () => { const box = await page.locator('.reading-main').boundingBox();
       await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2); await delay(65);
