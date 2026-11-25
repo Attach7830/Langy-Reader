@@ -19,8 +19,9 @@ export function openProcesses(dir, { library, archive, discovery, learning, demo
     function add(kind, row, label, { book = row.book, created = row.created || row.queuedAt || 0, progress = null, detail = '' } = {}) {
       const owned = book && books.get(book); if (book && !owned) return;
       const status = state(row.state);
-      if (!pending.has(row.state) && status !== 'failed' && !created) return;
-      if (created && created < Date.now() - 7 * 86400000 && !pending.has(row.state) && status !== 'failed') return;
+      // History stays with the relevant book/import; the queue only shows work
+      // still in progress or errors that the reader can act on.
+      if (!pending.has(row.state) && status !== 'failed') return;
       jobs.push({ id: `${kind}:${row.id || book}`, kind, label, state: status, phase: row.state, bookId: owned?.id,
         title: owned?.title || row.details?.title || row.title || '', created, progress: Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : null,
         detail: row.error || detail, nextAttempt: row.nextAttempt || null });
@@ -45,9 +46,9 @@ export function openProcesses(dir, { library, archive, discovery, learning, demo
       read('learning.sqlite', "SELECT book,due,minutes,state,error FROM import_narration WHERE state IN ('waiting','error')", (row) => add('scheduled-narration', row, 'Scheduled audiobook', {
         created: row.due - row.minutes * 60000, detail: row.due > Date.now() ? `Starts after ${new Date(row.due).toLocaleString()}` : 'Waiting for Kokoro, analysis and a generation slot',
       }));
-      for (const row of archive.list()) add('archive', row, 'Download book', { book: row.book?.id, progress: row.total ? row.bytes / row.total * 100 : null, detail: row.notice || '' });
+      for (const row of archive.list(visitor)) add('archive', row, 'Download book', { book: row.book?.id, progress: row.total ? row.bytes / row.total * 100 : null, detail: row.notice || '' });
       read('pdf-ocr.sqlite', 'SELECT json FROM jobs ORDER BY rowid DESC LIMIT 100', (value) => { const row = JSON.parse(value.json); add('ocr', row, 'Scan PDF with OCR', { book: row.source }); });
-      read('audiobookshelf.sqlite', 'SELECT json FROM jobs ORDER BY rowid DESC LIMIT 100', (value) => { const row = JSON.parse(value.json); add('audiobookshelf', row, row.kind === 'export' ? 'Export to Audiobookshelf' : 'Import from Audiobookshelf'); });
+      if (!visitor?.authenticated || visitor.role === 'admin') read('audiobookshelf.sqlite', 'SELECT json FROM jobs ORDER BY rowid DESC LIMIT 100', (value) => { const row = JSON.parse(value.json); add('audiobookshelf', row, row.kind === 'export' ? 'Export to Audiobookshelf' : 'Import from Audiobookshelf'); });
     }
     const found = discovery.status(visitor);
     if (found.id && (found.busy || found.error)) add('discovery', { id: found.id, state: found.state, error: found.error }, 'Discover similar books');
