@@ -10,6 +10,7 @@ import { maxAudioUpload } from './uploaded-audio.js';
 
 const encode = encodeURIComponent;
 const hash = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const sameDestination = (a, b) => a?.libraryId === b?.libraryId && a?.folderId === b?.folderId;
 const titleKey = (value) => typeof value === 'string' ? value.normalize('NFKC').toLowerCase().replace(/[\p{P}\p{Z}\s]+/gu, ' ').trim() : '';
 const identifier = (value) => typeof value === 'string' && /^[\w-]{1,120}$/u.test(value);
 export function progressVersion(progress) { return progress ? hash([progress.lastUpdate, progress.currentTime, progress.duration, progress.isFinished]) : 'none'; }
@@ -88,7 +89,12 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
       const temp = `${settingsPath}.${randomUUID()}.tmp`;
       try { await writeFile(temp, JSON.stringify(next), { flag: 'wx', mode: 0o600 }); await rename(temp, settingsPath); config = next; }
       finally { await rm(temp, { force: true }); }
-      if (!config.autoExport) for (const job of jobs.values()) if (job.automatic && job.state === 'queued') { job.state = 'cancelled'; job.notice = 'Automatic export disabled.'; persist(job); }
+      for (const job of jobs.values()) if (job.automatic && job.state === 'queued') {
+        let destination; try { destination = destinationFor(library.getBook(job.book)); } catch {}
+        if (!config.autoExport || job.server !== server() || !sameDestination(job.destination, destination)) {
+          job.state = 'cancelled'; job.notice = 'Automatic export settings changed. The current destination will be used for pending audio.'; persist(job);
+        }
+      }
       if (autoStart) queueMicrotask(() => void pump());
       return settings();
     });
@@ -193,11 +199,13 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
     if (demo || config.autoExport === false || !config.baseUrl || !config.apiKey) return;
     for (const candidate of learning.readyAudiobooks?.() || []) {
       if ([...jobs.values()].filter((job) => ['queued', 'running'].includes(job.state)).length >= 5) break;
-      const handled = [...jobs.values()].some((job) => job.server === server() && job.kind === 'export' && job.state !== 'cancelled' && job.book === candidate.book && job.recording === candidate.recording);
-      if (handled) continue;
       try {
         const book = library.getBook(candidate.book), destination = destinationFor(book);
         if (!identifier(destination.libraryId) || !identifier(destination.folderId) || getLink(book, candidate.recording)) continue;
+        const handled = [...jobs.values()].some((job) => job.server === server() && job.kind === 'export' && job.state !== 'cancelled'
+          && job.book === candidate.book && job.recording === candidate.recording
+          && (job.state !== 'error' || sameDestination(job.destination, destination) && job.titleKey === titleKey(book.title)));
+        if (handled) continue;
         queue(book, 'export', { recording: candidate.recording }, true);
       } catch { /* A removed/stale recording or an in-progress import is checked on the next pass. */ }
     }
@@ -279,7 +287,7 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
     } else if (!identifier(body.item)) throw new RequestError(422, 'Choose an Audiobookshelf title.');
     const existing = [...jobs.values()].find((job) => job.book === book.id && ['queued', 'running', 'syncing'].includes(job.state));
     if (existing) {
-      const different = kind !== existing.kind || destination && (destination.libraryId !== existing.destination?.libraryId || destination.folderId !== existing.destination?.folderId);
+      const different = kind !== existing.kind || destination && !sameDestination(destination, existing.destination);
       if (different && !automatic && existing.automatic && existing.state === 'queued') { existing.state = 'cancelled'; existing.notice = 'Replaced by the selected manual export destination.'; persist(existing); }
       else if (different && !automatic) throw new RequestError(409, 'A transfer for this book is already in progress. Wait for it to finish before choosing a different destination.');
       else return publicJob(existing);
