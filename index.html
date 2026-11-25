@@ -192,6 +192,7 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
         <button class="button quiet reader-primary-action" id="audio-toggle" type="button" title="Narration" aria-label="Narration" aria-pressed="false"><i data-lucide="headphones"></i><span>Audio</span></button>
         <button class="icon-button" id="fullscreen" type="button" title="Full screen" aria-label="Full screen" aria-pressed="false"><i data-lucide="maximize"></i></button>
         <details id="reader-more" class="reader-more"><summary class="icon-button" aria-label="More reading tools" title="More reading tools">•••</summary><div class="reader-more-menu">
+        <button class="icon-button" id="jump-page" type="button" title="Jump to page" aria-label="Jump to page" aria-controls="page-jump-dialog"><i data-lucide="book-open"></i></button>
         <button class="icon-button" id="sync-progress" type="button" title="Sync reading progress" aria-label="Sync reading progress" aria-controls="sync-notice" hidden><i data-lucide="rotate-ccw"></i></button>
         <button class="icon-button" id="bookmarks-button" type="button" title="Bookmarks (M)" aria-label="Bookmarks"><i data-lucide="bookmark"></i></button>
         <button class="icon-button" id="book-tools-button" type="button" title="Search book and character guide" aria-label="Search book and character guide"><i data-lucide="search"></i></button>
@@ -269,9 +270,11 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
         <select id="narration-chapter" aria-label="Audio chapter" hidden></select>
         <span id="narration-status" role="status">Preparing narration…</span>
         <button class="button quiet" id="narration-generate" type="button" hidden>Generate book audio</button>
+        <button class="icon-button narration-close" id="narration-close" type="button" aria-label="Close audio toolbar" title="Close audio toolbar"><i data-lucide="x"></i></button>
       </div>
       <div class="footer-start">
         <button type="button" class="button quiet word-settings" data-settings="language"><i data-lucide="languages"></i><span id="word-mode-label"></span></button>
+        <button type="button" class="button quiet pinyin-toggle" id="pinyin-toggle" aria-label="Pinyin" title="Show pinyin" aria-pressed="false" hidden>Pinyin</button>
         <div id="pdf-zoom" class="zoom-controls" hidden>
           <button id="zoom-out" class="icon-button small" aria-label="Zoom out" type="button"><i data-lucide="minus"></i></button>
           <button id="zoom-reset" class="button quiet" aria-label="Fit PDF to page" type="button">Fit</button>
@@ -280,7 +283,7 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
       </div>
       <div class="page-nav">
         <button class="icon-button page-arrow" id="previous" type="button" aria-label="Previous page"><i data-lucide="chevron-left"></i></button>
-        <span class="page-label" id="page-label" aria-live="polite"></span>
+        <button class="button quiet page-label" id="page-label" type="button" aria-label="Jump to page" title="Jump to page" aria-controls="page-jump-dialog" aria-live="polite"></button>
         <button class="icon-button page-arrow" id="next" type="button" aria-label="Next page"><i data-lucide="chevron-right"></i></button>
       </div>
       <div class="footer-end"><button class="button quiet small return-location" id="return-location" type="button" title="Back to previous location" aria-label="Back to text before the hyperlink" hidden><i data-lucide="arrow-left"></i><span>Back to text</span></button><span id="position-detail"></span><span class="progress-track" aria-hidden="true"><span id="progress-fill"></span></span></div>
@@ -325,9 +328,9 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
       <div id="character-guide-output" class="book-guide-output" dir="auto" aria-live="polite"></div><p id="book-tools-error" class="form-error" role="alert" hidden></p>
     </div>
   </dialog>
-  <dialog class="modal settings-modal" id="settings" aria-labelledby="settings-title">
+  <main class="settings-page" id="settings" aria-labelledby="settings-title" hidden>
     <form id="settings-form">
-      <header class="modal-header"><h2 id="settings-title">Settings</h2><button class="icon-button" type="button" data-close aria-label="Close settings"><i data-lucide="x"></i></button></header>
+      <header class="settings-heading"><button class="button quiet" type="button" id="settings-back" data-settings-back><i data-lucide="arrow-left"></i><span>Back</span></button><h1 id="settings-title" tabindex="-1">Settings</h1></header>
       <nav class="tabs" aria-label="Settings sections">
         <button type="button" data-settings-tab="reading">Appearance</button>
         <button type="button" data-settings-tab="language">Language help</button>
@@ -510,9 +513,9 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
       </section>
       <p class="field-note settings-save-status" id="account-settings-status" role="status">Loading account preferences…</p>
       <p class="form-error" id="settings-error" role="alert" hidden></p>
-      <footer class="modal-footer"><button class="button quiet" type="button" data-close>Cancel</button><button class="button primary" type="submit">Save settings</button></footer>
+      <footer class="settings-actions"><button class="button quiet" type="button" data-settings-back>Cancel</button><button class="button primary" type="submit">Save settings</button></footer>
     </form>
-  </dialog>
+  </main>
 
   <dialog class="modal" id="book-dialog" aria-labelledby="book-dialog-title">
     <form id="book-form">
@@ -684,6 +687,18 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
   <dialog class="modal" id="contents-dialog" aria-labelledby="contents-title">
     <header class="modal-header"><h2 id="contents-title">Contents</h2><button class="icon-button" type="button" aria-label="Close contents" data-close><i data-lucide="x"></i></button></header>
     <div class="modal-body" id="contents-body"></div>
+  </dialog>
+
+  <dialog class="modal" id="page-jump-dialog" aria-labelledby="page-jump-title">
+    <form id="page-jump-form">
+      <header class="modal-header"><h2 id="page-jump-title">Jump to page</h2><button class="icon-button" type="button" aria-label="Close page jump" data-close><i data-lucide="x"></i></button></header>
+      <div class="modal-body">
+        <label class="field" id="page-jump-section-field">Section <select id="page-jump-section" name="section"></select></label>
+        <label class="field">Page number <input id="page-jump-number" name="page" type="number" inputmode="numeric" min="1" step="1" required aria-describedby="page-jump-note"></label>
+        <p class="field-note" id="page-jump-note"></p>
+      </div>
+      <footer class="modal-footer"><button class="button quiet" type="button" data-close>Cancel</button><button class="button primary" type="submit">Go to page</button></footer>
+    </form>
   </dialog>
 
   <div class="word-help" id="word-help" role="status" hidden>
