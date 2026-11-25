@@ -355,6 +355,7 @@ try {
     await page.locator('#category-dialog').waitFor({ state: 'hidden' });
     const folder = (await (await context.request.get(base + '/api/library')).json()).categories.find(item => item.name === 'Native reading');
     assert.equal(folder.l1Folder, true);
+    try {
     const moved = await context.request.patch(base + '/api/books/' + book.id, { data: { title: book.title, author: book.author || '', language: book.language, categoryId: folder.id } });
     assert.equal(moved.status(), 200); assert.equal((await moved.json()).l1Folder, true);
     await page.reload(); await open();
@@ -364,14 +365,15 @@ try {
     let helpRequests = 0;
     const onRequest = request => { if (/\/api\/ai\/(word|phrase|summary)$|\/(character-guide|question)$/.test(new URL(request.url()).pathname)) helpRequests++; };
     page.on('request', onRequest);
-    const frame = await (await page.locator('#viewer iframe').first().elementHandle()).contentFrame();
-    const point = await frame.evaluate(() => { const node = document.querySelector('#source').firstChild, from = node.data.indexOf('viajera'), range = document.createRange();
+    const source = page.frameLocator('#viewer iframe').first().locator('#source');
+    await source.waitFor({ state: 'visible' });
+    const point = await source.evaluate(paragraph => { const node = paragraph.firstChild, from = node.data.indexOf('viajera'), range = document.createRange();
       range.setStart(node, from); range.setEnd(node, from + 7); const r = range.getBoundingClientRect(), f = window.frameElement.getBoundingClientRect(); return { x: f.x + r.x + r.width / 2, y: f.y + r.y + r.height / 2 }; });
     await page.touchscreen.tap(point.x, point.y); await delay(450); assert.equal(await page.locator('#word-help').isVisible(), false);
     await page.keyboard.press('s'); assert.equal(await page.locator('#summary-panel').isVisible(), false);
-    await frame.evaluate(() => { const range = document.createRange(), node = document.querySelector('#source').firstChild; range.setStart(node, 0); range.setEnd(node, 10); getSelection().removeAllRanges(); getSelection().addRange(range); document.dispatchEvent(new Event('selectionchange')); });
+    await source.evaluate(paragraph => { const range = document.createRange(), node = paragraph.firstChild; range.setStart(node, 0); range.setEnd(node, 10); getSelection().removeAllRanges(); getSelection().addRange(range); document.dispatchEvent(new Event('selectionchange')); });
     await delay(250); assert.equal(await page.locator('#phrase-help').isVisible(), false);
-    await frame.evaluate(() => getSelection().removeAllRanges());
+    await source.evaluate(() => getSelection().removeAllRanges());
     await page.locator('#reader-more > summary').click(); await page.locator('#book-tools-button').click();
     assert.equal(await page.locator('#book-search-form').isVisible(), true); assert.equal(await page.locator('#character-guide-tools').isVisible(), false);
     await page.locator('#book-tools-dialog [data-close]').click();
@@ -391,6 +393,7 @@ try {
     const restored = await page.evaluate(() => JSON.parse(localStorage.getItem('langy-settings-v1')));
     assert.equal(restored.mode, preferences.mode); assert.equal(restored.showPinyin, preferences.showPinyin);
     await page.locator('#close-summary').click();
+    } finally { await context.request.patch(base + '/api/categories/' + folder.id, { data: { name: folder.name, l1Folder: false } }); }
   });
   const desktop = await browser.newContext({ viewport: { width: 1280, height: 900 }, extraHTTPHeaders: adminHeaders, serviceWorkers: 'block' }), desktopPage = await desktop.newPage();
   desktopPage.on('pageerror', (error) => errors.push(error.message));
