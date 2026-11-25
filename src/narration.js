@@ -35,8 +35,10 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   const ready = () => recording?.state === 'ready';
   const playbackSpeed = () => Number.isFinite(audio.playbackRate) && audio.playbackRate > 0 ? audio.playbackRate : 1;
   const segmentFor = (key) => recording?.segments?.find((part) => part.key === key);
-  const segmentAt = (time) => recording?.segments?.[Math.max(0, atTime(recording.segments, time))];
   // Media clocks can round a chapter's exact start down by a fraction of a millisecond.
+  // Apply the same tolerance to text following as to the chapter controls, or
+  // seeking to a new chapter can immediately navigate back to the old one.
+  const segmentAt = (time) => recording?.segments?.[Math.max(0, atTime(recording.segments, time + .01))];
   const chapterIndex = () => atTime(recording?.markers || [], audio.currentTime + .01, 'time');
   const deviceControls = deviceMediaControls({
     play: () => { if (enabled && ready()) { wantPlaying = true; void startPlayback(); } },
