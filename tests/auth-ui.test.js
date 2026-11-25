@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import { setTimeout as delay } from 'node:timers/promises';
-import { authenticationGate } from '../src/auth.js';
+import { authenticationGate, clearAccountData } from '../src/auth.js';
 async function fixture(t) {
   const dom = new JSDOM(await readFile(new URL('../index.html', import.meta.url), 'utf8'), { url: 'https://langy.test' });
   dom.window.HTMLMediaElement.prototype.pause = () => {};
@@ -40,4 +40,12 @@ test('a first member sign-in cannot inherit pre-account browser data', async (t)
   await fixture(t); localStorage.setItem('langy-settings-v1', 'old private preferences'); localStorage.setItem('langy-progress-v1', 'old private progress');
   globalThis.fetch = async () => Response.json({ enabled: true, authenticated: true, legacyAccount: false, user: { id: 'member-id', username: 'member', role: 'user' }, readerAccountId: 'member-reader-id' });
   await authenticationGate(); assert.equal(localStorage.getItem('langy-settings-v1'), null); assert.equal(localStorage.getItem('langy-progress-v1'), null);
+});
+
+test('clearing an account removes cover and offline caches while retaining the app shell', async (t) => {
+  await fixture(t); const prior = globalThis.caches, removed = [];
+  globalThis.caches = { keys: async () => ['langy-covers-reader-one', 'langy-covers-reader-two', 'langy-pack-private', 'langy-offline-control', 'langy-shell-v1'], delete: async (name) => { removed.push(name); return true; } };
+  t.after(() => { if (prior) globalThis.caches = prior; else delete globalThis.caches; });
+  await clearAccountData();
+  assert.deepEqual(removed, ['langy-covers-reader-one', 'langy-covers-reader-two', 'langy-pack-private', 'langy-offline-control']);
 });

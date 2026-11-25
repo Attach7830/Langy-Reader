@@ -17,23 +17,26 @@ async function fixture(t, duration = 12, { autoRepair = false } = {}) {
   const folder = await mkdtemp(join(tmpdir(), 'langy-rescan-'));
   const original = globalThis.fetch;
   const book = { id: 'book', title: 'Capítulos', language: 'es' };
-  const learning = await openLearning(folder, { getBook: () => book }, false, {}, { autoRepair });
+  const books = new Map([[book.id, book]]);
+  const learning = await openLearning(folder, { getBook: (id) => books.get(id) }, false, {}, { autoRepair });
   const db = new DatabaseSync(join(folder, 'learning.sqlite'));
   db.prepare('INSERT INTO analyses(book,owner,language,state) VALUES(?,?,?,?)').run(book.id, 'owner', 'es', 'ready');
   for (const [index, text] of texts.entries()) db.prepare('INSERT INTO chapters(book,key,ordinal,title,text,digest,tokens,lemmas,markers) VALUES(?,?,?,?,?,?,?,?,?)')
     .run(book.id, `epub:${index}`, index, `Capítulo ${index + 1}`, text, String(index), '[]', '[]', JSON.stringify([{ title: `Capítulo ${index + 1}`, from: 0 }]));
   const sample = join(folder, 'sample.wav');
   await run('ffmpeg', ['-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i', `sine=frequency=330:duration=${duration}`, '-ar', '24000', sample]);
-  let rescans = 0, fail = false, wait;
+  let rescans = 0, fail = false, wait; const events = [];
   globalThis.fetch = async (url, options) => {
     const body = JSON.parse(options.body), path = new URL(url).pathname;
-    if (path === '/transcribe') return Response.json({ heard: [{ word: 'recording', start: 0, end: duration }] });
+    if (path === '/transcribe') { events.push('transcribe'); return Response.json({ heard: [{ word: 'recording', start: 0, end: duration }] }); }
     const time = (word) => (words.indexOf(word) + .25) * duration / 12;
     if (path === '/match-recording') return Response.json({ timings: body.words.map((word, index) => index >= 4 && index < 8 ? null : { start: time(word), end: time(word) + duration / 24 }),
       matchedWords: 8, matchedSpeechRatio: 1, strongMatchCharacters: 100 });
     if (path === '/rescan') {
       rescans++;
+      events.push('repair:' + db.prepare("SELECT book FROM audio_rescans WHERE state='running'").get().book);
       if (wait) await wait;
+      if (typeof fail === 'string') return Response.json({ detail: fail }, { status: 422 });
       if (fail) throw new Error('language service unavailable');
       const job = db.prepare("SELECT windows,cursor FROM audio_rescans WHERE state='running'").get();
       const window = JSON.parse(job.windows)[job.cursor];
@@ -41,18 +44,50 @@ async function fixture(t, duration = 12, { autoRepair = false } = {}) {
     }
     throw new Error('Unexpected request: ' + path);
   };
-  t.after(async () => { globalThis.fetch = original; await learning.remove(book.id); db.close(); await rm(folder, { recursive: true, force: true }); });
-  async function upload(name) { const path = join(folder, name + '.wav'); await copyFile(sample, path); return learning.recordings.accept(book, { path, size: (await stat(path)).size, originalname: name + '.wav' }, { name }); }
-  const ready = (id, states = ['ready', 'error']) => until(() => { const value = learning.recordings.list(book).find((item) => item.id === id); return states.includes(value?.state) && value; });
-  const rescanReady = (id) => until(() => { const value = learning.rescans.status(book, id); return ['ready', 'error', 'cancelled'].includes(value?.state) && value; });
+  t.after(async () => { globalThis.fetch = original; for (const id of books.keys()) await learning.remove(id); db.close(); await rm(folder, { recursive: true, force: true }); });
+  async function upload(name, target = book) { const path = join(folder, name + '.wav'); await copyFile(sample, path); return learning.recordings.accept(target, { path, size: (await stat(path)).size, originalname: name + '.wav' }, { name }); }
+  const ready = (id, states = ['ready', 'error'], target = book) => until(() => { const value = learning.recordings.list(target).find((item) => item.id === id); return states.includes(value?.state) && value; });
+  const rescanReady = (id, target = book) => until(() => { const value = learning.rescans.status(target, id); return ['ready', 'error', 'cancelled'].includes(value?.state) && value; });
+  function addBook(id) {
+    const target = { ...book, id, title: id }; books.set(id, target);
+    db.prepare('INSERT INTO analyses(book,owner,language,state) VALUES(?,?,?,?)').run(id, 'owner', 'es', 'ready');
+    db.prepare('INSERT INTO chapters(book,key,ordinal,title,text,digest,tokens,lemmas,markers) SELECT ?,key,ordinal,title,text,digest,tokens,lemmas,markers FROM chapters WHERE book=?').run(id, book.id);
+    return target;
+  }
   function anchors(id) {
     const row = db.prepare('SELECT segments FROM book_audio WHERE id=?').get(id);
     return JSON.parse(row.segments).flatMap((segment) => JSON.parse(db.prepare('SELECT timings FROM audio WHERE id=?').get(segment.audioId).timings)
       .filter((word) => !word.estimated && word.start != null).map((word) => ({ word: word.word, start: segment.start + word.start * segment.scale, end: segment.start + word.end * segment.scale })));
   }
-  return { folder, db, book, learning, upload, sample, ready, rescanReady, anchors,
+  return { folder, db, book, learning, upload, sample, ready, rescanReady, anchors, addBook, events,
     get rescanCalls() { return rescans; }, set fail(value) { fail = value; }, set wait(value) { wait = value; } };
 }
+
+test('long repairs take turns across books and progress while more recordings wait for synchronization', async (t) => {
+  const f = await fixture(t, 200), secondBook = f.addBook('second-book');
+  const first = await f.upload('Long first'), second = await f.upload('Long second', secondBook);
+  f.learning.recordings.queue(f.book, first.id); assert.equal((await f.ready(first.id)).state, 'ready');
+  f.learning.recordings.queue(secondBook, second.id); assert.equal((await f.ready(second.id, undefined, secondBook)).state, 'ready');
+  const before = [f.anchors(first.id), f.anchors(second.id)];
+  const originalAudio = await readFile(f.learning.audioFile(f.book, first.id));
+  const waiting = [await f.upload('Waiting one'), await f.upload('Waiting two')];
+  let release; f.wait = new Promise((resolve) => { release = resolve; });
+  f.events.length = 0; f.learning.rescans.queue(f.book, first.id); await until(() => f.rescanCalls === 1);
+  f.learning.rescans.queue(secondBook, second.id);
+  assert.equal(f.learning.rescans.status(secondBook, second.id).queuePosition, 2);
+  for (const item of waiting) f.learning.recordings.queue(f.book, item.id);
+  f.wait = null; release();
+  const results = await Promise.all([f.rescanReady(first.id), f.rescanReady(second.id, secondBook)]);
+  for (const result of results) { assert.equal(result.state, 'ready', result.error); assert.equal(result.added, 4); assert.ok(result.windows > 1); }
+  assert.deepEqual(f.events.filter((event) => event.startsWith('repair:')).slice(0, 4), ['repair:book', 'repair:second-book', 'repair:book', 'repair:second-book']);
+  assert.ok(f.events.indexOf('repair:second-book') < f.events.lastIndexOf('transcribe'), 'a repair must run before all new synchronizations drain');
+  for (const [index, item] of [first, second].entries()) {
+    const current = f.anchors(item.id); assert.equal(current.length, 12);
+    assert.deepEqual(current.filter((word) => before[index].some((old) => old.word === word.word)), before[index]);
+  }
+  assert.deepEqual(await readFile(f.learning.audioFile(f.book, first.id)), originalAudio);
+  for (const item of waiting) assert.equal((await f.ready(item.id)).state, 'ready');
+});
 
 test('fresh rescan recovers a wholly unmatched chapter, preserves known global timestamps and audio bytes, and refreshes playback metadata', async (t) => {
   const f = await fixture(t);
@@ -120,8 +155,8 @@ test('failed rescans retain working alignment, retry freshly, survive restart ch
   const recording = await f.upload('Retry');
   f.learning.recordings.queue(f.book, recording.id); await f.ready(recording.id);
   const old = f.anchors(recording.id);
-  f.fail = true; f.learning.rescans.queue(f.book, recording.id);
-  assert.equal((await f.rescanReady(recording.id)).state, 'error');
+  f.fail = 'This recording could not be decoded.'; f.learning.rescans.queue(f.book, recording.id);
+  const failed = await f.rescanReady(recording.id); assert.equal(failed.state, 'error'); assert.match(failed.error, /could not be decoded/u);
   assert.deepEqual(f.anchors(recording.id), old);
   f.fail = false;
   let release; f.wait = new Promise((resolve) => { release = resolve; });

@@ -94,9 +94,11 @@ test('self-hosted users have private libraries, owner-controlled sharing and iso
     await f.api(`/api/books/${sharedBook.id}/bookmarks`, third, { body: { target: cfi, label: 'Private bookmark', note: 'Private note' } });
     assert.equal((await f.api(`/api/books/${sharedBook.id}/bookmarks`, member)).bookmarks.length, 0);
     const settings = await f.api('/api/settings/reader', third);
-    await f.api('/api/settings/reader', third, { method: 'PATCH', body: { revision: settings.revision, changes: { showSharedBooks: false, theme: 'dusk' } } });
+    await f.api('/api/settings/reader', third, { method: 'PATCH', body: { revision: settings.revision, changes: { showSharedBooks: false, theme: 'dusk', cacheCovers: false } } });
     assert.equal((await f.api('/api/settings/reader', third)).preferences.showSharedBooks, false);
     assert.equal((await f.api('/api/settings/reader', member)).preferences.showSharedBooks, undefined);
+    assert.equal((await f.api('/api/settings/reader', third)).preferences.cacheCovers, false);
+    assert.equal((await f.api('/api/settings/reader', member)).preferences.cacheCovers, undefined);
   });
   await t.test('reading time and vocabulary thresholds stay account-private', async () => {
     const first = await f.api('/api/reading-time', third), end = Date.now();
@@ -127,6 +129,12 @@ test('self-hosted users have private libraries, owner-controlled sharing and iso
     await f.api('/api/settings/ai/override', member, { method: 'DELETE' }); assert.equal((await f.api('/api/settings/ai', member)).inherited, true);
     await f.api('/api/settings/learning', member, { method: 'PUT', body: {}, status: 403 });
     assert.equal((await f.api('/api/settings/learning', member)).configurable, false);
+    await f.api('/api/settings/ocr', admin, { method: 'PUT', body: { provider: 'builtin', baseUrl: 'http://private-ocr.test:8000', apiKey: 'ADMIN_OCR_FAKE_KEY' } });
+    const managedOCR = await f.api('/api/settings/ocr', member); assert.equal(managedOCR.configurable, false); assert.equal(managedOCR.provider, 'builtin');
+    assert.equal(Object.hasOwn(managedOCR, 'baseUrl'), false); assert.equal(Object.hasOwn(managedOCR, 'hasKey'), false); assert.equal(JSON.stringify(managedOCR).includes('ADMIN_OCR_FAKE_KEY'), false);
+    await f.api('/api/settings/ocr', member, { method: 'PUT', body: { provider: 'builtin' }, status: 403 });
+    await f.api('/api/settings/ocr/key', member, { method: 'DELETE', status: 403 });
+    assert.equal((await f.api('/api/settings/ocr', admin)).hasKey, true);
     await f.api('/api/audiobookshelf/libraries', member, { status: 403 }); assert.equal((await f.api('/api/settings/audiobookshelf', member)).connected, false);
   });
   await t.test('download jobs and their continuation controls belong to the requesting user', async () => {

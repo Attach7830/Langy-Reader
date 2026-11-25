@@ -62,3 +62,24 @@ test('OCR failures and demo restrictions never replace the source PDF or create 
   assert.match(job.error, /clearer scan/u); assert.equal(library.snapshot().books.length, 2); assert.deepEqual(await readFile(library.filePath(book)), source);
   const demo = await openPDFOCR(dir, { library, demo: true }); t.after(() => demo.close()); assert.throws(() => demo.queue(book, { languages: ['eng'] }), { status: 403 });
 });
+
+test('the external PDF connector sends a private key only to its tested service and replaces the same book', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'langy-paddle-connector-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const library = await openLibrary(dir), source = Buffer.from('%PDF-1.4\noriginal scan\n%%EOF'), output = Buffer.from('%PDF-1.4\nChinese text layer\n%%EOF');
+  const path = join(library.uploads, 'traditional.pdf'); await writeFile(path, source);
+  const book = await library.importBook('traditional', { path, originalname: 'traditional.pdf', size: source.length }, { title: 'Traditional Chinese book', language: 'zh-TW' });
+  let calls = 0;
+  const service = await openPDFOCR(dir, { library, workerURL: 'http://language:8000', request: async (value, options) => {
+    const url = new URL(value); assert.equal(url.origin, 'http://ocr.test:8093'); assert.equal(options.redirect, 'error'); assert.equal(options.headers.Authorization, 'Bearer synthetic-private-key');
+    if (url.pathname === '/gateway/ocr/languages') return Response.json({ engine: 'paddleocr', protocol: 1, languages: ['chi_sim', 'chi_tra'] });
+    calls++; assert.equal(url.pathname, '/gateway/ocr'); assert.equal(url.searchParams.get('languages'), 'chi_tra'); assert.equal(url.searchParams.get('mode'), 'redo');
+    const chunks = []; for await (const chunk of options.body) chunks.push(chunk); assert.deepEqual(Buffer.concat(chunks), source);
+    return new Response(output, { headers: { 'X-Langy-OCR-Pages': '1', 'X-Langy-OCR-Text-Pages': '1' } });
+  } }); t.after(() => service.close());
+  await service.save({ provider: 'paddle', baseUrl: 'http://ocr.test:8093/gateway', apiKey: 'synthetic-private-key' });
+  service.queue(book, { languages: ['chi_tra'] });
+  const result = await until(() => { const item = service.status(book); return ['ready', 'error'].includes(item?.state) && item; });
+  assert.equal(result.state, 'ready', result.error); assert.equal(result.book.id, book.id); assert.equal(calls, 1);
+  assert.equal(JSON.stringify(result).includes('synthetic-private-key'), false);
+  assert.deepEqual(await readFile(library.filePath(library.getBook(book.id))), output); assert.deepEqual(await readFile(library.filePath(book)), source);
+});
