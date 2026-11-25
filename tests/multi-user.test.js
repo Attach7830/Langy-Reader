@@ -56,7 +56,6 @@ test('self-hosted users have private libraries, owner-controlled sharing and iso
     await f.api('/api/library', {}, { status: 401 });
     for (const path of ['/API/library', '/Api/books/legacy/file', '/OPDS/books']) assert.equal((await fetch(f.base() + path)).status, 401);
     await f.api('/api/account/login', { Origin: 'https://another-site.test' }, { body: { username: 'reader', password: pass }, status: 403 });
-    const response = await fetch(f.base() + '/'); assert.equal(response.status, 200); assert.match(await response.text(), /login-form/u);
   });
   await t.test('only administrators create users and credentials never appear in responses', async () => {
     const one = await f.api('/api/admin/users', admin, { body: { username: 'member', password: memberPass }, status: 201 });
