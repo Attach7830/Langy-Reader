@@ -426,3 +426,40 @@ test('demo vocabulary thresholds remain private to each signed visitor', async (
   assert.equal((await response(base, '/api/vocabulary', { headers: { Cookie: b } })).threshold, 20);
   assert.equal((await response(base, '/api/library', { headers: { Cookie: a } })).vocabulary.threshold, 7);
 });
+
+test('saved credential removal is authenticated, same-origin and preserves each service configuration', async (t) => {
+  const f = await fixture(t); let base = await f.start();
+  for (const [service, body, kept] of [
+    ['ai', { provider: 'ollama', baseUrl: 'http://127.0.0.1:11434', model: 'qwen3:8b', apiKey: 'private-test-value' }, 'model'],
+    ['learning', { baseUrl: 'http://127.0.0.1:8880/v1', apiKey: 'private-test-value', voice: 'af_heart', model: 'kokoro', speed: 1 }, 'voice'],
+    ['archive', { apiKey: 'private-test-value', baseUrl: 'https://annas-archive.gl' }, 'baseUrl'],
+    ['audiobookshelf', { apiKey: 'private-test-value', baseUrl: 'http://127.0.0.1:13378', autoExport: false, libraryId: 'lib', folderId: 'folder', categoryDestinations: { uncategorized: { libraryId: 'lib', folderId: 'folder' } } }, 'categoryDestinations'],
+  ]) {
+    assert.equal((await fetch(base + `/api/settings/${service}/key`, { method: 'DELETE' })).status, 401);
+    if (service === 'audiobookshelf') {
+      await writeFile(join(f.folder, 'audiobookshelf-settings.json'), JSON.stringify(body)); base = await f.start();
+    }
+    const configured = await response(base, `/api/settings/${service}`, service === 'audiobookshelf' ? { headers: json } : { method: 'PUT', headers: json, body: JSON.stringify(body) });
+    assert.equal(configured.hasKey, true, service);
+    await response(base, `/api/settings/${service}/key`, { method: 'DELETE', headers: { ...json, Origin: 'https://other.test' }, status: 403 });
+    const removed = await response(base, `/api/settings/${service}/key`, { method: 'DELETE', headers: json });
+    assert.equal(removed.hasKey, false, service); assert.deepEqual(removed[kept], configured[kept], service);
+    assert.equal(JSON.stringify(removed).includes('private-test-value'), false);
+  }
+  base = await f.start();
+  for (const service of ['ai', 'learning', 'archive', 'audiobookshelf']) assert.equal((await response(base, `/api/settings/${service}`, { headers: json })).hasKey, false);
+});
+
+test('process overview and book pinyin require login and keep book data persistent', async (t) => {
+  const f = await fixture(t); let base = await f.start();
+  assert.equal((await fetch(base + '/api/processes')).status, 401);
+  const processes = await response(base, '/api/processes', { headers: json });
+  assert.equal(processes.unavailable, false, 'every projected job schema must exist'); assert.ok(Array.isArray(processes.jobs)); assert.ok(processes.accountId);
+  assert.equal((await fetch(base + '/api/books/sync-book/pinyin', { method: 'POST', body: JSON.stringify({ text: '有意思' }), headers: { 'Content-Type': 'application/json' } })).status, 401);
+  await response(base, '/api/books/missing/pinyin', { method: 'POST', headers: json, body: JSON.stringify({ text: '有意思' }), status: 404 });
+  const data = await response(base, '/api/books/sync-book/pinyin', { method: 'POST', headers: json, body: JSON.stringify({ text: '有意思' }) });
+  assert.equal(data.characters.map((item) => item.character).join(''), '有意思');
+  const db = new DatabaseSync(join(f.folder, 'book-pinyin.sqlite')); assert.equal(db.prepare('SELECT count(*) AS n FROM passages').get().n, 1); db.close();
+  base = await f.start();
+  assert.deepEqual(await response(base, '/api/books/sync-book/pinyin', { method: 'POST', headers: json, body: JSON.stringify({ text: '有意思' }) }), data);
+});
