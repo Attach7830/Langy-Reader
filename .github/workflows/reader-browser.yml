@@ -44,6 +44,7 @@ jobs:
           test "$(git rev-parse FETCH_HEAD)" = "329d771d2ab672662d37f0e3b0a651805c9dcbfa"
           git checkout --detach FETCH_HEAD
           git read-tree --reset -u "${GITHUB_SHA}^{tree}"
+          git fetch --no-tags origin be853d25bf37b0fdd8bc1029e80df8ab47c07b3c
           git show be853d25bf37b0fdd8bc1029e80df8ab47c07b3c:.github/workflows/reader-browser.yml > .github/workflows/reader-browser.yml
           git add .github/workflows/reader-browser.yml
           git commit -m "Improve touch reading, add project guides and store AI answers privately"
