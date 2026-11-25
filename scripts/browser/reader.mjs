@@ -206,6 +206,7 @@ try {
   await check('whole-book search jumps to an unrendered chapter, returns to the prior page and survives repeated jumps and reload', async () => {
     const before = await position();
     async function searchJump() {
+      await page.locator('#reader-more > summary').click();
       await page.locator('#book-tools-button').click(); await page.locator('#book-search-form [name=query]').fill('faro violeta');
       await page.getByRole('button', { name: 'Search whole book', exact: true }).click();
       const result = page.locator('.book-search-result'); await result.waitFor(); assert.equal(await result.count(), 1); await result.click();
