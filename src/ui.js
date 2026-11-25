@@ -3,6 +3,7 @@ import {
   LibraryBig, List, Maximize, Minus, Pencil, Plus, RotateCcw, Search, Settings2, SkipBack, SkipForward, Sparkles, Star, Upload, X, Headphones, Bookmark, Download,
 } from 'lucide';
 import { offlineRequest } from './offline.js';
+import { processTasks, requestProcessLabel } from './process-tasks.js';
 
 export const $ = (selector, root = document) => root.querySelector(selector);
 export const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -26,7 +27,17 @@ export function drawIcons() {
     LibraryBig, List, Maximize, Minus, Pencil, Plus, RotateCcw, Search, Settings2, SkipBack, SkipForward, Sparkles, Star, Upload, X, Headphones, Bookmark, Download } });
 }
 
-export async function api(path, { body, method, signal, keepalive } = {}) {
+export async function api(path, options = {}) {
+  const label = requestProcessLabel(path, options.method || 'GET'), finish = label ? processTasks.begin(label) : null;
+  try {
+    const result = await requestAPI(path, options); finish?.();
+    if (options.method && options.method !== 'GET' && /\/(?:learning|narration|reading-estimate|recordings|ivoox|ocr|audiobookshelf|imports|discovery)(?:\/|$)/u.test(path)) {
+      if (globalThis.window?.CustomEvent) window.dispatchEvent(new window.CustomEvent('langy-processes-changed'));
+    }
+    return result;
+  } catch (error) { finish?.(error); throw error; }
+}
+async function requestAPI(path, { body, method, signal, keepalive } = {}) {
   const form = body instanceof FormData;
   let response;
   try { response = await fetch(path, {
