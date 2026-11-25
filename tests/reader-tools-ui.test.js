@@ -150,13 +150,16 @@ test('folder editor loads its ABS link, saves a folder-scoped change and keeps e
 
 test('Process approval buttons submit an explicit decision and completed work respects the chosen delay', async (t) => {
   let panel; t.after(() => panel?.dispose()); const dom = await browser(t);
-  saveSettings({ processDismissMinutes: 2 }); let clock = 1000000, approved, jobs = [{ id: 'audiobookshelf:proposal', bookId: 'book', kind: 'audiobookshelf', state: 'waiting', label: 'Import audio', decision: 'proposal' }, { id: 'work', state: 'running', label: 'Work' }];
+  saveSettings({ processDismissMinutes: 2 }); let clock = 1000000, approved, reads = 0, jobs = [{ id: 'audiobookshelf:proposal', bookId: 'book', kind: 'audiobookshelf', state: 'waiting', label: 'Import audio', decision: 'proposal' }, { id: 'work', state: 'running', label: 'Work' }];
   globalThis.fetch = async (path, options = {}) => {
     if (path.endsWith('/decision')) { approved = JSON.parse(options.body); jobs = jobs.filter((job) => !job.decision); return Response.json({}); }
-    return Response.json({ accountId: 'approval-reader', jobs });
+    reads++; return Response.json({ accountId: 'approval-reader', jobs });
   };
   panel = processQueue({ now: () => clock }); panel.setAccount('approval-reader'); document.querySelector('#open-process-queue').click();
   await until(() => Boolean(document.querySelector('[data-process="work"]')));
+  const minutes = document.querySelector('#process-dismiss-minutes'); minutes.focus(); minutes.value = '3'; const before = reads;
+  window.dispatchEvent(new dom.window.CustomEvent('langy-processes-changed')); await until(() => reads > before); await delay(30);
+  assert.equal(minutes.value, '3', 'a status poll must preserve an in-progress edit'); minutes.value = '2'; minutes.blur();
   const replace = [...document.querySelectorAll('#process-list button')].find((button) => button.textContent === 'Import and replace Langy audio'); replace.click(); await until(() => Boolean(approved)); assert.deepEqual(approved, { replace: true });
   jobs = []; window.dispatchEvent(new dom.window.CustomEvent('langy-processes-changed')); await until(() => document.querySelector('[data-process="work"]')?.textContent.includes('Finished'));
   clock += 120001; const input = document.querySelector('#process-dismiss-minutes'); input.dispatchEvent(new dom.window.Event('change')); assert.equal(document.querySelector('[data-process="work"]'), null);
