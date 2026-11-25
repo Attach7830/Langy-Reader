@@ -30,7 +30,7 @@ try {
   zip.file('OEBPS/cover.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRZsAAAAASUVORK5CYII=', 'base64'));
   zip.file('OEBPS/nav.xhtml', '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Contents</title></head><body><nav epub:type="toc"><ol><li><a href="one.xhtml">Primera parte</a></li><li><a href="two.xhtml">Segunda parte</a></li><li><a href="notes.xhtml">Notas</a></li></ol></nav></body></html>');
   const paragraph = 'La viajera llegó a una casa tranquila cerca del río. En la ventana había una planta pequeña y un libro abierto. Quería conocer la historia del pueblo, así que se sentó a conversar con la mujer que cuidaba el jardín. Todavía quedaban muchas cosas por descubrir.';
-  for (const name of ['one', 'two']) zip.file(`OEBPS/${name}.xhtml`, `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>${name}</title></head><body><h1>${name === 'one' ? 'Primera parte' : 'Segunda parte'}</h1><p id="source">${paragraph} <a href="notes.xhtml#note">Leer nota</a></p>${Array.from({ length: 90 }, (_, i) => `<p id="passage-${i}">${paragraph} ${paragraph}</p>`).join('')}</body></html>`);
+  for (const name of ['one', 'two']) zip.file(`OEBPS/${name}.xhtml`, `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>${name}</title></head><body><h1>${name === 'one' ? 'Primera parte' : 'Segunda parte'}</h1><p id="source">${paragraph} <a href="notes.xhtml#note">Leer nota</a></p>${Array.from({ length: 90 }, (_, i) => `${name === 'two' && i === 45 ? '<p>En el puerto, el <em id="search-destination">faro violeta</em> ilumina la costa.</p>' : ''}<p id="passage-${i}">${paragraph} ${paragraph}</p>`).join('')}</body></html>`);
   zip.file('OEBPS/notes.xhtml', '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Notas</title></head><body><h1 id="note">Una nota del libro</h1><p>Esta explicación ayuda a comprender el pasaje.</p></body></html>');
   const uploaded = await context.request.post(base + '/api/books', { multipart: { title: 'Reader interactions', language: 'es', autoAudiobook: 'true', audiobookDelayMinutes: '7', file: { name: 'reader.epub', mimeType: 'application/epub+zip', buffer: await zip.generateAsync({ type: 'nodebuffer' }) } } });
   assert.equal(uploaded.status(), 201, await uploaded.text()); const book = await uploaded.json();
@@ -203,6 +203,30 @@ try {
     await open();
   });
   await open();
+  await check('whole-book search jumps to an unrendered chapter, returns to the prior page and survives repeated jumps and reload', async () => {
+    const before = await position();
+    async function searchJump() {
+      await page.locator('#book-tools-button').click(); await page.locator('#book-search-form [name=query]').fill('faro violeta');
+      await page.getByRole('button', { name: 'Search whole book', exact: true }).click();
+      const result = page.locator('.book-search-result'); await result.waitFor(); assert.equal(await result.count(), 1); await result.click();
+      await page.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 2 of 3');
+      await page.waitForFunction(() => {
+        const frame = document.querySelector('#viewer iframe'), marker = frame?.contentDocument?.getElementById('search-destination'); if (!marker) return false;
+        const range = marker.ownerDocument.createRange(); range.setStart(marker.firstChild, 0); range.setEnd(marker.firstChild, 4);
+        const box = range.getBoundingClientRect(), offset = frame.getBoundingClientRect(), host = document.querySelector('#viewer').getBoundingClientRect();
+        return box.width > 0 && box.left + offset.left < host.right && box.right + offset.left > host.left && box.top + offset.top < host.bottom && box.bottom + offset.top > host.top;
+      });
+      assert.ok(Number((await page.locator('#page-label').textContent()).match(/Page (\d+)/)[1]) > 1, 'the jump must reach the passage within the chapter');
+      assert.equal(await page.locator('#reader-message[data-problem="true"]').isVisible(), false);
+    }
+    await searchJump(); await page.locator('#return-location').click();
+    await page.waitForFunction(({ id, before }) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target === before, { id: book.id, before });
+    await searchJump(); const saved = await position(); await page.reload(); await page.locator('#viewer iframe').first().waitFor();
+    await page.waitForFunction(({ id, saved }) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target === saved, { id: book.id, saved });
+    assert.equal(await page.locator('#reader-message[data-problem="true"]').isVisible(), false);
+    await page.locator('#contents-button').click(); await page.getByRole('button', { name: 'Primera parte', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 1 of 3');
+  });
   await check('page buttons advance reliably without duplicate positions', async () => {
     const positions = [];
     for (let i = 0; i < 12; i++) { const before = await position(); await page.locator('#next').click(); await changed(before); positions.push(await position()); }
