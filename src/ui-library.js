@@ -375,14 +375,15 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
       $('#generate-book-audio').disabled = analysis.state !== 'ready' || !result.chapters.some((chapter) => chapter.narratable);
       const audio = result.narration.audio;
       const working = ['queued', 'assembling'].includes(audio.state);
+      const scheduled = result.narration.scheduled;
       $('#generate-book-audio').disabled ||= working;
-      $('#cancel-book-audio').hidden = !working;
+      $('#cancel-book-audio').hidden = !working && scheduled?.state !== 'waiting';
       $('#book-audio-status').textContent = audio.state === 'ready' ? audio.approximateSections
         ? `Complete book recording ready. Page timing is approximate in ${audio.approximateSections} sections; estimated words are not highlighted.`
         : 'Complete book recording ready. Chapter markers are included.'
         : audio.state === 'queued' ? `Generating book audio · ${audio.complete} / ${audio.total} sections`
           : audio.state === 'assembling' ? 'Finishing the complete book recording…'
-            : audio.state === 'cancelled' ? 'Generation cancelled. Completed work can be reused.' : '';
+            : audio.state === 'cancelled' ? 'Generation cancelled. Completed work can be reused.' : scheduled?.notice || '';
       const download = $('#book-audio-download');
       download.hidden = audio.state !== 'ready';
       if (audio.state === 'ready') { download.href = audio.url; download.download = learningBook.title + '.mp3'; }
@@ -401,7 +402,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
       const toolsWorking = audioUI.update(result, uploaded, imported);
       if (['queued', 'running'].includes(analysis.state) || ['queued', 'running'].includes(analysis.reading?.state)
         || ['queued', 'running'].includes(analysis.counting?.state)
-        || toolsWorking || working || uploaded.recordings.some((recording) => ['queued', 'syncing', 'assembling'].includes(recording.state))) {
+        || toolsWorking || working || scheduled?.state === 'waiting' || uploaded.recordings.some((recording) => ['queued', 'syncing', 'assembling'].includes(recording.state))) {
         learningTimer = setTimeout(() => void learningStatus(), 2200);
       }
     } catch (error) { message('#learning-error', error.message); }
@@ -544,6 +545,9 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     $('#remove-book').hidden = !isEdit;
     $('#file-field').hidden = isEdit;
     $('#import-source-field').hidden = isEdit;
+    $('#book-auto-audio').hidden = isEdit || snapshot.demo;
+    bookForm.elements.autoAudiobook.disabled = isEdit || snapshot.demo;
+    bookForm.elements.audiobookDelayMinutes.disabled = true;
     $('#book-source option[value="anna"]').disabled = !snapshot.archive?.available;
     $('#book-source option[value="anna"]').textContent = snapshot.archive?.available ? 'Anna’s Archive' : 'Anna’s Archive (self-hosted)';
     $('#archive-book-fields').hidden = true;
@@ -619,6 +623,9 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     if (typeof languages === 'string') { try { languages = JSON.parse(languages); } catch { languages = []; } }
     languagePicker.set(languages); showFolderLanguage(); showSlowImport(job);
     coverPicker.set(job.details || {});
+    bookForm.elements.autoAudiobook.checked = Boolean(job.details?.autoAudiobook);
+    bookForm.elements.audiobookDelayMinutes.value = job.details?.audiobookDelayMinutes ?? 10;
+    bookForm.elements.audiobookDelayMinutes.disabled = !bookForm.elements.autoAudiobook.checked;
   }
   $('#resume-slow-import').addEventListener('click', () => resumeSlow(snapshot.archive?.job));
   function renderDownloads(jobs) {
@@ -655,6 +662,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   $('#book-sort').addEventListener('change', render);
   $('#book-status-filter').addEventListener('change', render);
   $('#book-categories').addEventListener('change', showFolderLanguage);
+  bookForm.elements.autoAudiobook.addEventListener('change', () => { bookForm.elements.audiobookDelayMinutes.disabled = !bookForm.elements.autoAudiobook.checked; });
   $('#book-file').addEventListener('change', (event) => stageFile(event.target.files[0]));
   $('#file-field').addEventListener('dragover', (event) => {
     event.preventDefault();
@@ -675,6 +683,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     await metadataFields.ready();
     if (bookPending || !bookDialog.open || submittedBook !== editingBook || submittedFile !== selectedFile || submittedSource !== $('#book-source').value) return;
     const data = new FormData(bookForm);
+    if (!editingBook) data.set('autoAudiobook', String(bookForm.elements.autoAudiobook.checked));
     const rawLanguage = String(data.get('language') ?? '').trim();
     const language = parseLanguage(rawLanguage);
     if (rawLanguage && !language) return message('#book-error', 'Choose a language or enter a valid language code.');
