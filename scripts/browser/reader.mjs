@@ -41,7 +41,16 @@ try {
   const samples = 120 * 8000, wav = Buffer.alloc(44 + samples * 2);
   wav.write('RIFF', 0); wav.writeUInt32LE(36 + samples * 2, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16);
   wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(8000, 24); wav.writeUInt32LE(16000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(samples * 2, 40);
-  await page.route('**/browser-audio.wav', (route) => route.fulfill({ body: wav, contentType: 'audio/wav' }));
+  // Match Express sendFile's byte-range support so native media seeks can
+  // reach later chapters while preload="metadata" has buffered only the start.
+  await page.route('**/browser-audio.wav', (route) => {
+    const range = /^bytes=(\d+)-(\d*)$/u.exec(route.request().headers().range || '');
+    if (!range) return route.fulfill({ body: wav, contentType: 'audio/wav', headers: { 'Accept-Ranges': 'bytes' } });
+    const start = Number(range[1]), end = Math.min(wav.length - 1, range[2] ? Number(range[2]) : wav.length - 1);
+    if (start > end) return route.fulfill({ status: 416, headers: { 'Content-Range': `bytes */${wav.length}` } });
+    return route.fulfill({ status: 206, body: wav.subarray(start, end + 1), contentType: 'audio/wav',
+      headers: { 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${start}-${end}/${wav.length}` } });
+  });
   await page.route('**/api/books/' + book.id + '/narration*', (route) => route.fulfill({ json: { connected: true, recordings: [], audio: {
     id: 'browser', state: 'ready', url: '/browser-audio.wav', duration: 120,
     segments: [{ key: 'epub:0', start: 0, end: 50, scale: 1 }, { key: 'epub:1', start: 50, end: 110, scale: 1 }, { key: 'epub:2', start: 110, end: 120, scale: 1 }],
