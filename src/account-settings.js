@@ -31,6 +31,7 @@ export function accountSettings({ request, preferences, apply, busy = () => fals
     apply(mergePreferences({ ...defaults, progressSyncEnabled: local.progressSyncEnabled, syncDeviceName: local.syncDeviceName }, mergePreferences(snapshot.preferences, pending)));
   }
   function receive(remote) {
+    if (closed) return;
     if (!remote?.accountId || !Number.isSafeInteger(remote.revision) || !isObject(remote.preferences)) throw new Error('Reader settings could not be loaded.');
     const switched = accountId && accountId !== remote.accountId;
     if (switched) pending = {};

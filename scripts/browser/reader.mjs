@@ -10,13 +10,15 @@ import { setTimeout as delay } from 'node:timers/promises';
 const output = 'browser-results'; await mkdir(output, { recursive: true });
 const dir = await mkdtemp(join(tmpdir(), 'langy-browser-'));
 const base = 'http://127.0.0.1:19391', serverLog = [], errors = [], results = [];
-const server = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, PORT: '19391', READER_DATA: dir, READER_DEMO: '0', READER_PASSWORD: '', READER_LANGUAGE_URL: 'http://127.0.0.1:1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+const adminPassword = 'browser-administrator-test-password', memberPassword = 'browser-member-test-password';
+const adminHeaders = { Authorization: 'Basic ' + Buffer.from(`reader:${adminPassword}`).toString('base64') };
+const server = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, PORT: '19391', READER_DATA: dir, READER_DEMO: '0', READER_USER: 'reader', READER_PASSWORD: adminPassword, READER_SYNC_USER: '', READER_SYNC_PASSWORD: '', READER_LANGUAGE_URL: 'http://127.0.0.1:1' }, stdio: ['ignore', 'pipe', 'pipe'] });
 for (const pipe of [server.stdout, server.stderr]) pipe.on('data', (part) => { if (serverLog.length < 200) serverLog.push(part.toString()); });
 let browser, context, page;
 try {
   for (let i = 0; i < 100; i++) { if (await fetch(base + '/healthz').then((r) => r.ok).catch(() => false)) break; if (server.exitCode != null) throw new Error('Server failed: ' + serverLog.join('')); await delay(100); }
   browser = await chromium.launch({ headless: true });
-  context = await browser.newContext({ viewport: { width: 393, height: 851 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, serviceWorkers: 'block' });
+  context = await browser.newContext({ viewport: { width: 393, height: 851 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, serviceWorkers: 'block', extraHTTPHeaders: adminHeaders });
   await context.addInitScript(() => { if (window.top === window) { const prefs = JSON.parse(localStorage.getItem('langy-settings-v1') || '{}'); localStorage.setItem('langy-settings-v1', JSON.stringify({ ...prefs, progressSyncEnabled: false })); } });
   page = await context.newPage(); page.on('pageerror', (error) => errors.push(error.message));
   await page.route('**/api/ai/word', (route) => route.fulfill({ json: { text: 'A useful dictionary definition.', language: 'en' } }));
@@ -342,7 +344,7 @@ try {
     await page.locator('#clear-ai-cache').click(); await page.locator('#ai-cache-status').filter({ hasText: 'Saved AI answers cleared.' }).waitFor();
     await page.locator('#settings-back').click();
   });
-  const desktop = await browser.newContext({ viewport: { width: 1280, height: 900 } }), desktopPage = await desktop.newPage();
+  const desktop = await browser.newContext({ viewport: { width: 1280, height: 900 }, extraHTTPHeaders: adminHeaders, serviceWorkers: 'block' }), desktopPage = await desktop.newPage();
   desktopPage.on('pageerror', (error) => errors.push(error.message));
   await check('desktop library and project pages retain their full layout', async () => {
     await desktopPage.goto(base + '/#library'); await desktopPage.locator('#books a').first().waitFor();
@@ -378,6 +380,71 @@ try {
     assert.equal(await desktopPage.locator('#downloads-title').textContent(), 'Process queue');
     assert.equal(await desktopPage.locator('#open-offline-downloads').count(), 0);
     await desktopPage.screenshot({ path: output + '/process-queue-desktop.png' });
+    const accountId = (await (await desktop.request.get(base + '/api/settings/reader')).json()).accountId; let state = 'running';
+    await desktopPage.route('**/api/processes', (route) => route.fulfill({ json: { accountId, jobs: [{ id: 'browser-task', label: 'Test processing', state }], unavailable: false } }));
+    await desktopPage.evaluate(() => window.dispatchEvent(new CustomEvent('langy-processes-changed')));
+    await desktopPage.locator('[data-process="browser-task"]').waitFor(); state = 'completed';
+    await desktopPage.evaluate(() => window.dispatchEvent(new CustomEvent('langy-processes-changed')));
+    await desktopPage.locator('[data-process="browser-task"]').waitFor({ state: 'detached' });
+    await desktopPage.unroute('**/api/processes');
+  });
+  let memberContext, memberPage, memberBook;
+  await check('administrator creates an account and the new reader signs in to an empty private library', async () => {
+    await desktopPage.locator('#downloads-dialog [data-close]').click();
+    await desktopPage.goto(base + '/#settings/account'); await desktopPage.locator('#account-panel').waitFor({ state: 'visible' });
+    assert.equal(await desktopPage.locator('#account-name').textContent(), 'reader');
+    await desktopPage.locator('#account-new-name').fill('member'); await desktopPage.locator('#account-new-password').fill(memberPassword);
+    await desktopPage.locator('#account-create').click(); await desktopPage.locator('#account-users strong').filter({ hasText: /^member$/ }).waitFor();
+    await desktopPage.screenshot({ path: output + '/administrator-accounts.png' });
+    memberContext = await browser.newContext({ viewport: { width: 393, height: 851 }, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
+    memberPage = await memberContext.newPage(); memberPage.on('pageerror', (error) => errors.push(error.message));
+    await memberPage.goto(base + '/#library'); await memberPage.locator('#login-form').waitFor({ state: 'visible' });
+    await memberPage.locator('#login-form [name=username]').fill('member'); await memberPage.locator('#login-form [name=password]').fill(memberPassword);
+    await memberPage.locator('#login-form [type=submit]').click(); await memberPage.locator('#shared-books-control').waitFor({ state: 'visible' });
+    assert.equal(await memberPage.locator('#books .book-card').count(), 0);
+    assert.equal((await memberContext.request.get(base + '/api/books/' + book.id + '/file')).status(), 404);
+  });
+  await check('mobile readers can import privately and share an existing book from Edit', async () => {
+    await memberPage.locator('#import-book').click(); await memberPage.locator('#book-dialog').waitFor({ state: 'visible' });
+    assert.equal(await memberPage.locator('#book-form [name=shared]').isChecked(), false);
+    await memberPage.locator('#book-file').setInputFiles({ name: 'member.epub', mimeType: 'application/epub+zip', buffer: await zip.generateAsync({ type: 'nodebuffer' }) });
+    await memberPage.waitForFunction(() => document.querySelector('#book-form [name=title]').value === 'Reader interactions');
+    await memberPage.locator('#book-form [name=title]').fill('Member private book'); await memberPage.locator('#book-submit').click();
+    await memberPage.locator('#book-dialog').waitFor({ state: 'hidden' }); await memberPage.locator('#books .book-card').filter({ hasText: 'Member private book' }).waitFor();
+    memberBook = (await (await memberContext.request.get(base + '/api/library')).json()).books.find((item) => item.title === 'Member private book');
+    assert.ok(memberBook?.id); assert.equal(memberBook.shared, false);
+    assert.equal((await context.request.get(base + '/api/books/' + memberBook.id + '/file')).status(), 404);
+    await memberPage.locator('.book-mobile-menu').click(); await memberPage.locator('#book-actions-body button').filter({ hasText: /^Edit book details$/ }).click();
+    await memberPage.locator('#book-form [name=shared]').check(); await memberPage.locator('#book-submit').click(); await memberPage.locator('#book-dialog').waitFor({ state: 'hidden' });
+    assert.equal((await context.request.get(base + '/api/books/' + memberBook.id + '/file')).status(), 200);
+    assert.equal((await context.request.patch(base + '/api/books/' + memberBook.id, { data: { title: 'Cannot edit someone else’s book' } })).status(), 403);
+  });
+  await check('Show shared books persists across reloads while keeping the reader’s own shared books visible', async () => {
+    assert.equal((await context.request.patch(base + '/api/books/' + book.id, { data: { shared: true } })).status(), 200);
+    await memberPage.reload(); await memberPage.locator('#books .book-card').filter({ hasText: 'Reader interactions' }).waitFor();
+    assert.equal(await memberPage.locator('#books .book-card').count(), 2);
+    assert.equal(await memberPage.locator('[aria-label="Edit Reader interactions"]').count(), 0);
+    await memberPage.locator('#show-shared-books').uncheck();
+    await memberPage.waitForFunction(() => document.querySelectorAll('#books .book-card').length === 1);
+    await memberPage.waitForFunction(() => { const saved = JSON.parse(localStorage.getItem('langy-account-settings-v1') || '{}'); return saved.accountId && !Object.keys(saved.pending || {}).length; });
+    assert.equal((await (await memberContext.request.get(base + '/api/settings/reader')).json()).preferences.showSharedBooks, false);
+    await memberPage.reload(); await memberPage.locator('#books .book-card').filter({ hasText: 'Member private book' }).waitFor();
+    assert.equal(await memberPage.locator('#show-shared-books').isChecked(), false); assert.equal(await memberPage.locator('#books .book-card').count(), 1);
+    await memberPage.screenshot({ path: output + '/member-private-library.png' });
+  });
+  await check('sign-out clears local reader data and cached administrator Basic credentials cannot sign the member back in', async () => {
+    // Simulate the native app or an older browser still sending its saved Basic login.
+    await memberContext.setExtraHTTPHeaders(adminHeaders);
+    assert.equal((await (await memberContext.request.get(base + '/api/account')).json()).user.username, 'member');
+    const otherTab = await memberContext.newPage(); await otherTab.goto(base + '/#library'); await otherTab.locator('#shared-books-control').waitFor({ state: 'visible' });
+    await memberPage.goto(base + '/#settings/account'); await memberPage.locator('#account-panel').waitFor({ state: 'visible' });
+    assert.equal(await memberPage.locator('#account-admin').isVisible(), false);
+    memberPage.once('dialog', (dialog) => dialog.accept()); await memberPage.locator('[data-sign-out]').click();
+    await memberPage.locator('#login-form').waitFor({ state: 'visible' }); await otherTab.locator('#login-form').waitFor({ state: 'visible' });
+    assert.equal(await memberPage.evaluate(() => localStorage.getItem('langy-progress-v1')), null);
+    assert.equal(await memberPage.evaluate(() => localStorage.getItem('langy-auth-account')), null);
+    assert.equal((await (await memberContext.request.get(base + '/api/account')).json()).authenticated, false);
+    await memberPage.screenshot({ path: output + '/sign-in-mobile.png' }); await memberContext.close();
   });
   await desktop.close(); assert.deepEqual(errors, [], 'the app must not emit uncaught browser errors');
 } catch (error) { results.push({ name: 'browser setup', pass: false, error: error.stack }); console.error(error); }

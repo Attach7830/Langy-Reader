@@ -32,3 +32,5 @@ export async function cachedResponse(path) {
 export async function cacheJSON(path, value) {
   for (const name of await packCaches()) { const cache = await caches.open(name); if (await cache.match(path)) await cache.put(path, new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } })); }
 }
+
+export async function closeOfflineDatabase() { const current = dbPromise; dbPromise = undefined; if (current) { try { (await current).close(); } catch {} } }

@@ -54,8 +54,8 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
           job.state = 'importing'; job.outputBook ||= randomUUID(); persist(job);
           job.result = await library.importBook(job.outputBook, { path: temporary, originalname: 'searchable.pdf', size }, {
             title: `${book.title.slice(0, 244)} (OCR)`, author: book.author, ...ocrBookLanguages(book, job.languages),
-            categoryId: book.categoryId, coverStyle: book.coverStyle || 'auto',
-          });
+            categoryId: book.categoryId, coverStyle: book.coverStyle || 'auto', shared: Boolean(book.shared),
+          }, { id: book.owner || '' });
           job.pages = Number(response.headers.get('X-Langy-OCR-Pages')) || null;
           job.textPages = Number(response.headers.get('X-Langy-OCR-Text-Pages')) || null;
           job.state = 'ready'; persist(job); try { onImport(job.result); } catch {}

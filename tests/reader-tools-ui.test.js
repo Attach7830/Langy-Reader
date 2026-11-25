@@ -6,11 +6,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { libraryScreen } from '../src/ui-library.js';
 import { deviceSettings } from '../src/ui-device-settings.js';
 import { phraseHelp } from '../src/phrase-help.js';
+import { offlineDownloads } from '../src/offline-downloads.js';
+import { processTasks } from '../src/process-tasks.js';
+import { processQueue } from '../src/process-queue.js';
 
 async function until(check) { for (let i = 0; i < 100; i++) { if (check()) return; await delay(10); } throw new Error('Reader tool did not update'); }
 async function browser(t) {
   const dom = new JSDOM(await readFile(new URL('../index.html', import.meta.url), 'utf8'), { url: 'https://langy.test', pretendToBeVisual: true });
-  const names = ['window', 'document', 'localStorage', 'navigator', 'Option', 'Node', 'location', 'CustomEvent'];
+  const names = ['window', 'document', 'localStorage', 'navigator', 'Option', 'Node', 'location', 'CustomEvent', 'requestAnimationFrame', 'cancelAnimationFrame'];
   const saved = new Map(names.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)])), originalFetch = globalThis.fetch;
   for (const name of names) Object.defineProperty(globalThis, name, { configurable: true, value: dom.window[name] });
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
@@ -70,4 +73,47 @@ test('selecting a phrase offers one explicit contextual AI action and closes or 
   assert.equal(calls[0].path, '/api/ai/phrase'); assert.equal(calls[0].body.translationLanguage, 'pt'); assert.ok(calls[0].body.context.includes(calls[0].body.phrase));
   let resolve; pending = new Promise((done) => { resolve = done; }); document.querySelector('[data-explain-phrase]').click(); await delay(0);
   ui.clear(); assert.equal(calls.at(-1).signal.aborted, true); resolve({ text: 'Late answer' }); await delay(0); assert.equal(document.querySelector('#phrase-help').hidden, true); assert.equal(document.querySelector('[data-phrase-answer]').textContent, '');
+});
+
+test('shared books can be hidden independently, owned shared books remain visible and both import and edit expose sharing', async (t) => {
+  const dom = await browser(t); let preferences = { quietLibrary: true, showSharedBooks: true }, saved;
+  const books = [{ id: 'own', title: 'Own shared book', author: '', language: 'es', format: 'epub', shared: true, sharedWithMe: false, canEdit: true },
+    { id: 'theirs', title: 'Received shared book', author: '', language: 'es', format: 'epub', shared: true, sharedWithMe: true, canEdit: false }];
+  globalThis.fetch = async (path) => {
+    if (path === '/api/library') return Response.json({ books, categories: [], sharingAvailable: true, maxUpload: 1000000, demo: false, storage: { available: false } });
+    throw new Error('Unexpected path ' + path);
+  };
+  const ui = libraryScreen({ progress: {}, onRemove() {}, preferences: () => preferences, changePreferences(value) { saved = value; preferences = { ...preferences, ...value }; } }); t.after(() => ui.dispose()); await ui.refresh();
+  assert.equal(document.querySelector('#shared-books-control').hidden, false); assert.equal(document.querySelectorAll('#books .book-card').length, 2);
+  assert.equal(document.querySelector('[aria-label="Edit Received shared book"]'), null);
+  const toggle = document.querySelector('#show-shared-books'); toggle.checked = false; toggle.dispatchEvent(new dom.window.Event('change'));
+  assert.deepEqual(saved, { showSharedBooks: false }); assert.equal(document.querySelectorAll('#books .book-card').length, 1); assert.match(document.querySelector('#books').textContent, /Own shared book/u);
+  document.querySelector('[aria-label="Edit Own shared book"]').click(); assert.equal(document.querySelector('#book-sharing-controls').hidden, false); assert.equal(document.querySelector('#book-form').elements.shared.checked, true);
+  document.querySelector('#book-dialog').close(); document.querySelector('#import-book').click(); assert.equal(document.querySelector('#book-form').elements.shared.checked, false, 'new books are private by default');
+});
+
+test('completed offline downloads leave the queue automatically without removing the downloaded book', async (t) => {
+  await browser(t); let publish, removed = 0;
+  const job = { id: 'pack', book: { id: 'book', title: 'My offline book' }, state: 'downloading', progress: { percent: 40 } };
+  const queue = { subscribe(listener) { publish = listener; listener([job]); return () => {}; }, snapshot: () => [job], close() {}, remove() { removed++; } };
+  const ui = offlineDownloads({ queue }); t.after(() => ui.dispose());
+  assert.equal(document.querySelectorAll('#offline-download-list .download-card').length, 1);
+  job.state = 'complete'; publish([job]);
+  assert.equal(document.querySelectorAll('#offline-download-list .download-card').length, 0);
+  assert.deepEqual(processTasks.snapshot().downloads, []); assert.equal(removed, 0, 'clearing the queue must not delete the downloaded pack');
+  job.state = 'failed'; job.error = 'Reconnect and retry'; publish([job]);
+  assert.equal(document.querySelectorAll('#offline-download-list .download-card').length, 1);
+  assert.match(document.querySelector('#offline-download-list').textContent, /Retry download/u);
+});
+
+test('the process panel refreshes active server tasks and removes completed tasks without dismissal', async (t) => {
+  let panel; t.after(() => panel?.dispose());
+  await browser(t); processTasks.clearFinished(); processTasks.setDownloads([]); let state = 'running';
+  globalThis.fetch = async () => Response.json({ accountId: 'queue-reader', jobs: [{ id: 'server-task', state, label: 'Work in progress' }] });
+  panel = processQueue(); panel.setAccount('queue-reader');
+  document.querySelector('#open-process-queue').click();
+  await until(() => Boolean(document.querySelector('[data-process="server-task"]')));
+  state = 'completed'; window.dispatchEvent(new window.CustomEvent('langy-processes-changed'));
+  await until(() => !document.querySelector('[data-process="server-task"]'));
+  assert.equal(document.querySelector('#process-empty').hidden, false);
 });

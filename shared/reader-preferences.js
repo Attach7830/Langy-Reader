@@ -10,7 +10,7 @@ export const defaults = {
   autoHideDocks: false,
   tapToTurn: false, swipeToTurn: true, tapCenterFullscreen: true,
   doubleTapToTurn: true,
-  immersionMode: false, quietLibrary: true,
+  immersionMode: false, quietLibrary: true, showSharedBooks: true,
 };
 
 export const accountFields = Object.keys(defaults).filter((key) => !['progressSyncEnabled', 'syncDeviceName'].includes(key));

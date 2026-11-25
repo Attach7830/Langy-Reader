@@ -86,7 +86,8 @@ test('OPDS browses EPUBs, categories and search with bounded feeds, and download
   for (const path of ['/opds', '/opds/search.xml', '/opds/books/special/file.epub', '/opds/books/special/cover', '/api/storage', '/api/settings/opds']) {
     const unauthorized = await fetch(base + path);
     assert.equal(unauthorized.status, 401, path);
-    assert.match(unauthorized.headers.get('www-authenticate'), /^Basic /u);
+    if (path.startsWith('/opds')) assert.match(unauthorized.headers.get('www-authenticate'), /^Basic /u);
+    else assert.equal(unauthorized.headers.get('www-authenticate'), null, 'Web sign-in uses the app login form.');
   }
   assert.equal((await fetch(base + '/opds', { headers: { Authorization: 'Basic ' + Buffer.from('opds-test:wrong').toString('base64') } })).status, 401);
   const { feed: rootFeed } = await readFeed(base, '/opds', headers);

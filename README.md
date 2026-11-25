@@ -18,11 +18,23 @@ Open `http://YOUR_SERVER_IP:8088`. The first build downloads Qwen3 4B Instruct (
 
 The default listener is available on your LAN. Set `READER_BIND=127.0.0.1` in a copy of `.env.example` named `.env` if you prefer a local reverse proxy. Configure `READER_USER` and `READER_PASSWORD` there to enable sign-in. Use HTTPS when forwarding password-protected traffic beyond the server.
 
-Books, categories and reader preferences live in the data volume. Reading preferences follow the configured reader account across browsers and devices: appearance, language choices, pinyin, shortcuts, audio controls and selected recordings. The first browser imports its existing preferences into an empty account; later browsers load the saved account choices. Local caching keeps reading available offline and retries changed preferences when connected. Device names and the device’s progress-sync toggle stay local; reading positions use the separate progress-sync feature. Demo preferences are private to each expiring visitor session. Back up the data volume to preserve uploaded files, the catalog and account preferences.
+Books, categories and reader preferences live in the data volume. Reading preferences follow each reader account across browsers and devices: appearance, language choices, pinyin, shortcuts, audio controls and selected recordings. The first browser imports its existing preferences into an empty account; later browsers load the saved account choices. Local caching keeps reading available offline and retries changed preferences when connected. Device names and the device’s progress-sync toggle stay local; reading positions use the separate progress-sync feature. Demo preferences are private to each expiring visitor session. Back up the data volume to preserve uploaded files, the catalog and account preferences.
 
 Selecting an EPUB or PDF in **Import book** fills in its title, author and primary language from embedded metadata. When no language is declared, Langy samples readable text to estimate it. A missing title falls back to the filename; an undetectable language defaults to Spanish. Review or change the fields before importing, or use **Book details** (the pencil on a library card) afterward. Blank fields request automatic details; saved details are retained when the file supplies none. Your edits take precedence over automatic suggestions; language folders still apply their configured language. Detection runs locally without an AI API. Scanned or locked PDFs and files with incomplete metadata may need manual details. Books use one primary language by default; enable **Multiple languages in this book** to detect passages among explicitly selected languages.
 
 The stack also includes a local `language` service for lemma analysis and audio alignment. Its first build installs Spanish, English and Portuguese spaCy models, lookup data for additional supported languages, and the multilingual Whisper **small** model. These models run offline after the build and require no paid API. Set `READER_WHISPER_MODEL=base`, `small`, `medium` or `large-v3` in `.env` before building to choose the recognizer; larger models require more download space, RAM and CPU time. Rebuild both `language` and `reader` after changing it. Narration connects to your existing Kokoro server.
+
+## Accounts and shared books
+
+Set `READER_USER` and `READER_PASSWORD` in `.env` to enable accounts. On the first start after this update, that existing account becomes the instance administrator and keeps its library, categories, reader preferences, progress and reading history. There is no public registration. Open **Settings → Account** to create reader or administrator accounts, disable access, or reset a password. New passwords must contain 15–256 characters. Each user can change their own password there. Password changes, resets and disabling an account end its existing sessions.
+
+Every new account starts with an empty, private library. Enable **Share with other users on this server** in **Import book** or **Edit book details** to make that book readable by all other accounts. Sharing is off by default. Shared recipients can read, listen, download, bookmark and keep their own reading status. Only the owner can edit the book, remove it, change sharing, or manage its analysis, OCR and recordings. Categories stay private to their owner. **Show shared books** in the library hides received books when unchecked; it keeps your own books visible, including ones you share. That choice follows your account across sessions and devices. Hiding a shared book does not revoke access to it. Stopping sharing revokes future server access, while already-downloaded copies remain on recipients' devices.
+
+Preferences, bookmarks, AI answer caches, vocabulary exposure, reading time, read/currently-reading/set-aside status and browser/KOReader progress are separate for every reader, including when they read the same shared book. Sign out using **Settings → Account** before handing a device to another user. Signing out or switching accounts removes that account's offline packs and local reading data from the device; the server library stays saved. Web sessions use an HttpOnly cookie. OPDS and older clients can continue using HTTP Basic authentication with each user's own credentials. Use HTTPS for remote access.
+
+Users initially use the server's AI connection. They can save a separate model/API key in **Settings → AI connection**, or choose **Use server AI connection** to return to the default. Members can use the server-approved endpoint or OpenAI, OpenRouter and Groq; administrators can configure other endpoints. A member's API key and connection changes never change the administrator's connection. The shared Kokoro and Anna's Archive connections are administrator-managed. The existing Audiobookshelf connector remains exclusive to the initial instance owner, including automatic exports and listening-position sync, so another reader's private books or progress are not sent through that account.
+
+Keep `.env` unchanged after changing an administrator password in the app: the in-app password survives normal restarts. Explicitly changing the initial `READER_USER` or `READER_PASSWORD` in `.env` is an administrator recovery path and revokes that account's old sessions. Back up the entire data directory, including `accounts.sqlite`, and keep credentials outside Git. Removing `READER_PASSWORD` after accounts have been created does not reopen anonymous access. An installation that has never configured accounts can still run in the existing trusted-LAN, passwordless mode.
 
 ## Reading controls
 
@@ -50,7 +62,7 @@ On touch devices the library uses a collection selector, compact filters, cover 
 
 ## Offline reading and Android
 
-Choose **Book options → Save offline**, select whether to include a synced recording, then **Add to download queue**. The dialog closes immediately so you can keep reading or queue other books. Open **Downloads** in the library or mobile bottom navigation to see each book’s status, progress bar and transferred bytes, cancel a queued/active transfer, or retry a failed download. Books download one at a time. The device saves the queue and resumes interrupted jobs after reopening or reconnecting; interrupted transfers restart safely. Keep Langy open while downloads run—Android may suspend a WebView after the app is backgrounded. Byte counts measure the current book/audio file; the bar also includes dictionary and reader preparation.
+Choose **Book options → Save offline**, select whether to include a synced recording, then **Add to download queue**. The dialog closes immediately so you can keep reading or queue other books. Open **Process queue** in the library or mobile bottom navigation to see each book’s status, progress bar and transferred bytes, cancel a queued/active transfer, or retry a failed download. Completed tasks clear automatically from Process queue, including book downloads; failed tasks remain for retry or dismissal. Clearing a task never removes a downloaded book. Books download one at a time. The device saves the queue and resumes interrupted jobs after reopening or reconnecting; interrupted transfers restart safely. Keep Langy open while downloads run—Android may suspend a WebView after the app is backgrounded. Byte counts measure the current book/audio file; the bar also includes dictionary and reader preparation.
 
 Langy saves the EPUB/PDF, indexed text, available dictionary entries, bookmarks, the reader’s fonts/PDF resources and optional complete audio. Completed packs show **Downloaded** on the library card. Wait for the download to finish before disconnecting. Downloaded source files open from device storage immediately, including while online. A failed, cancelled or interrupted replacement keeps the previous completed pack. Remove a pack using the same dialog.
 
@@ -139,7 +151,7 @@ On Xteink with [CrossPoint firmware](https://github.com/crosspoint-reader/crossp
 
 - Server name: `Langy`.
 - Server URL: `http://YOUR_SERVER_IP:8088/opds`, or your installation's HTTPS hostname followed by `/opds`.
-- Username/password: the `READER_USER` and `READER_PASSWORD` from your server's `.env` when sign-in is enabled. CrossPoint supports HTTP Basic authentication; it cannot complete an interactive Cloudflare Access login.
+- Username/password: your own Langy account credentials when sign-in is enabled (the initial administrator uses the credentials configured in `.env` until changed). CrossPoint supports HTTP Basic authentication; it cannot complete an interactive Cloudflare Access login.
 
 Browse **All EPUB books**, **Recently added**, or **Categories**, or search by title/author. Feeds contain at most 20 entries per page for small readers. Downloads keep the original EPUB and its table of contents. The separate **PDF books** catalog serves original PDFs for compatible readers; Langy does not convert them for Xteink. Other OPDS clients can also use `/opds/books?format=all`.
 
@@ -149,7 +161,7 @@ OPDS supplies books to the device. Its firmware handles reading and dictionary l
 
 ## Sync reading progress with CrossPoint or KOReader
 
-Langy includes a single-account **KOReader Sync (KOSync)** endpoint at **`http://YOUR_SERVER_IP:8088/kosync`**. No extra container, model, or paid service is needed. Your Xteink can keep CrossPoint firmware; KOReader Sync is the protocol used to exchange reading positions. Open **Settings → Devices** in Langy to copy your installation's sync URL and set a name for each browser.
+Langy includes an account-specific **KOReader Sync (KOSync)** endpoint at **`http://YOUR_SERVER_IP:8088/kosync`**. No extra container, model, or paid service is needed. Your Xteink can keep CrossPoint firmware; KOReader Sync is the protocol used to exchange reading positions. Open **Settings → Devices** in Langy to copy your installation's sync URL and set a name for each browser.
 
 On CrossPoint, open **Settings → Connectivity → CrossPoint Sync**:
 
@@ -157,8 +169,8 @@ On CrossPoint, open **Settings → Connectivity → CrossPoint Sync**:
 | --- | --- |
 | Server type | **KoSync** |
 | Server URL | Your Langy address followed by `/kosync` |
-| Username | `READER_USER` (default `reader`) |
-| Password | Your `READER_PASSWORD` |
+| Username | Your Langy account username |
+| Password | Your current Langy account password |
 | Document matching | **Binary/content**, if your version offers a choice |
 
 Authenticate with that account. Account registration is disabled. For KOReader, choose the same custom server under **Progress sync**, use content-based document matching, and log in with these credentials. CrossPoint and KOReader versions may label their controls differently. On CrossPoint, open the reader menu and select **Sync Progress** before switching devices. **Sync On Sleep** is optional on versions that offer it; leave **Sync Clippings** off for this server. See the [CrossPoint sync guide](https://github.com/crosspoint-reader/crosspoint-reader/blob/develop/USER_GUIDE.md#367-koreader-sync-quick-setup).
@@ -169,7 +181,7 @@ Langy saves page changes after a short pause, checks on opening a book, when ret
 
 EPUB progress is mapped through source text locations and Unicode offsets, rather than device-specific page numbers. If a reader emits a location Langy cannot resolve, it resumes approximately and tells you. Reflowed pages can start a little before the saved word. PDFs share fixed page positions with compatible readers. The sync button retries an unavailable connection; local browser progress remains saved offline. You can disable syncing for a browser in **Settings → Devices**. This transfers reading position only, not bookmarks, annotations, vocabulary, or audio time.
 
-Device connections require a password. If you prefer separate sync credentials, add `READER_SYNC_USER` and `READER_SYNC_PASSWORD` to `.env` and restart the reader service; blank values use the corresponding Langy login. Browser-to-browser sync also works on a trusted LAN installation without a password, but native device authentication stays disabled until a password is configured. The sync password or its derived key is never sent to the browser settings API. Progress is stored in `progress.sqlite` in Langy's data volume; include the volume in backups. The public demo disables shared progress sync entirely.
+Device connections require a password. If the initial administrator prefers separate sync credentials, add `READER_SYNC_USER` and `READER_SYNC_PASSWORD` to `.env` and restart the reader service; blank values use that account's current Langy login. Other readers always use their own Langy username and password, with separate progress for the same document. Browser-to-browser sync also works on a trusted LAN installation without a password, but native device authentication stays disabled until a password is configured. The sync password or its derived key is never sent to the browser settings API. Progress is stored in `progress.sqlite` in Langy's data volume; include the volume in backups. The public demo disables shared progress sync entirely.
 
 Protocol requests, position mapping, browser conflicts, and offline recovery have automated coverage. Physical CrossPoint/KOReader devices still need an end-to-end check after deployment.
 
@@ -430,7 +442,7 @@ Saved API keys in Settings have **Remove saved API key** buttons. Each button as
 
 ### Reader workflow updates
 
-The **Process queue** at the bottom left brings server downloads, analysis, reading estimates, OCR, narration, alignment repair and Audiobookshelf transfers together with device book-pack downloads. Open a job’s Details to continue in its book tools; Anna’s Archive jobs retain their retry and slow-download controls. Slow browser requests appear while they run. You can browse and read while work continues. Device downloads still need Langy open; server jobs run independently.
+The **Process queue** at the bottom left brings server downloads, analysis, reading estimates, OCR, narration, alignment repair and Audiobookshelf transfers together with device book-pack downloads. Open a job’s Details to continue in its book tools; Anna’s Archive jobs retain their retry and slow-download controls. Slow browser requests appear while they run. Successful and cancelled tasks clear automatically; errors stay available for retry or dismissal. Downloaded books remain in the library. You can browse and read while work continues. Device downloads still need Langy open; server jobs run independently.
 
 Pinch EPUB text with a desktop trackpad to change the desktop font size; phone/tablet size remains separate. Plain arrow keys turn pages; **Ctrl+Left / Ctrl+Right** jump between sections. Select a phrase and choose **Explain phrase** for its meaning in context, in your translation language. Completed explanations follow your **Save and reuse AI answers** preference.
 

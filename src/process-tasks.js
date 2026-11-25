@@ -28,15 +28,15 @@ export function createProcessTasks({ delay = 450, now = Date.now, setTimer = set
     return (error) => {
       if (ended || !tasks.has(id)) return; ended = true;
       clearTimer(task.timer); delete task.timer;
-      if (!task.visible || error?.name === 'AbortError') tasks.delete(id);
-      else { task.state = error ? 'failed' : 'completed'; task.detail = error?.message || 'Finished'; task.finished = now(); }
+      if (!error || !task.visible || error.name === 'AbortError') tasks.delete(id);
+      else { task.state = 'failed'; task.detail = error.message; task.finished = now(); }
       const finished = [...tasks.values()].filter((item) => item.state !== 'running');
       for (const item of finished.slice(0, Math.max(0, finished.length - 40))) tasks.delete(item.id);
       emit();
     };
   }
   return { begin, snapshot, subscribe(listener) { listeners.add(listener); listener(snapshot()); return () => listeners.delete(listener); },
-    setDownloads(jobs) { downloads = jobs; emit(); },
+    setDownloads(jobs) { downloads = jobs.filter((job) => !['complete', 'completed', 'cancelled'].includes(job.state)); emit(); },
     setAccount(id) { if (owner && id !== owner) { for (const task of tasks.values()) clearTimer(task.timer); tasks.clear(); downloads = []; } owner = id; emit(); },
     clearFinished() { for (const task of tasks.values()) if (task.state !== 'running') tasks.delete(task.id); emit(); },
   };

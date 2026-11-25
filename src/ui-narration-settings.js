@@ -16,7 +16,7 @@ export function narrationSettings() {
       $('#kokoro-managed').hidden = config.configurable;
       $('#kokoro-managed').textContent = config.previewAudio
         ? 'Audio and podcast controls are available to preview. This demo has no Kokoro connection. Connect Kokoro in your self-hosted installation to generate narration.'
-        : 'The demo owner manages the narration connection.';
+        : config.managed ? 'Your administrator manages the narration connection. You can generate audio for books in your own library.' : 'The demo owner manages the narration connection.';
       for (const name of ['baseUrl', 'model', 'voice', 'speed']) fields['kokoro_' + name].value = config[name] ?? '';
       fields.kokoro_autoLanguages.checked = config.autoLanguageVoices !== false;
       for (const language of ['en', 'es', 'zh', 'pt']) fields['kokoro_voice_' + language].value = config.voicesByLanguage?.[language] || '';

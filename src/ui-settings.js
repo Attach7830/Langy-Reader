@@ -62,6 +62,7 @@ export function settingsPage({ preferences, apply, navigate, back }) {
   }
 
   function section(name) {
+    $('.settings-actions', form).hidden = name === 'account';
     for (const tab of $$('[data-settings-tab]')) tab.setAttribute('aria-current', String(tab.dataset.settingsTab === name));
     for (const panel of $$('[data-settings-panel]')) panel.hidden = panel.dataset.settingsPanel !== name;
     recording = undefined;
@@ -78,6 +79,8 @@ export function settingsPage({ preferences, apply, navigate, back }) {
     fields.baseUrl.placeholder = fields.provider.value === 'openai'
       ? 'http://host.docker.internal:8000/v1' : 'http://host.docker.internal:11434';
     fields.apiKey.placeholder = aiConfig?.hasKey ? 'Saved API key' : 'Optional';
+    $('#use-server-ai').hidden = !aiConfig?.canUseServerDefault;
+    $('#server-ai-note').hidden = !aiConfig?.inherited;
     if (!external && !fields.aiModel.value) fields.aiModel.value = aiConfig?.bundledModel || '';
     $('#ai-models').replaceChildren();
     message('#model-result');
@@ -106,6 +109,13 @@ export function settingsPage({ preferences, apply, navigate, back }) {
       model: fields.aiModel.value.trim(), apiKey: fields.apiKey.value,
     };
   }
+
+  $('#use-server-ai').addEventListener('click', async (event) => {
+    event.target.disabled = true;
+    try { aiConfig = await api('/api/settings/ai/override', { method: 'DELETE' }); fields.provider.value = aiConfig.provider; fields.baseUrl.value = aiConfig.baseUrl; fields.aiModel.value = aiConfig.model; fields.apiKey.value = ''; updateProvider(); }
+    catch (error) { message('#model-result', error.message); }
+    finally { event.target.disabled = false; }
+  });
 
   function open(tab) {
     if (pending) { active = true; return; }
