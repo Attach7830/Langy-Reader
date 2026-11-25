@@ -10,6 +10,7 @@ import { serializeRenderer } from './reader-navigation.js';
 import { readingFile } from './book-source.js';
 import { trackText } from './text-tracking.js';
 import { bindBookLinks } from './book-links.js';
+import { adjacentSection } from './section-navigation.js';
 import { annotateSyncPaths, koReaderXPath, parseKOReaderXPath, resolveKOReaderXPath,
   positionFraction, pointAtFraction, weightedPercentage, percentagePosition } from '../shared/epub-sync-position.js';
 
@@ -428,6 +429,20 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       get syncResolution() { return syncResolution; },
       get contents() { return epubContents(book); },
       get sectionIndex() { return activeSection; },
+      async sectionTarget(direction) {
+        const toc = epubContents(book).filter((entry) => entry.target);
+        const targets = toc.length ? toc.map((entry) => entry.target) : book.spine.spineItems.filter((item) => item.linear).map((item) => ({ index: item.index }));
+        const section = book.spine.get(activeSection);
+        await section.load(book.load.bind(book)); signal.throwIfAborted();
+        const cfi = new ePub.CFI(), seen = new Set(), entries = [];
+        for (const target of targets) {
+          const identity = `${target.index}:${target.fragment || ''}`; if (seen.has(identity)) continue; seen.add(identity);
+          const anchor = target.index === activeSection && target.fragment && section.document.getElementById(target.fragment);
+          entries.push({ target, position: { index: target.index, cfi: anchor ? section.cfiFromElement(anchor) : null } });
+        }
+        return adjacentSection(entries, { index: activeSection, cfi: rendition.currentLocation()?.start?.cfi || lastTarget }, direction,
+          (a, b) => a.index - b.index || (a.cfi && b.cfi ? cfi.compare(a.cfi, b.cfi) : -1));
+      },
       get pageNumber() { return rendition.location?.start?.displayed.page || 1; },
       get pageCount() { return rendition.location?.start?.displayed.total || 1; },
       get pageSections() {
