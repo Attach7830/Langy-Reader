@@ -2,7 +2,7 @@ import { chromium } from 'playwright';
 import JSZip from 'jszip';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -122,6 +122,36 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.locator('#ocr-provider').selectOption('builtin'); await page.locator('#ocr-service-save').click(); await page.locator('#ocr-service-status').filter({ hasText: 'Built-in OCR selected.' }).waitFor();
     await page.locator('#settings-back').click(); await page.unroute('**/api/settings/ocr');
+  });
+  await check('Edit book imports a cover image URL and clears the submitted URL', async () => {
+    let importedURL;
+    await page.route('**/api/books/' + book.id + '/cover', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      importedURL = route.request().postDataJSON().url;
+      await route.fulfill({ json: { ...book, thumbnailType: 'image/png', coverRevision: 'browser-cover', updatedAt: Date.now() } });
+    });
+    await page.locator(`[data-book="${book.id}"] .book-mobile-menu`).click();
+    await page.locator('#book-actions-body button').filter({ hasText: /^Edit book details$/ }).click();
+    await page.locator('#book-form [name=coverUrl]').fill('https://images.example.org/cover.png'); await page.locator('#book-import-cover').click();
+    await page.locator('#book-cover-error').filter({ hasText: 'Cover imported.' }).waitFor(); assert.equal(importedURL, 'https://images.example.org/cover.png');
+    assert.equal(await page.locator('#book-form [name=coverUrl]').inputValue(), '');
+    await page.locator('#book-dialog [data-close]').click(); await page.unroute('**/api/books/' + book.id + '/cover');
+  });
+  await check('imported fonts render in EPUB pages, reload from the device cache and can be removed', async () => {
+    await page.locator('#mobile-navigation [data-settings]').click(); await page.locator('[data-settings-tab=reading]').click();
+    await page.locator('#font-file').setInputFiles({ name: 'reading.woff2', mimeType: 'font/woff2', buffer: await readFile('node_modules/@fontsource/spectral/files/spectral-latin-400-normal.woff2') });
+    await page.locator('#font-import-name').fill('My reading font'); await page.locator('#import-font').click();
+    await page.locator('#font-import-status').filter({ hasText: 'Font imported and selected.' }).waitFor(); const id = await page.locator('#font-options').inputValue(); assert.ok(id.startsWith('custom-'));
+    await page.locator('#settings-form button[type=submit]').click(); await page.locator('#books .book-card').first().waitFor();
+    await open(); const family = 'LangyFont' + id.slice(7).replaceAll('-', '');
+    await page.waitForFunction((family) => [...(document.querySelector('#viewer iframe')?.contentDocument?.fonts || [])].some((font) => font.family.replaceAll('"', '') === family && font.status === 'loaded'), family);
+    assert.ok((await page.frameLocator('#viewer iframe').locator('body').evaluate((body) => getComputedStyle(body).fontFamily)).includes(family));
+    assert.equal(await page.evaluate(async (id) => Boolean(await (await caches.open('langy-fonts-' + localStorage.getItem('langy-offline-owner'))).match('/api/fonts/' + id.slice(7) + '/file')), id), true);
+    await page.route('**/api/fonts**', (route) => route.abort()); await page.reload(); await page.locator('#viewer iframe').first().waitFor();
+    await page.waitForFunction((family) => [...(document.querySelector('#viewer iframe')?.contentDocument?.fonts || [])].some((font) => font.family.replaceAll('"', '') === family && font.status === 'loaded'), family);
+    await page.unroute('**/api/fonts**'); await page.goto(base + '/#settings/reading'); await page.getByRole('button', { name: 'Remove font My reading font', exact: true }).click();
+    await page.locator('#font-import-status').filter({ hasText: 'Font removed.' }).waitFor(); assert.equal(await page.locator('#font-options').inputValue(), 'spectral');
+    await page.locator('#settings-form button[type=submit]').click(); await page.goto(base + '/#library');
   });
   await check('the Process queue closes on an outside tap', async () => {
     await page.locator('#mobile-navigation [data-open-processes]').click();
@@ -525,7 +555,7 @@ try {
   });
   await check('Remember me persists a secure session across browser reopening without saving the password locally', async () => {
     await memberPage.goto(base + '/#settings/account'); await memberPage.locator('#account-panel').waitFor({ state: 'visible' });
-    memberPage.once('dialog', (dialog) => dialog.accept()); await memberPage.locator('#account-panel [data-switch-user]').click();
+    await memberPage.locator('#account-panel [data-switch-user]').click(); await memberPage.locator('#sign-out-dialog').waitFor({ state: 'visible' }); assert.equal(await memberPage.locator('#sign-out-remove-downloads').isChecked(), false); await memberPage.locator('#sign-out-confirm').click();
     await memberPage.locator('#login-form').waitFor({ state: 'visible' }); await memberPage.locator('#login-form [name=rememberMe]').check();
     await memberPage.locator('#login-form [name=username]').fill('member'); await memberPage.locator('#login-form [name=password]').fill(memberPassword);
     await memberPage.screenshot({ path: output + '/remember-me-mobile.png' });
@@ -568,21 +598,39 @@ try {
     assert.equal(await memberPage.locator('#show-shared-books').isChecked(), false); assert.equal(await memberPage.locator('#books .book-card').count(), 1);
     await memberPage.screenshot({ path: output + '/member-private-library.png' });
   });
-  await check('sign-out clears local reader data and cached administrator Basic credentials cannot sign the member back in', async () => {
-    // Simulate the native app or an older browser still sending its saved Basic login.
+  let retainedPack, retainedOwner;
+  await check('Switch user keeps downloaded books by default and clears the active account', async () => {
     await memberContext.setExtraHTTPHeaders(adminHeaders);
     assert.equal((await (await memberContext.request.get(base + '/api/account')).json()).user.username, 'member');
     const otherTab = await memberContext.newPage(); await otherTab.goto(base + '/#library'); await otherTab.locator('#shared-books-control').waitFor({ state: 'visible' });
+    retainedOwner = await memberPage.evaluate(() => localStorage.getItem('langy-offline-owner')); retainedPack = 'langy-pack-' + retainedOwner + '-retained-test';
+    await memberPage.evaluate(async ({ name, book, bytes }) => {
+      const cache = await caches.open(name); await cache.put('/__langy_pack_ready__', Response.json({ book: book.id }));
+      await cache.put('/api/books/' + book.id + '/offline-data', Response.json({ book, analysis: { state: 'ready' } }));
+      await cache.put('/api/books/' + book.id + '/file', new Response(Uint8Array.from(atob(bytes), (character) => character.charCodeAt(0))));
+    }, { name: retainedPack, book: memberBook, bytes: await zip.generateAsync({ type: 'base64' }) });
     await memberPage.goto(base + '/#settings/account'); await memberPage.locator('#account-panel').waitFor({ state: 'visible' });
     assert.equal(await memberPage.locator('#account-admin').isVisible(), false);
     await memberPage.evaluate(async () => { const cache = await caches.open('langy-covers-signout-check'); await cache.put('/signout-cover', new Response('private cover')); });
-    memberPage.once('dialog', (dialog) => dialog.accept()); await memberPage.locator('#account-panel [data-switch-user]').click();
+    await memberPage.locator('#account-panel [data-switch-user]').click(); await memberPage.locator('#sign-out-dialog').waitFor({ state: 'visible' });
+    assert.equal(await memberPage.locator('#sign-out-remove-downloads').isChecked(), false); await memberPage.locator('#sign-out-confirm').click();
     await memberPage.locator('#login-form').waitFor({ state: 'visible' }); await otherTab.locator('#login-form').waitFor({ state: 'visible' });
-    assert.equal(await memberPage.evaluate(() => localStorage.getItem('langy-progress-v1')), null);
-    assert.equal(await memberPage.evaluate(() => localStorage.getItem('langy-auth-account')), null);
+    assert.equal(await memberPage.evaluate(() => localStorage.getItem('langy-progress-v1')), null); assert.equal(await memberPage.evaluate(() => localStorage.getItem('langy-auth-account')), null);
     assert.equal(await memberPage.evaluate(async () => (await caches.keys()).some((key) => key.startsWith('langy-covers-'))), false);
+    assert.equal(await memberPage.evaluate(async (name) => (await caches.keys()).includes(name), retainedPack), true);
     assert.equal((await (await memberContext.request.get(base + '/api/account')).json()).authenticated, false);
-    await memberPage.screenshot({ path: output + '/sign-in-mobile.png' }); await memberContext.close();
+    await otherTab.close(); await memberPage.screenshot({ path: output + '/sign-in-mobile.png' });
+  });
+  await check('retained downloads stay with their owner and removal is an explicit account-scoped choice', async () => {
+    async function login(name, password) { await memberPage.locator('#login-form [name=username]').fill(name); await memberPage.locator('#login-form [name=password]').fill(password); await memberPage.locator('#login-form [type=submit]').click(); await memberPage.locator('#shared-books-control').waitFor({ state: 'visible' }); }
+    async function leave(remove) { await memberPage.goto(base + '/#settings/account'); await memberPage.locator('#account-panel [data-switch-user]').click(); await memberPage.locator('#sign-out-dialog').waitFor({ state: 'visible' }); if (remove) await memberPage.locator('#sign-out-remove-downloads').check(); await memberPage.locator('#sign-out-confirm').click(); await memberPage.locator('#login-form').waitFor({ state: 'visible' }); }
+    await login('reader', adminPassword); assert.notEqual(await memberPage.evaluate(() => localStorage.getItem('langy-offline-owner')), retainedOwner);
+    assert.equal(await memberPage.locator(`[data-book="${memberBook.id}"]`).getByText('Downloaded', { exact: true }).count(), 0);
+    await leave(true); assert.equal(await memberPage.evaluate(async (name) => (await caches.keys()).includes(name), retainedPack), true);
+    await login('member', memberPassword); assert.equal(await memberPage.evaluate(() => localStorage.getItem('langy-offline-owner')), retainedOwner);
+    await memberPage.locator(`[data-book="${memberBook.id}"]`).getByText('Downloaded', { exact: true }).waitFor();
+    await leave(true); assert.equal(await memberPage.evaluate(async (name) => (await caches.keys()).includes(name), retainedPack), false);
+    await memberContext.close();
   });
   await check('demo starts with Mandarin and English story folders and both sample EPUBs open on mobile', async () => {
     const demoBase = 'http://127.0.0.1:19392';
