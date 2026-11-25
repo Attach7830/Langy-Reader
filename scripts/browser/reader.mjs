@@ -241,9 +241,9 @@ try {
     await searchJump(); await page.locator('#return-location').click();
     await page.waitForFunction(({ id, before }) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target === before, { id: book.id, before });
     assert.equal(await page.locator('#reading-subtitle').textContent(), 'Primera parte');
-    await searchJump(); const savedPage = await page.locator('#page-label').textContent(); await page.reload(); await page.locator('#viewer iframe').first().waitFor();
+    await searchJump(); const savedTarget = await position(); await page.reload(); await page.locator('#viewer iframe').first().waitFor();
     await page.waitForFunction(passageVisible);
-    assert.equal(await page.locator('#page-label').textContent(), savedPage);
+    assert.equal(await position(), savedTarget, 'reload must retain the exact search anchor even when web fonts change pagination');
     assert.equal(await page.locator('#reading-subtitle').textContent(), 'Segunda parte');
     assert.equal(await page.locator('#reader-message[data-problem="true"]').isVisible(), false);
     await page.locator('#contents-button').click(); await page.getByRole('button', { name: 'Primera parte', exact: true }).click();
