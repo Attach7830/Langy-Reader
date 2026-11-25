@@ -329,6 +329,10 @@ export async function openEpub({ host, url, position, language, settings, hooks,
     await new Promise(requestAnimationFrame);
     const resumed = await rendition.currentLocation();
     if (resumedTarget && resumed?.start) sourceAnchor = { target: resumedTarget, index: resumed.start.index, page: resumed.start.displayed.page };
+    // Web fonts can change column boundaries after the first display. Restore
+    // the requested text point once those fonts have finished, not its old column.
+    await Promise.all(rendition.getContents().map((contents) => contents.document.fonts?.ready));
+    if (resumedTarget) await display(resumedTarget);
     report(resumed);
 
     async function resize() {
@@ -336,7 +340,7 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       if (disposed || !next[0] || !next[1] || next.every((value, i) => value === dimensions[i])) return;
       dimensions = next;
       reflowing = true;
-      const target = (await rendition.currentLocation())?.start?.cfi || lastTarget;
+      const target = sourceAnchor?.target || lastTarget || (await rendition.currentLocation())?.start?.cfi;
       rendition.resize(...next, target);
       // epub.js queues a display when resized. Drain that display before the
       // next turn, or it can jump back to the location preceding the swipe.
@@ -549,7 +553,7 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       async apply(next) {
         const reflow = ['size', 'font', 'line', 'showPinyin'].some((key) => next[key] !== preferences[key]);
         const recolor = next.theme !== preferences.theme;
-        const target = rendition.currentLocation()?.start?.cfi || rendition.location?.start?.cfi;
+        const target = sourceAnchor?.target || lastTarget || rendition.currentLocation()?.start?.cfi;
         preferences = next;
         if ((reflow || recolor) && !fixed) {
           const css = stylesheet(preferences, fixed);
