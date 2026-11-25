@@ -543,6 +543,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       return rows.map((row) => ({ ...row, tokens: JSON.parse(row.tokens || '[]'), languages: JSON.parse(row.languages || '[]') }));
     },
     narration, queueBook: completeAudio.queue,
+    readyAudiobooks: () => db.prepare("SELECT book,id AS recording FROM book_audio WHERE state='ready' ORDER BY created DESC,rowid DESC").all(),
     recordings, rescans, ivoox, vocabulary, estimates,
   };
 }
