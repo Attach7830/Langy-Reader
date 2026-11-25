@@ -1,0 +1,45 @@
+name: PDF OCR checks
+on:
+  pull_request:
+    paths: ['ocr/**', 'language/pdf_ocr.py', 'language/test_pdf_ocr.py', 'language/install_ocr_models.py', 'language/Dockerfile', 'compose.ocr.yaml', '.github/workflows/ocr.yml']
+  push:
+    branches: [main]
+    paths: ['ocr/**', 'language/pdf_ocr.py', 'language/test_pdf_ocr.py', 'language/install_ocr_models.py', 'language/Dockerfile', 'compose.ocr.yaml', '.github/workflows/ocr.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  searchable-pdf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LANGY_OCR_MODEL_DIR: ${{ github.workspace }}/.ocr-models
+      PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: 'True'
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: ocr/requirements.txt
+      - run: sudo apt-get update && sudo apt-get install -y ocrmypdf tesseract-ocr-eng fonts-noto-cjk libgl1 libglib2.0-0
+      - run: pip install -r ocr/requirements.txt httpx
+      - name: Validate optional Compose service
+        run: docker compose -f compose.yaml -f compose.ocr.yaml config --quiet && docker compose -f compose.ocr.yaml config --quiet
+      - uses: actions/cache@v4
+        with:
+          path: .ocr-models
+          key: langy-paddle-models-${{ hashFiles('ocr/model-sources.json') }}
+      - name: Download and verify pinned model files
+        run: python ocr/install_models.py
+      - name: PDF geometry, service protocol and real Chinese recognition
+        env:
+          LANGY_TEST_PADDLE: '1'
+          PYTHONPATH: ocr
+        run: python -m unittest discover -s ocr -p 'test_*.py' -v
+      - name: Built-in OCR commands and scanned English PDF
+        env:
+          PYTHONPATH: language
+        run: python -m unittest discover -s language -p test_pdf_ocr.py -v
