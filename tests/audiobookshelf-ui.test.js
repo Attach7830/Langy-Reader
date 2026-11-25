@@ -25,7 +25,7 @@ async function fixture(t) {
       return Response.json(config);
     }
     if (path === '/api/audiobookshelf/libraries') return librariesUnavailable ? Response.json({ error: 'ABS is unavailable' }, { status: 503 }) : Response.json({ libraries });
-    if (path === '/api/library') return Response.json({ categories: [{ id: 'spanish', name: 'Spanish' }, { id: 'chinese', name: 'Mandarin' }] });
+    if (path === '/api/categories') return Response.json({ categories: [{ id: 'spanish', name: 'Spanish' }, { id: 'chinese', name: 'Mandarin' }] });
     if (path === '/api/settings/opds' || path === '/api/settings/sync') return Response.json({ available: false });
     if (path === '/api/books/book/narration') return Response.json({ audio: { state: 'ready', id: 'recording' }, recordings: [] });
     if (path.startsWith('/api/audiobookshelf/libraries/')) return Response.json({ results: [], total: 0 });

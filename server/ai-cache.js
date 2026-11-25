@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 // Increment when the generation instructions or output contract change.
 const version = 1;
-const methods = new Map(['word', 'summary', 'bookQuestion', 'characterGuide', 'readingLevel', 'discoveryPlan', 'discoveryRecommendations'].map((name) => [name, 1]));
+const methods = new Map(['word', 'summary', 'phrase', 'bookQuestion', 'characterGuide', 'readingLevel', 'discoveryPlan', 'discoveryRecommendations'].map((name) => [name, 1]));
 methods.set('vocabularyMeaning', 2);
 const canonical = (value) => JSON.stringify(value, (_, item) => item && typeof item === 'object' && !Array.isArray(item)
   ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]])) : item);

@@ -6,6 +6,7 @@ import express from 'express';
 import multer from 'multer';
 import { maxUpload, openLibrary, RequestError } from './books.js';
 import { openAISettings } from './ai.js';
+import { openProcesses } from './processes.js';
 import { openAICache } from './ai-cache.js';
 import { openThesaurus } from './thesaurus.js';
 import { vocabularyMeanings } from './vocabulary-meanings.js';
@@ -20,6 +21,7 @@ import { chapterFileLimit } from './chapter-audio.js';
 import { verifyStorage } from './storage-location.js';
 import { openBookDiscovery } from './book-discovery.js';
 import { openMandarin } from './mandarin.js';
+import { openBookPinyin } from './book-pinyin.js';
 import { openReaderSettings } from './reader-settings.js';
 import { openPDFOCR } from './pdf-ocr.js';
 import { openReadingTime } from './reading-time.js';
@@ -53,6 +55,7 @@ const ai = aiCache.wrap(aiSettings), withAI = (visitor, task) => aiCache.run(vis
 const discovery = openBookDiscovery(dir, { library, ai, demo, withAI });
 const lookupSynonyms = openThesaurus();
 const mandarin = openMandarin();
+const bookPinyin = openBookPinyin(dir, mandarin, { demo });
 const nativeLanguage = (visitor) => readerSettings.get(visitor).preferences.nativeLanguage || '';
 const learning = await openLearning(dir, library, demo, ai, { nativeLanguage, withAI });
 const readingTime = openReadingTime(dir, { section: (book, key) => learning.vocabulary.section(book, key) });
@@ -63,6 +66,7 @@ const vocabularyMeaning = vocabularyMeanings({ vocabulary: learning.vocabulary, 
 const archive = await openArchive(dir, { library, demo, onImport: (book, details) => learning.scheduleAudiobook(library.getBook(book.id), details) });
 const ocr = await openPDFOCR(dir, { library, demo, onImport: (book) => learning.ensure(library.getBook(book.id)) });
 const audiobookshelf = await openAudiobookshelf(dir, { library, learning, demo });
+const processes = openProcesses(dir, { library, archive, discovery, learning, demo, account: readingAccount });
 const uploadLimit = limits?.upload ?? maxUpload;
 const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 8, fieldSize: 1024 } });
 const audioUpload = multer({ dest: library.uploads, limits: { fileSize: maxAudioUpload, files: 1, fields: 1, fieldSize: 1024 } });
@@ -117,18 +121,21 @@ app.use('/api', (req, res, next) => {
 
 if (demo) {
   const identifyVisitor = await visitorMiddleware(dir);
-  app.use(['/api/library', '/api/categories', '/api/books', '/api/storage', '/api/vocabulary', '/api/discovery', '/api/settings/reader', '/api/settings/ai-cache', '/api/reading-time'], identifyVisitor);
-  app.post(['/api/ai/word', '/api/ai/summary', '/api/mandarin/word', '/api/mandarin/readings', '/api/mandarin/pinyin'], identifyVisitor);
+  app.use(['/api/library', '/api/categories', '/api/books', '/api/storage', '/api/vocabulary', '/api/discovery', '/api/processes', '/api/settings/reader', '/api/settings/ai-cache', '/api/reading-time'], identifyVisitor);
+  app.post(['/api/ai/word', '/api/ai/summary', '/api/ai/phrase', '/api/mandarin/word', '/api/mandarin/readings', '/api/mandarin/pinyin'], identifyVisitor);
   await library.pruneDemoBooks();
   await learning.prune();
   setInterval(() => library.pruneDemoBooks().then(() => learning.prune()).catch(console.error), 15 * 60_000).unref();
 } else {
   app.get('/api/settings/ai', (_, res) => res.json(ai.settings()));
   app.put('/api/settings/ai', async (req, res) => res.json(await ai.save(req.body ?? {})));
+  app.delete('/api/settings/ai/key', async (_req, res) => res.json(await ai.removeKey()));
   app.post('/api/settings/ai/models', async (req, res) => res.json({ models: await ai.models(req.body ?? {}) }));
   app.put('/api/settings/learning', (req, res) => res.json(learning.save(req.body ?? {})));
+  app.delete('/api/settings/learning/key', (_req, res) => res.json(learning.save({ ...learning.settings(), clearKey: true })));
   app.post('/api/settings/learning/voices', async (req, res) => res.json(await learning.voices()));
   app.put('/api/settings/archive', async (req, res) => res.json(await archive.save(req.body ?? {})));
+  app.delete('/api/settings/archive/key', async (_req, res) => res.json(await archive.removeKey()));
   app.post('/api/imports/anna', (req, res) => res.status(202).json(archive.queue(req.body ?? {})));
   app.get('/api/imports/anna', (req, res) => res.json({ jobs: archive.list() }));
   app.post('/api/imports/anna/batch', (req, res) => res.status(202).json(archive.queueBatch(req.body ?? {})));
@@ -150,6 +157,7 @@ app.patch('/api/settings/reader', (req, res) => {
 app.get('/api/settings/learning', (req, res) => res.json(learning.settings()));
 app.get('/api/settings/audiobookshelf', (_req, res) => res.json(audiobookshelf.settings()));
 app.put('/api/settings/audiobookshelf', async (req, res) => res.json(await audiobookshelf.save(req.body ?? {})));
+if (!demo) app.delete('/api/settings/audiobookshelf/key', async (_req, res) => res.json(await audiobookshelf.removeKey()));
 app.get('/api/audiobookshelf/libraries', async (_req, res) => res.json(await audiobookshelf.libraries()));
 app.get('/api/audiobookshelf/libraries/:id/items', async (req, res) => res.json(await audiobookshelf.items(req.params.id, Number(req.query.page || 0))));
 app.get('/api/books/:id/audiobookshelf', (req, res) => res.json(audiobookshelf.status(library.getBook(req.params.id, req.visitor))));
@@ -208,6 +216,7 @@ app.post('/api/books/:id/reading-time', (req, res) => {
   catch (error) { if (error.accountChanged) return res.status(409).json({ error: error.message, accountChanged: true }); throw error; }
 });
 app.get('/api/discovery', (req, res) => res.json(discovery.status(req.visitor)));
+app.get('/api/processes', (req, res) => res.json(processes.list(req.visitor)));
 app.post('/api/discovery', ...(demo ? [limitJobs({ perMinute: 6, perVisitor: 2 })] : []), (req, res) => res.status(202).json(discovery.queue(req.body ?? {}, req.visitor)));
 app.delete('/api/discovery', (req, res) => res.json(discovery.cancel(req.visitor)));
 app.get('/api/library', async (req, res) => {
@@ -260,6 +269,7 @@ function saveCategory(req, res, isNew) {
   for (const book of library.snapshot(req.visitor).books.filter((item) => item.categoryId === category.id)) learning.ensure(library.getBook(book.id, req.visitor));
   res.status(isNew ? 201 : 200).json(category);
 }
+app.get('/api/categories', (req, res) => res.json({ categories: library.snapshot(req.visitor).categories }));
 app.post('/api/categories', (req, res) => saveCategory(req, res, true));
 app.patch('/api/categories/:id', (req, res) => saveCategory(req, res, false));
 app.delete('/api/categories/:id', (req, res) => {
@@ -304,6 +314,7 @@ app.get('/api/archive/search', (req, res) => {
 app.delete('/api/books/:id', async (req, res) => {
   await library.removeBook(req.params.id, req.visitor);
   await learning.remove(req.params.id);
+  bookPinyin.forget(req.params.id);
   if (!demo) progressSync.forgetBook(req.params.id);
   res.sendStatus(204);
 });
@@ -402,11 +413,12 @@ app.get('/api/ai/status', async (_, res) => res.json(await ai.status()));
 app.post('/api/mandarin/word', ...demoDictionaryRequests, (req, res) => res.json(mandarin.lookup(req.body ?? {})));
 app.post('/api/mandarin/readings', ...demoDictionaryRequests, (req, res) => res.json(mandarin.readings(req.body ?? {})));
 app.post('/api/mandarin/pinyin', ...demoDictionaryRequests, (req, res) => res.json(mandarin.annotation(req.body ?? {})));
+app.post('/api/books/:id/pinyin', ...demoDictionaryRequests, (req, res) => res.json(bookPinyin.annotation(library.getBook(req.params.id, req.visitor), req.body ?? {}, req.visitor?.expires ?? null)));
 app.post('/api/ai/word', (req, res, next) => {
   if (req.body?.mode !== 'synonyms') return next();
   res.json(lookupSynonyms(req.body));
 });
-for (const [path, generate] of [['word', ai.word], ['summary', ai.summary]]) {
+for (const [path, generate] of [['word', ai.word], ['summary', ai.summary], ['phrase', ai.phrase]]) {
   app.post(`/api/ai/${path}`, ...demoGenerations, async (req, res) => {
     const controller = new AbortController();
     res.on('close', () => controller.abort());

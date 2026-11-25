@@ -541,6 +541,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
   }
   return {
     settings, save, voices, info, ensure, unit, chapters, remove, audioFile, prune, cancel,
+    textProcesses: () => [...textJobs].map(([book, job]) => ({ book, state: job.state, error: job.error?.message || null })),
     textSections(book) {
       const rows = db.prepare('SELECT key,ordinal,title,text,digest,tokens,languages FROM chapters WHERE book=? ORDER BY ordinal').all(book.id);
       if (!rows.length) throw new RequestError(409, 'Wait for this book’s text to finish indexing.');

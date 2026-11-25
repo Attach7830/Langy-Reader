@@ -26,3 +26,11 @@ test('Portuguese OCR produces Portuguese analysis metadata and narration uses a 
   const options = narrationOptions({ voice: 'ef_dora', model: 'kokoro', speed: 1, baseUrl: 'http://kokoro/v1' }, ['pt-PT', 'en', 'zh']);
   assert.equal(options.voiceMap.pt, 'pf_dora'); assert.equal(options.voiceMap.en, 'af_heart'); assert.equal(options.voiceMap.zh, 'zf_xiaobei');
 });
+
+test('Mandarin labels identify scripts and preserve old Chinese language names', async () => {
+  const { languageOptions, parseLanguage } = await import('../src/languages.js');
+  for (const [code, label] of [['zh', 'Mandarin Chinese'], ['zh-Hans', 'Mandarin Chinese (Simplified)'], ['zh-Hant', 'Mandarin Chinese (Traditional)']]) {
+    assert.equal(languageOptions.find((item) => item.code === code).label, label); assert.equal(parseLanguage(label), code);
+  }
+  assert.equal(parseLanguage('Mandarin'), 'zh'); assert.equal(parseLanguage('Simplified Chinese'), 'zh-Hans'); assert.equal(parseLanguage('Traditional Chinese'), 'zh-Hant');
+});

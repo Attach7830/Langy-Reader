@@ -7,6 +7,7 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
   const bindings = new Map(), pointers = new Map(), doc = host.ownerDocument, viewport = doc.defaultView.visualViewport;
   const originalTouch = host.style.touchAction;
   let gesture, pinch, multi = false, suppressUntil = 0, lastTap, tapTimer;
+  let desktopPinch, desktopTimer, nativeGestureUntil = 0;
   const zoomed = () => (viewport?.scale || 1) > 1.01;
   const ignored = (target) => Boolean((target?.nodeType === 1 ? target : target?.parentElement)?.closest?.(interactive));
   const selection = (source) => [source, doc].some((item) => item.getSelection?.() && !item.getSelection().isCollapsed);
@@ -37,8 +38,28 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
     for (const { style } of bindings.values()) if (style && style.textContent !== css) style.textContent = css;
   }
   function reset() {
+    finishDesktopPinch(true);
     clearTap(); if (pinch) onPinch?.({ phase: 'cancel', factor: pinch.factor });
     gesture = pinch = undefined; pointers.clear(); multi = false; suppressUntil = 0;
+  }
+  function finishDesktopPinch(cancelled = false) {
+    clearTimer(desktopTimer);
+    const current = desktopPinch; desktopPinch = undefined;
+    if (current) onPinch?.({ phase: cancelled || !current.changed || !enabled() ? 'cancel' : 'end', factor: current.factor, center: current.center });
+  }
+  function desktopAllowed(event, source) {
+    return onPinch && enabled() && !pointers.size && !zoomed() && !event.target?.closest?.(interactive.replace('a,', '').replace(',[role="link"]', ''))
+      && inside(point(event, source), host.getBoundingClientRect());
+  }
+  function startDesktopPinch(kind, event, source) {
+    clearTap(); gesture = undefined; suppressUntil = now() + 700;
+    desktopPinch = { kind, factor: 1, changed: false, center: point(event, source), initial: event.scale || 1 };
+    onPinch({ phase: 'start', factor: 1, center: desktopPinch.center });
+  }
+  function moveDesktopPinch(factor) {
+    desktopPinch.factor = Math.max(.4, Math.min(3, factor));
+    desktopPinch.changed ||= Math.abs(Math.log(desktopPinch.factor)) > .015;
+    onPinch({ phase: 'move', factor: desktopPinch.factor, center: desktopPinch.center });
   }
   function pair() {
     const [a, b] = [...pointers.values()]; if (!a || !b) return null;
@@ -94,7 +115,41 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
     const style = root.nodeType === 9 ? source.createElement('style') : null;
     if (style) source.head?.append(style);
     const listeners = [], listen = (name, handler) => { root.addEventListener(name, handler, { capture: true, passive: false }); listeners.push([name, handler]); };
+    listen('wheel', (event) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey || !Number.isFinite(event.deltaY) || !event.deltaY || !desktopAllowed(event, source)) return;
+      // Chromium and Firefox expose trackpad pinches as Ctrl+wheel events.
+      // Native Safari gesture events take precedence if both are delivered.
+      if (desktopPinch?.kind === 'native' || now() < nativeGestureUntil) { consume(event); return; }
+      if (!desktopPinch) {
+        if (!event.cancelable) return;
+        startDesktopPinch('wheel', event, source);
+      }
+      consume(event);
+      const units = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? host.clientHeight || 600 : 1;
+      moveDesktopPinch(desktopPinch.factor * Math.exp(-Math.max(-100, Math.min(100, event.deltaY * units)) * .01));
+      clearTimer(desktopTimer); desktopTimer = setTimer(() => finishDesktopPinch(), 180);
+    });
+    listen('gesturestart', (event) => {
+      if (pinch) { consume(event); return; }
+      if (!desktopAllowed(event, source) || !event.cancelable) return;
+      if (desktopPinch?.kind === 'wheel') finishDesktopPinch(true);
+      startDesktopPinch('native', event, source); consume(event);
+    });
+    listen('gesturechange', (event) => {
+      if (pinch) { consume(event); return; }
+      if (desktopPinch?.kind !== 'native') return;
+      consume(event);
+      if (!enabled()) { finishDesktopPinch(true); return; }
+      if (Number.isFinite(event.scale) && event.scale > 0) moveDesktopPinch(event.scale / desktopPinch.initial);
+    });
+    listen('gestureend', (event) => {
+      if (desktopPinch?.kind !== 'native') return;
+      consume(event); nativeGestureUntil = now() + 100;
+      if (Number.isFinite(event.scale) && event.scale > 0) moveDesktopPinch(event.scale / desktopPinch.initial);
+      finishDesktopPinch();
+    });
     listen('pointerdown', (event) => {
+      if (desktopPinch) finishDesktopPinch();
       policy();
       if (!pointers.size) { multi = false; gesture = undefined; suppressUntil = 0; }
       const start = point(event, source), rect = host.getBoundingClientRect();

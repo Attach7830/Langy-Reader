@@ -80,6 +80,8 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
   async function json(path, options, current) { const response = await call(path, options, current); if (response.status === 404) return null; return response.json(); }
   function save(body) {
     const operation = writing.then(async () => {
+      // Resolve key-only changes inside the serialized write, preserving newer settings.
+      if (typeof body === 'function') body = body();
       if (demo) throw new RequestError(403, 'Audiobookshelf is available on personal installations.');
       if (running) throw new RequestError(409, 'Wait for the Audiobookshelf transfer to finish before changing its connection.');
       if (typeof body.baseUrl !== 'string') throw new RequestError(422, 'Enter your Audiobookshelf server URL, including its port when needed.');
@@ -319,7 +321,7 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
   function publicJob({ server: _server, ...job }) { return job; }
   const timer = autoStart && !demo ? setInterval(() => void pump(), 3000) : null; timer?.unref();
   if (autoStart) void pump();
-  return { settings, save, libraries, items, attach, remote, push, queue, pump,
+  return { settings, save, removeKey: () => save(() => ({ ...settings(), clearKey: true })), libraries, items, attach, remote, push, queue, pump,
     status: (book) => ({ ...settings(), destination: destinationFor(book),
       automaticExportNotice: config.autoExport !== false && !validDestination(destinationFor(book, true)) ? 'Automatic export waiting: map this book’s category to an Audiobookshelf library and folder in Settings → Devices.' : '',
       jobs: [...jobs.values()].filter((job) => job.book === book.id && job.server === server()).slice(-10).map(publicJob) }),

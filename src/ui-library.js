@@ -36,7 +36,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   const categoryDialog = $('#category-dialog');
   const categoryForm = $('#category-form');
   const learningDialog = $('#learning-dialog');
-  let learningBook, learningTimer, libraryTimer;
+  let learningBook, learningTimer, libraryTimer, learningVisit = 0, learningParts = {}, learningPending = {};
   let snapshot = { categories: [], books: [], maxUpload: 120 * 1024 ** 2, demo: false };
   let category = 'all', editingBook, editingCategory, selectedFile, slowImport;
   let bookPending = false, categoryPending = false;
@@ -57,6 +57,12 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     const changed = next.size !== downloaded.size || [...next].some((id) => !downloaded.has(id)); downloaded = next;
     if (changed) render();
   }
+  const openProcess = (event) => {
+    const job = event.detail, book = snapshot.books.find((item) => item.id === job?.bookId);
+    if (book) { location.hash = '#library'; void showLearning(book); }
+    else if (job?.kind === 'archive') { location.hash = '#library'; const panel = $('#archive-downloads'); panel.open = true; panel.scrollIntoView?.({ block: 'center' }); }
+  };
+  surface.addEventListener('langy-open-process', openProcess);
   surface.addEventListener('langy-packs-changed', refreshDownloaded); surface.addEventListener('langy-offline-account', refreshDownloaded);
   void refreshDownloaded();
   $('#refresh-storage').addEventListener('click', () => void refreshStorage());
@@ -104,14 +110,16 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     const info = element('div', 'book-info');
     const meta = [book.author, languageName(book.language)].filter(Boolean).join(' · ');
     info.append(element('span', 'book-title', book.title), element('span', 'book-meta', meta));
-    if (book.starredAt) info.append(element('span', 'book-read-badge', 'Currently reading'));
-    if (book.setAsideAt) info.append(element('span', 'book-read-badge', 'Set aside'));
-    if (saved && book.starredAt) info.append(element('span', 'button secondary small book-resume-label', 'Resume'));
+    const actions = element('div', 'book-reading-actions');
+    if (book.starredAt) actions.append(element('span', 'book-read-badge', 'Currently reading'));
+    if (book.setAsideAt) actions.append(element('span', 'book-read-badge', 'Set aside'));
+    if (saved && book.starredAt) actions.append(element('span', 'button secondary small book-resume-label', 'Resume'));
     if (book.readAt) {
       const badge = element('span', 'book-read-badge', 'Read');
       badge.title = `Marked as read on ${new Date(book.readAt).toLocaleDateString()}`;
-      info.append(badge);
+      actions.append(badge);
     }
+    if (actions.childElementCount) info.append(actions);
     link.append(cover, info);
     if (saved) {
       const track = element('span', 'progress-track');
@@ -214,6 +222,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
 
   function render() {
     const quiet = preferences().quietLibrary !== false;
+    const uncategorized = snapshot.books.filter((book) => !book.categoryId).length;
+    if (category === 'uncategorized' && !uncategorized) category = 'all';
     expandedDetails = new Set([...books.querySelectorAll('.book-card details[open]')].map((detail) => detail.closest('.book-card').dataset.book));
     books.dataset.quiet = String(quiet);
     $('#library-details-toggle').textContent = quiet ? 'Show reading details' : 'Hide reading details';
@@ -226,7 +236,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     $('#library-description').textContent = category === 'all'
       ? 'Choose a book to read.'
       : current?.language ? `${languageName(current.language)} folder · Books added here inherit this language.` : current ? 'Books in this category.' : 'Books without a category.';
-    $('#mobile-category').replaceChildren(new Option('All books', 'all'), ...snapshot.categories.map((entry) => new Option(entry.name, entry.id)), new Option('Uncategorized', 'uncategorized'));
+    $('#mobile-category').replaceChildren(new Option('All books', 'all'), ...snapshot.categories.map((entry) => new Option(entry.name, entry.id)), ...(uncategorized ? [new Option('Uncategorized', 'uncategorized')] : []));
     $('#mobile-category').value = category; $('#mobile-edit-category').disabled = !current || snapshot.demo && current.id === 'spanish';
     $('#mobile-about-link').hidden = false;
     $('#demo-note').hidden = !snapshot.demo;
@@ -238,8 +248,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
       if (!snapshot.demo || entry.id !== 'spanish') row.append(editButton(`Edit category ${entry.name}`, () => showCategory(entry)));
       return row;
     });
-    const uncategorized = snapshot.books.filter((book) => !book.categoryId).length;
-    $('#categories').replaceChildren(...categoryRows, categoryButton('uncategorized', 'Uncategorized', uncategorized, 'folder'));
+    $('#categories').replaceChildren(...categoryRows, ...(uncategorized ? [categoryButton('uncategorized', 'Uncategorized', uncategorized, 'folder')] : []));
     const filter = search.value.trim().toLocaleLowerCase();
     const visible = snapshot.books.filter((book) =>
       (category === 'all' || (book.categoryId ?? 'uncategorized') === category) &&
@@ -279,14 +288,9 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     return snapshot;
   }
 
-  async function learningStatus() {
-    if (!learningDialog.open || !learningBook) return;
-    clearTimeout(learningTimer);
-    const id = learningBook.id;
-    try {
-      const [result, uploaded, imported] = await Promise.all([api(`/api/books/${id}/learning`), api(`/api/books/${id}/recordings`),
-        snapshot.demo ? Promise.resolve({ job: null }) : api(`/api/books/${id}/ivoox`)]);
-      if (learningBook?.id !== id || !learningDialog.open) return;
+  function renderLearning(id) {
+    const result = learningParts.result || { analysis: { state: 'loading' }, chapters: [], narration: { audio: { state: 'loading' } } };
+    const uploaded = learningParts.uploaded || { available: false, recordings: [] }, imported = learningParts.imported || { job: null };
       const analysis = result.analysis;
       $('#find-similar-books').disabled = analysis.state !== 'ready';
       $('#open-book-vocabulary').disabled = analysis.state !== 'ready';
@@ -400,15 +404,36 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
       });
       $('#learning-chapters').replaceChildren(...rows);
       const toolsWorking = audioUI.update(result, uploaded, imported);
+      clearTimeout(learningTimer);
       if (['queued', 'running'].includes(analysis.state) || ['queued', 'running'].includes(analysis.reading?.state)
         || ['queued', 'running'].includes(analysis.counting?.state)
         || toolsWorking || working || scheduled?.state === 'waiting' || uploaded.recordings.some((recording) => ['queued', 'syncing', 'assembling'].includes(recording.state))) {
         learningTimer = setTimeout(() => void learningStatus(), 2200);
       }
-    } catch (error) { message('#learning-error', error.message); }
+    message('#learning-partial-error', Object.values(learningParts.errors || {}).join(' · '));
+  }
+  async function learningStatus() {
+    if (!learningDialog.open || !learningBook) return;
+    clearTimeout(learningTimer);
+    const id = learningBook.id, visit = learningVisit;
+    const requests = [['result', `/api/books/${id}/learning`], ['uploaded', `/api/books/${id}/recordings`],
+      ...(!snapshot.demo ? [['imported', `/api/books/${id}/ivoox`]] : [])];
+    learningParts.errors = {};
+    await Promise.allSettled(requests.filter(([key]) => !learningPending[key]).map(async ([key, path]) => {
+      learningPending[key] = true;
+      try {
+        const value = await api(path);
+        if (visit !== learningVisit || learningBook?.id !== id || !learningDialog.open) return;
+        learningParts[key] = value; renderLearning(id);
+      } catch (error) {
+        if (visit !== learningVisit || learningBook?.id !== id || !learningDialog.open) return;
+        learningParts.errors[key] = error.message; renderLearning(id);
+      } finally { if (visit === learningVisit) delete learningPending[key]; }
+    }));
   }
 
   async function showLearning(book) {
+    learningVisit++; learningParts = {}; learningPending = {};
     audioUI.reset();
     learningBook = book;
     $('#edit-book-languages').hidden = snapshot.demo && book.id === 'sample';
@@ -789,5 +814,5 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   bookDialog.addEventListener('close', () => metadataFields.cancel());
   categoryDialog.addEventListener('cancel', (event) => { if (categoryPending) event.preventDefault(); });
 
-  return { refresh, render, dispose() { disposed = true; surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
+  return { refresh, render, dispose() { disposed = true; learningVisit++; surface.removeEventListener('langy-open-process', openProcess); surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
 }

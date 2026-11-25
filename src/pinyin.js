@@ -60,15 +60,17 @@ export function pinyinOverlay({ host, preferences, renderer, book, request }) {
         visible.push({ character, rect, left, top, vertical: style.writingMode.startsWith('vertical'), fontSize: Number.parseFloat(style.fontSize) || preferences().size });
       }
       if (!visible.length) continue;
-      let from = Math.max(0, visible[0].character.from - 24);
+      // Stable passage boundaries survive page size, font and viewport changes.
+      let from = Math.max(0, Math.floor(visible[0].character.from / 10000) * 10000 - 24);
       if (/[\uDC00-\uDFFF]/u.test(data.content.text[from])) from--;
-      const to = Math.min(data.content.text.length, visible.at(-1).character.to + 24);
+      const to = Math.min(data.content.text.length, Math.ceil(visible.at(-1).character.to / 10000) * 10000 + 24);
       if (to - from > 30000) continue;
       const key = `${from}:${to}`;
       let pronunciation = data.pages.get(key);
       if (!pronunciation) {
         try {
-          pronunciation = (await request('/api/mandarin/pinyin', { method: 'POST', signal, body: { text: data.content.text.slice(from, to) } })).characters;
+          const path = book().id ? `/api/books/${encodeURIComponent(book().id)}/pinyin` : '/api/mandarin/pinyin';
+          pronunciation = (await request(path, { method: 'POST', signal, body: { text: data.content.text.slice(from, to) } })).characters;
           data.pages.set(key, pronunciation);
           if (data.pages.size > 12) data.pages.delete(data.pages.keys().next().value);
         } catch (error) { if (error.name === 'AbortError') return; continue; }

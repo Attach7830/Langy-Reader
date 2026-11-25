@@ -1,6 +1,21 @@
 // Interface text only. Book content, generated explanations and dictionary
 // meanings keep their independently selected languages.
 const phrases = [
+  ['Process queue', 'Cola de procesos', 'Fila de processos', '处理队列'],
+  ['Processes', 'Procesos', 'Processos', '处理'],
+  ['Explain phrase', 'Explicar frase', 'Explicar expressão', '解释短语'],
+  ['Explaining phrase…', 'Explicando frase…', 'Explicando expressão…', '正在解释短语…'],
+  ['No processes in the queue.', 'No hay procesos en la cola.', 'Nenhum processo na fila.', '队列中没有任务。'],
+  ['Clear finished processes', 'Limpiar procesos terminados', 'Limpar processos concluídos', '清除已完成任务'],
+  ['In progress', 'En curso', 'Em andamento', '进行中'],
+  ['Needs attention', 'Necesita atención', 'Precisa de atenção', '需要处理'],
+  ['Finished', 'Terminado', 'Concluído', '已完成'],
+  ['Details', 'Detalles', 'Detalhes', '详情'],
+  ['Remove saved API key', 'Eliminar clave de API guardada', 'Remover chave de API salva', '删除已保存的 API 密钥'],
+  ['Are you sure you want to remove the saved API key?', '¿Seguro que quieres eliminar la clave de API guardada?', 'Tem certeza de que deseja remover a chave de API salva?', '确定要删除已保存的 API 密钥吗？'],
+  ['Are you sure you want to remove the saved membership key?', '¿Seguro que quieres eliminar la clave de membresía guardada?', 'Tem certeza de que deseja remover a chave de membro salva?', '确定要删除已保存的会员密钥吗？'],
+  ['Saved API key removed.', 'Clave de API guardada eliminada.', 'Chave de API salva removida.', '已删除保存的 API 密钥。'],
+  ['Saved membership key removed.', 'Clave de membresía guardada eliminada.', 'Chave de membro salva removida.', '已删除保存的会员密钥。'],
   ['Reading controls', 'Controles de lectura', 'Controles de leitura', '阅读控制'],
   ['Swipe to turn pages', 'Deslizar para pasar de página', 'Deslizar para virar a página', '滑动翻页'],
   ['Tap left or right edge to turn pages', 'Tocar los bordes para pasar de página', 'Tocar nas bordas para virar a página', '点按左右边缘翻页'],

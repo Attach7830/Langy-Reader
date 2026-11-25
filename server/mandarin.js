@@ -1,4 +1,5 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { hasHan, hanPattern } from '../shared/language.js';
@@ -7,6 +8,8 @@ import { RequestError } from './books.js';
 
 export const mandarinFile = fileURLToPath(new URL('./thesaurus-data/mandarin.sqlite', import.meta.url));
 export function openMandarin(path = mandarinFile) {
+  const identity = existsSync(path) ? createHash('sha256').update(readFileSync(path)).digest('hex') : 'fallback';
+  const revision = `pinyin-pro-3.29.5-cedict-v1-${identity}`;
   const db = existsSync(path) ? new DatabaseSync(path, { readOnly: true }) : null;
   const find = db?.prepare('SELECT traditional,simplified,pinyin,meanings FROM words WHERE word=? ORDER BY rowid');
   const character = db?.prepare('SELECT pinyin,meaning FROM characters WHERE character=?');
@@ -94,5 +97,5 @@ export function openMandarin(path = mandarinFile) {
     if (typeof body.text !== 'string' || body.text.length > 30000) throw new RequestError(422, 'Pinyin supports passages of up to 30,000 characters.');
     return { characters: pronounce(body.text).map(({ character, from, to, pinyin }) => ({ character, from, to, pinyin })) };
   }
-  return { lookup, readings, annotation, close: () => db?.close() };
+  return { lookup, readings, annotation, revision, close: () => db?.close() };
 }

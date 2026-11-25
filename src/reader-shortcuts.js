@@ -2,6 +2,11 @@ import { eventKey } from './settings.js';
 
 export function readingShortcut(event, settings) {
   if (event.defaultPrevented || event.target?.closest?.('input, textarea, select, [contenteditable]')) return null;
+  if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && ['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+    if (event.repeat || event.target?.ownerDocument?.getSelection?.()?.toString()) return null;
+    event.preventDefault(); return event.key === 'ArrowLeft' ? 'previousSection' : 'nextSection';
+  }
+  if (event.shiftKey) return null;
   const key = eventKey(event), keys = settings.keys;
   if (!key || key === 'Space' && event.target?.closest?.('button, a')) return null;
   if (key === 'Space' && settings.audioEnabled) {

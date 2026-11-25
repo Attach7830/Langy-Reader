@@ -102,7 +102,7 @@ test('adding a pack closes its dialog immediately and download progress stays vi
   await ui.open({ id: 'a', title: 'First book' }); document.querySelector('#offline-save').click(); await delay(5);
   assert.equal(document.querySelector('#offline-dialog').open, false); assert.match(document.querySelector('#offline-status').textContent, /1 KiB \/ 2 KiB/u);
   await ui.open({ id: 'b', title: 'Second book' }); document.querySelector('#offline-save').click(); await delay(5);
-  document.querySelector('#open-offline-downloads').click();
+  document.querySelector('#downloads-dialog').showModal();
   assert.equal(document.querySelector('#downloads-dialog').open, true); assert.equal(document.querySelectorAll('.download-card').length, 2);
   assert.equal(document.querySelector('[data-download="a"] progress').value, 70); assert.match(document.querySelector('[data-download="b"]').textContent, /Queued/u);
   const cancel = document.querySelector('[data-download="a"] button');
