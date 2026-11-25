@@ -85,7 +85,8 @@ const pageGestures = pageNavigation({ host: $('.reading-main'),
   canPan: () => viewer.classList.contains('pdf-panning'),
   centerTap: () => { words.clear(); void toggleFullscreen(); },
   centerDoubleTap: () => void togglePlaybackFromGesture(),
-  swipeUp: () => showTemporaryAudio(), swipeDown: () => contents(),
+  swipeUp: () => { if ($('#narration-player').hidden) contents(); },
+  swipeDown: () => { if ($('#narration-player').hidden) contents(); else closeAudioToolbar(); },
   pinch: pinchText,
   turn: (direction) => { viewer.focus({ preventScroll: true }); void move(direction); },
 });
@@ -741,11 +742,12 @@ function toggleAudioToolbar() {
   viewer.focus({ preventScroll: true });
   toast(visible ? 'Audio toolbar hidden' : 'Audio toolbar shown');
 }
-$('#narration-close').addEventListener('click', () => {
+function closeAudioToolbar() {
   audioPeek.reset();
   settings = saveSettings({ ...settings, audioToolbarHidden: true });
   audio.apply(); syncFullscreen(); viewer.focus({ preventScroll: true });
-});
+}
+$('#narration-close').addEventListener('click', closeAudioToolbar);
 function showTemporaryAudio() {
   words.clear();
   if (!settings.audioEnabled) settings = saveSettings({ ...settings, audioEnabled: true, audioToolbarHidden: true });
