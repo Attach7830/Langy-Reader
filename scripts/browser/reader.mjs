@@ -50,7 +50,7 @@ try {
   }
   async function check(name, action) {
     try { await action(); results.push({ name, pass: true }); console.log('PASS', name); }
-    catch (error) { const diagnostic = await page.evaluate(() => { const prefs = JSON.parse(localStorage.getItem('langy-settings-v1') || '{}'), audio = document.querySelector('#narration-audio'); return { size: prefs.size, touchSize: prefs.touchSize, touch: matchMedia('(pointer:coarse)').matches, scale: visualViewport.scale, feedback: document.querySelector('#text-size-feedback')?.textContent, status: document.querySelector('#narration-status')?.textContent, src: audio?.getAttribute('src'), ready: audio?.readyState, paused: audio?.paused, time: audio?.currentTime, selection: document.querySelector('#viewer iframe')?.contentWindow?.getSelection()?.toString(), error: audio?.error?.message }; }).catch(() => null); results.push({ name, pass: false, error: error.stack, diagnostic }); console.error('FAIL', name, error.message, JSON.stringify(diagnostic)); await page.screenshot({ path: `${output}/${results.length}-failure.png` }).catch(() => {}); }
+    catch (error) { const diagnostic = await page.evaluate(() => { const prefs = JSON.parse(localStorage.getItem('langy-settings-v1') || '{}'), audio = document.querySelector('#narration-audio'); return { page: document.querySelector('#page-label')?.textContent, section: document.querySelector('#position-detail')?.textContent, size: prefs.size, touchSize: prefs.touchSize, touch: matchMedia('(pointer:coarse)').matches, scale: visualViewport.scale, feedback: document.querySelector('#text-size-feedback')?.textContent, status: document.querySelector('#narration-status')?.textContent, src: audio?.getAttribute('src'), ready: audio?.readyState, paused: audio?.paused, time: audio?.currentTime, selection: document.querySelector('#viewer iframe')?.contentWindow?.getSelection()?.toString(), error: audio?.error?.message }; }).catch(() => null); results.push({ name, pass: false, error: error.stack, diagnostic }); console.error('FAIL', name, error.message, JSON.stringify(diagnostic)); await page.screenshot({ path: `${output}/${results.length}-failure.png` }).catch(() => {}); }
   }
   async function swipe(dx, dy = 0, wiggle = false) {
     const box = await page.locator('.reading-main').boundingBox(), x = box.x + box.width * .65, y = box.y + box.height * .5;
@@ -221,6 +221,7 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({ path: output + '/settings-mobile.png' });
     await page.locator('#settings-back').click(); await page.waitForURL('**/#read/' + book.id);
+    console.log('Expected resumed position', before);
     await page.waitForFunction(({ id, before }) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target === before, { id: book.id, before });
     await page.locator('#viewer iframe').first().waitFor();
     assert.equal(await page.locator('#pinyin-toggle').isVisible(), false);
@@ -231,6 +232,7 @@ try {
     await page.locator('#pinyin-toggle').click(); assert.equal(await page.locator('#pinyin-toggle').getAttribute('aria-pressed'), 'false');
     const edges = await page.evaluate(() => { const host = document.querySelector('#viewer').getBoundingClientRect(), area = document.querySelector('.reading-main').getBoundingClientRect(); return { left: host.left - area.left, right: area.right - host.right, radius: getComputedStyle(document.querySelector('#viewer')).borderRadius }; });
     assert.equal(edges.left, 0); assert.equal(edges.right, 0); assert.equal(edges.radius, '0px');
+    await page.screenshot({ path: output + '/reader-mobile.png' });
   });
   await check('About and How to are available to self-hosted readers and fit a phone screen', async () => {
     await page.goto(base + '/#about'); await page.locator('#about-title').waitFor({ state: 'visible' });
