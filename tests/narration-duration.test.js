@@ -7,7 +7,7 @@ import { narration } from '../src/narration.js';
 
 async function until(check) { for (let n = 0; n < 100; n++) { if (check()) return; await delay(10); } throw new Error('Narration UI timed out'); }
 
-async function fixture(t, { words = [], timings = [], visible = () => true } = {}) {
+async function fixture(t, { words = [], timings = [], visible = () => true, roundSeek = (time) => time } = {}) {
   const dom = new JSDOM(await readFile(new URL('../index.html', import.meta.url), 'utf8'), { url: 'https://langy.test' });
   const values = { window: dom.window, document: dom.window.document, Option: dom.window.Option, navigator: dom.window.navigator,
     requestAnimationFrame: () => 0, cancelAnimationFrame() {} };
@@ -18,6 +18,8 @@ async function fixture(t, { words = [], timings = [], visible = () => true } = {
     setActionHandler() {}, setPositionState(value) { if (value) positions.push(value); },
   } });
   const audio = document.querySelector('#narration-audio'), root = document.querySelector('#viewer');
+  let currentTime = 0;
+  Object.defineProperty(audio, 'currentTime', { configurable: true, get: () => currentTime, set: (time) => { currentTime = roundSeek(time); } });
   Object.defineProperty(audio, 'duration', { configurable: true, get: () => 3600 });
   audio.pause = () => {}; audio.load = () => { audio.currentTime = 0; }; audio.play = async () => {};
   const recording = { id: 'recording', state: 'ready', url: '/book.mp3', duration: 3600,
@@ -60,6 +62,14 @@ test('manual page turns cannot be pulled back by old audio timeupdates before th
   await f.player.endNavigation(navigation);
   assert.equal(f.audio.currentTime, 1800, 'manual turns seek to the new section before audio following resumes');
   f.tick(2000); await delay(5); assert.equal(f.navigations.length, before);
+});
+
+test('a rounded audio seek at a chapter boundary does not return the reader to the previous chapter', async (t) => {
+  const f = await fixture(t, { roundSeek: (time) => time === 1800 ? 1799.999999 : time });
+  const navigation = f.player.beginNavigation(); f.page('epub:1');
+  await f.player.endNavigation(navigation); await delay(20);
+  assert.equal(f.audio.currentTime, 1799.999999, 'the media clock can round a chapter-start seek down');
+  assert.equal(f.navigations.length, 0, 'manual chapter navigation must remain in the new chapter');
 });
 
 test('a page with unmatched audio words keeps its new position instead of snapping to the chapter beginning', async (t) => {
