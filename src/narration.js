@@ -254,7 +254,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
         if (epoch !== lifecycle) return;
         const choices = result.recordings || [];
         recordingCount = choices.length;
-        recordingChoice.replaceChildren(new Option('Generated narration', ''), ...choices.map(({ id, name }) => new Option(name, id)));
+        recordingChoice.replaceChildren(new Option('Latest recording', ''), ...choices.map(({ id, name }) => new Option(name, id)));
         recordingChoice.value = choices.some((item) => item.id === selected) ? selected : '';
         $('#recording-choice').hidden = !choices.length;
         await updateRecording(result);

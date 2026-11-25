@@ -11,14 +11,15 @@ export async function downloadedBooks() {
 }
 export async function savedReadingFile(path, { signal } = {}) {
   signal?.throwIfAborted();
-  const match = /^\/api\/books\/([^/]+)\/file$/u.exec(path);
+  const url = new URL(path, 'https://local.test'), match = /^\/api\/books\/([^/]+)\/file$/u.exec(url.pathname), revision = url.searchParams.get('revision');
   if (!match || !globalThis.caches || !offlineOwner()) return null;
   const prefix = `${packPrefix()}${match[1]}-`;
   try {
     for (const name of (await caches.keys()).filter((entry) => entry.startsWith(prefix)).reverse()) {
       const cache = await caches.open(name);
       if (!await cache.match('/__langy_pack_ready__')) continue;
-      const file = await cache.match(path); signal?.throwIfAborted(); if (file) return file;
+      if (revision) { const metadata = await cache.match(`/api/books/${match[1]}/offline-data`); if (!metadata || (await metadata.json()).book?.contentRevision !== revision) continue; }
+      const file = await cache.match(url.pathname); signal?.throwIfAborted(); if (file) return file;
     }
   } catch (error) { if (signal?.aborted) throw error; }
   return null;

@@ -36,7 +36,7 @@ export function createProcessTasks({ delay = 450, now = Date.now, setTimer = set
     };
   }
   return { begin, snapshot, subscribe(listener) { listeners.add(listener); listener(snapshot()); return () => listeners.delete(listener); },
-    setDownloads(jobs) { downloads = jobs.filter((job) => !['complete', 'completed', 'cancelled'].includes(job.state)); emit(); },
+    setDownloads(jobs, { includeFinished = false } = {}) { downloads = includeFinished ? jobs : jobs.filter((job) => !['complete', 'completed', 'cancelled'].includes(job.state)); emit(); },
     setAccount(id) { if (owner && id !== owner) { for (const task of tasks.values()) clearTimer(task.timer); tasks.clear(); downloads = []; } owner = id; emit(); },
     clearFinished() { for (const task of tasks.values()) if (task.state !== 'running') tasks.delete(task.id); emit(); },
   };

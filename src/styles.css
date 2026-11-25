@@ -222,6 +222,18 @@ html[data-immersion="true"] #abs-sync-status { display: none; }
 
 .book-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 186px), 1fr)); gap: 30px 21px; align-items: start; }
 .book-card { position: relative; min-width: 0; }
+.book-format { display: block; color: var(--muted); font-size: .66rem; font-weight: 600; letter-spacing: .08em; line-height: 1.4; }
+.library-view-options { position: relative; justify-self: end; margin-block: 8px; width: fit-content; margin-left: auto; }
+.library-view-options > div { position: absolute; right: 0; z-index: 40; min-width: 230px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
+#books[data-layout="1"] { grid-template-columns: repeat(1,minmax(0,1fr)); }
+#books[data-layout="2"] { grid-template-columns: repeat(2,minmax(0,1fr)); }
+#books[data-layout="3"] { grid-template-columns: repeat(3,minmax(0,1fr)); }
+#books[data-layout="4"] { grid-template-columns: repeat(4,minmax(0,1fr)); }
+#books[data-layout="list"] { grid-template-columns: 1fr; gap: 14px; }
+#books[data-layout="list"] .book-card > a { display: flex; align-items: center; gap: 18px; }
+#books[data-layout="list"] .book-cover { width: 84px; min-width: 84px; }
+#books[data-layout="list"] .book-info { margin-top: 0; flex: 1; min-width: 0; }
+#books[data-covers-only="true"] .book-info { display: none; }
 .book-card > a { display: block; border-radius: 7px; }
 .book-cover {
   position: relative; display: flex; flex-direction: column; justify-content: space-between; aspect-ratio: .76;
@@ -853,3 +865,7 @@ body[data-auth="loading"]::before { content:'Opening Langy…'; position:fixed; 
 
 .shared-books-toggle { margin:0; font-size:.84rem; gap:7px; }
 .shared-book-badge { background:var(--well); color:var(--muted); }
+
+.account-menu { position: relative; }
+.account-menu > .library-menu-panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: 40; min-width: 170px; display: grid; gap: 4px; padding: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
+.account-menu > .library-menu-panel > button { justify-content: flex-start; }

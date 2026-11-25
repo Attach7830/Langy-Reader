@@ -9,6 +9,8 @@ import { phraseHelp } from '../src/phrase-help.js';
 import { offlineDownloads } from '../src/offline-downloads.js';
 import { processTasks } from '../src/process-tasks.js';
 import { processQueue } from '../src/process-queue.js';
+import { saveSettings } from '../src/settings.js';
+import { folderAudiobookshelf } from '../src/folder-audiobookshelf.js';
 
 async function until(check) { for (let i = 0; i < 100; i++) { if (check()) return; await delay(10); } throw new Error('Reader tool did not update'); }
 async function browser(t) {
@@ -116,4 +118,49 @@ test('the process panel refreshes active server tasks and removes completed task
   state = 'completed'; window.dispatchEvent(new window.CustomEvent('langy-processes-changed'));
   await until(() => !document.querySelector('[data-process="server-task"]'));
   assert.equal(document.querySelector('#process-empty').hidden, false);
+});
+
+test('library format labels and every selected layout render independently of the covers-only preference', async (t) => {
+  const dom = await browser(t); let prefs = { libraryLayout: 'auto', coversOnly: false, quietLibrary: true };
+  globalThis.fetch = async (path) => {
+    assert.equal(path, '/api/library'); return Response.json({ books: ['epub', 'pdf'].map((format) => ({ id: format, title: `${format} book`, format, language: 'es', addedAt: 1 })), categories: [], storage: { available: false } });
+  };
+  const ui = libraryScreen({ progress: {}, onRemove() {}, preferences: () => prefs, changePreferences(change) { prefs = { ...prefs, ...change }; } }); t.after(() => ui.dispose()); await ui.refresh();
+  assert.deepEqual([...document.querySelectorAll('.book-format')].map((node) => node.textContent), ['EPUB', 'PDF']);
+  for (const layout of ['1', '2', '3', '4', 'list']) {
+    const input = document.querySelector('#library-layout'); input.value = layout; input.dispatchEvent(new dom.window.Event('change'));
+    assert.equal(document.querySelector('#books').dataset.layout, layout); assert.equal(prefs.libraryLayout, layout);
+  }
+  const covers = document.querySelector('#library-covers-only'); covers.checked = true; covers.dispatchEvent(new dom.window.Event('change'));
+  assert.equal(document.querySelector('#books').dataset.coversOnly, 'true'); assert.equal(document.querySelectorAll('.book-cover').length, 2);
+});
+
+test('folder editor loads its ABS link, saves a folder-scoped change and keeps existing mappings when untouched', async (t) => {
+  const dom = await browser(t), writes = [];
+  globalThis.fetch = async (path, options = {}) => {
+    if (options.method === 'PATCH') { writes.push([path, JSON.parse(options.body)]); return Response.json({}); }
+    if (path === '/api/settings/audiobookshelf') return Response.json({ configurable: true, connected: true, categoryDestinations: { folder: { libraryId: 'lib', folderId: 'one' } } });
+    if (path === '/api/audiobookshelf/libraries') return Response.json({ libraries: [{ id: 'lib', name: 'Books', folders: [{ id: 'one', path: '/one' }, { id: 'two', path: '/two' }] }] });
+    assert.fail(path);
+  };
+  const link = folderAudiobookshelf(); await link.load({ id: 'folder' }); assert.equal(document.querySelector('#category-abs-folder').value, 'one'); await link.save('folder'); assert.equal(writes.length, 0);
+  const input = document.querySelector('#category-abs-folder'); input.value = 'two'; input.dispatchEvent(new dom.window.Event('change')); await link.save('folder');
+  assert.deepEqual(writes[0], ['/api/settings/audiobookshelf/categories/folder', { destination: { libraryId: 'lib', folderId: 'two' } }]);
+});
+
+test('Process approval buttons submit an explicit decision and completed work respects the chosen delay', async (t) => {
+  let panel; t.after(() => panel?.dispose()); const dom = await browser(t);
+  saveSettings({ processDismissMinutes: 2 }); let clock = 1000000, approved, reads = 0, jobs = [{ id: 'audiobookshelf:proposal', bookId: 'book', kind: 'audiobookshelf', state: 'waiting', label: 'Import audio', decision: 'proposal' }, { id: 'work', state: 'running', label: 'Work' }];
+  globalThis.fetch = async (path, options = {}) => {
+    if (path.endsWith('/decision')) { approved = JSON.parse(options.body); jobs = jobs.filter((job) => !job.decision); return Response.json({}); }
+    reads++; return Response.json({ accountId: 'approval-reader', jobs });
+  };
+  panel = processQueue({ now: () => clock }); panel.setAccount('approval-reader'); document.querySelector('#open-process-queue').click();
+  await until(() => Boolean(document.querySelector('[data-process="work"]')));
+  const minutes = document.querySelector('#process-dismiss-minutes'); minutes.focus(); minutes.value = '3'; const before = reads;
+  window.dispatchEvent(new dom.window.CustomEvent('langy-processes-changed')); await until(() => reads > before); await delay(30);
+  assert.equal(minutes.value, '3', 'a status poll must preserve an in-progress edit'); minutes.value = '2'; minutes.blur();
+  const replace = [...document.querySelectorAll('#process-list button')].find((button) => button.textContent === 'Import and replace Langy audio'); replace.click(); await until(() => Boolean(approved)); assert.deepEqual(approved, { replace: true });
+  jobs = []; window.dispatchEvent(new dom.window.CustomEvent('langy-processes-changed')); await until(() => document.querySelector('[data-process="work"]')?.textContent.includes('Finished'));
+  clock += 120001; const input = document.querySelector('#process-dismiss-minutes'); input.dispatchEvent(new dom.window.Event('change')); assert.equal(document.querySelector('[data-process="work"]'), null);
 });

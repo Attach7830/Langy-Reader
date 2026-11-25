@@ -2,8 +2,9 @@ import { textWords } from '../shared/reading-text.js';
 import { baseLanguage, hanPattern, bookLanguages } from '../shared/language.js';
 
 const parsed = (value) => Array.isArray(value) ? value : JSON.parse(value || '[]');
-// Book files are immutable per ID. Language changes invalidate only this cache.
-export const bookCountSignature = (book) => `text-v2:${JSON.stringify([baseLanguage(book.language), bookLanguages(book).sort()])}`;
+// OCR can publish a new PDF under the same book ID. Keep legacy signatures
+// stable until the source content actually changes.
+export const bookCountSignature = (book) => `text-v2:${JSON.stringify([baseLanguage(book.language), bookLanguages(book).sort(), ...(book.contentRevision ? [book.contentRevision] : [])])}`;
 
 // Count surface words, including names and numbers, independently of lemmas.
 // Mandarin uses individual Han positions; Japanese/Korean keep word segmentation.

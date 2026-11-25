@@ -56,7 +56,7 @@ export function readingPackQueue({ download, store = offlineDownloadJobs, owner 
           if (signal.aborted) job.state = 'cancelled';
           else { job.state = error.retryable || !online() ? 'waiting' : 'failed'; job.error = error.message; }
         } finally {
-          if (epoch === generation && owner() === job.owner) { await persist(job).catch(() => {}); emit(); }
+          if (epoch === generation && owner() === job.owner) { if (['complete', 'cancelled'].includes(job.state)) job.finished = now(); await persist(job).catch(() => {}); emit(); }
         }
       }
     })().finally(() => { if (epoch === generation) { running = undefined; controller = undefined; if (jobs.some((job) => job.state === 'queued')) kick(); } });
@@ -85,7 +85,7 @@ export function readingPackQueue({ download, store = offlineDownloadJobs, owner 
     async cancel(id) {
       const job = jobs.find((item) => item.id === id); if (!job || job.owner !== owner() || !['queued', 'downloading', 'waiting'].includes(job.state)) return;
       if (job.state === 'downloading') controller?.abort();
-      job.state = 'cancelled'; job.progress = { label: 'Download cancelled', percent: 0 }; await persist(job); emit();
+      job.state = 'cancelled'; job.finished = now(); job.progress = { label: 'Download cancelled', percent: 0 }; await persist(job); emit();
     },
     async retry(id) {
       const job = jobs.find((item) => item.id === id); if (!job || job.owner !== owner() || ['queued', 'downloading'].includes(job.state)) return;

@@ -10,7 +10,7 @@ export const defaults = {
   autoHideDocks: false,
   tapToTurn: false, swipeToTurn: true, tapCenterFullscreen: true,
   doubleTapToTurn: true,
-  immersionMode: false, quietLibrary: true, showSharedBooks: true,
+  immersionMode: false, quietLibrary: true, showSharedBooks: true, libraryLayout: 'auto', coversOnly: false, processDismissMinutes: 0,
 };
 
 export const accountFields = Object.keys(defaults).filter((key) => !['progressSyncEnabled', 'syncDeviceName'].includes(key));
@@ -37,13 +37,14 @@ export function preferenceChanges(before, after) {
 export function validatePreferences(value) {
   if (!isObject(value) || Object.keys(value).some((key) => !accountFields.includes(key))) throw new Error('Unknown reader preference.');
   const enums = { mode: ['translation', 'definition', 'synonyms', 'off'], theme: ['paper', 'sepia', 'dark', 'dusk', 'midnight'],
-    background: ['grain', 'plain', 'linen', 'grid'], font: ['spectral', 'georgia', 'sans', 'mono', 'chinese'], width: ['narrow', 'balanced', 'wide'], uiLanguage: ['en', 'es', 'pt', 'zh'] };
+    background: ['grain', 'plain', 'linen', 'grid'], font: ['spectral', 'georgia', 'sans', 'mono', 'chinese'], width: ['narrow', 'balanced', 'wide'], uiLanguage: ['en', 'es', 'pt', 'zh'], libraryLayout: ['auto','1','2','3','4','list'] };
   for (const [key, setting] of Object.entries(value)) {
     let valid = true;
     if (enums[key]) valid = enums[key].includes(setting);
     else if (typeof defaults[key] === 'boolean') valid = typeof setting === 'boolean';
     else if (key === 'size') valid = Number.isInteger(setting) && setting >= 13 && setting <= 40;
     else if (key === 'touchSize') valid = setting === null || Number.isInteger(setting) && setting >= 13 && setting <= 40;
+    else if (key === 'processDismissMinutes') valid = Number.isFinite(setting) && setting >= 0 && setting <= 10080;
     else if (key === 'line') valid = Number.isFinite(setting) && setting >= 1.2 && setting <= 2.4;
     else if (key === 'audioRate') valid = Number.isFinite(setting) && setting >= .5 && setting <= 2;
     else if (key === 'readingLanguages') {

@@ -70,6 +70,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
   if (languageUpgrade) db.exec("UPDATE analyses SET state='queued',error=NULL WHERE state='ready'");
   if (!db.prepare('PRAGMA table_info(chapters)').all().some(({ name }) => name === 'speechBlocks')) db.exec("ALTER TABLE chapters ADD COLUMN speechBlocks TEXT NOT NULL DEFAULT '[]'");
   if (!db.prepare('PRAGMA table_info(analyses)').all().some(({ name }) => name === 'textVersion')) db.exec('ALTER TABLE analyses ADD COLUMN textVersion INTEGER NOT NULL DEFAULT 0');
+  if (!db.prepare('PRAGMA table_info(analyses)').all().some(({ name }) => name === 'contentRevision')) db.exec("ALTER TABLE analyses ADD COLUMN contentRevision TEXT NOT NULL DEFAULT ''");
   if (!db.prepare('PRAGMA table_info(analyses)').all().some(({ name }) => name === 'languageSelection')) {
     db.exec("ALTER TABLE analyses ADD COLUMN languageSelection TEXT NOT NULL DEFAULT '[]'");
   }
@@ -200,8 +201,8 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     }
     const job = { signature, state: 'queued' }, lane = book.format === 'pdf' ? 'pdf' : 'epub';
     textJobs.set(book.id, job);
-    const current = () => db.prepare('SELECT book FROM analyses WHERE book=? AND language=? AND languageSelection=?')
-      .get(book.id, book.language, selectionOf(book));
+    const current = () => textJobs.get(book.id) === job && db.prepare('SELECT book FROM analyses WHERE book=? AND language=? AND languageSelection=? AND contentRevision=?')
+      .get(book.id, book.language, selectionOf(book), book.contentRevision || '');
     job.promise = textLanes[lane].then(async () => {
       if (!current()) return false;
       job.state = 'running';
@@ -240,11 +241,11 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
   function ensure(book, retry = false) {
     const previous = db.prepare('SELECT * FROM analyses WHERE book=?').get(book.id);
     const selection = selectionOf(book);
-    if (!previous || previous.language !== book.language || previous.languageSelection !== selection || (retry && !['queued', 'running'].includes(previous.state))) {
-      db.prepare(`INSERT INTO analyses(book, owner, language, languageSelection, state) VALUES(?,?,?,?,'queued')
-        ON CONFLICT(book) DO UPDATE SET language=excluded.language,languageSelection=excluded.languageSelection,state='queued',error=NULL,
+    if (!previous || previous.language !== book.language || previous.languageSelection !== selection || previous.contentRevision !== (book.contentRevision || '') || (retry && !['queued', 'running'].includes(previous.state))) {
+      db.prepare(`INSERT INTO analyses(book, owner, language, languageSelection,contentRevision, state) VALUES(?,?,?,?,?,'queued')
+        ON CONFLICT(book) DO UPDATE SET language=excluded.language,languageSelection=excluded.languageSelection,contentRevision=excluded.contentRevision,state='queued',error=NULL,
         metrics=NULL,lemmas=NULL,wordCount=NULL,method=NULL,textVersion=0`)
-        .run(book.id, book.owner || '', book.language, selection);
+        .run(book.id, book.owner || '', book.language, selection, book.contentRevision || '');
       estimates.invalidate(book.id);
       db.prepare('DELETE FROM reading_book_counts WHERE book=?').run(book.id);
     }
@@ -332,7 +333,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     if (!await prepareText(book)) return;
     const sections = db.prepare('SELECT * FROM chapters WHERE book=? ORDER BY ordinal').all(book.id)
       .map((section) => ({ ...section, languages: JSON.parse(section.languages || '[]'), markers: JSON.parse(section.markers || '[]') }));
-    const stillCurrent = () => db.prepare("SELECT book FROM analyses WHERE book=? AND language=? AND languageSelection=? AND state='running'").get(book.id, row.language, row.languageSelection);
+    const stillCurrent = () => db.prepare("SELECT book FROM analyses WHERE book=? AND language=? AND languageSelection=? AND contentRevision=? AND state='running'").get(book.id, row.language, row.languageSelection, row.contentRevision);
     if (!stillCurrent()) return;
     const unique = new Set();
     const vocabularyGroups = new Map(), chinesePassages = [];
@@ -476,8 +477,8 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       else if (job && type === 'rescan') rescans.fail(job, text);
       else if (job && type === 'recording') recordings.fail(job, text);
       else if (job && type === 'analysis') {
-        db.prepare("UPDATE analyses SET state='error',error=? WHERE book=? AND language=? AND languageSelection=? AND state='running'")
-          .run(text, job.book, job.language, job.languageSelection);
+        db.prepare("UPDATE analyses SET state='error',error=? WHERE book=? AND language=? AND languageSelection=? AND contentRevision=? AND state='running'")
+          .run(text, job.book, job.language, job.languageSelection, job.contentRevision || '');
       }
       else if (job) {
         db.prepare("UPDATE audio SET state='error', error=? WHERE id=?").run(text, job.id);
@@ -528,6 +529,22 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     return cancelled;
   }
 
+  async function removeRecording(book, id) {
+    rescans.cancel(book, id);
+    if (recordings.list(book).some((item) => item.id === id)) return recordings.remove(book, id);
+    const item = db.prepare('SELECT id,parts,kind FROM book_audio WHERE book=? AND id=?').get(book.id, id);
+    if (!item) return; // Replacement cleanup is safe to resume after a restart.
+    if (item.kind !== 'generated') throw new RequestError(409, 'This recording cannot be removed.');
+    const parts = JSON.parse(item.parts);
+    db.prepare('DELETE FROM book_audio WHERE book=? AND id=?').run(book.id, id);
+    // Section files can be shared by other generated recordings. Retain those references.
+    const used = new Set(db.prepare('SELECT parts FROM book_audio WHERE book=?').all(book.id).flatMap((row) => JSON.parse(row.parts).map((part) => part.id)));
+    const unused = parts.filter((part) => !used.has(part.id));
+    for (const part of unused) db.prepare('DELETE FROM audio WHERE book=? AND id=?').run(book.id, part.id);
+    await Promise.allSettled([join(folder, `${id}.mp3`), join(folder, `book-${id}`), ...unused.flatMap((part) => [join(folder, `${part.id}.mp3`), join(folder, part.id)])]
+      .map((path) => rm(path, { force: true, recursive: true })));
+  }
+
   async function prune() {
     for (const row of db.prepare('SELECT book,owner FROM analyses').all()) {
       try { library.getBook(row.book, { id: row.owner }); }
@@ -550,6 +567,6 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     narration, queueBook: completeAudio.queue,
     scheduleAudiobook(book, options) { ensure(book); return scheduledAudio.schedule(book, options); },
     readyAudiobooks: () => db.prepare("SELECT book,id AS recording FROM book_audio WHERE state='ready' ORDER BY created DESC,rowid DESC").all(),
-    recordings, rescans, ivoox, vocabulary, estimates,
+    recordings, removeRecording, rescans, ivoox, vocabulary, estimates,
   };
 }

@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readingUnits, countReadingUnits, mergeReadingRanges } from '../server/reading-counts.js';
+import { readingUnits, countReadingUnits, mergeReadingRanges, bookCountSignature } from '../server/reading-counts.js';
+
+test('OCR source revisions invalidate cached reading counts while legacy book signatures remain stable', () => {
+  const book = { id: 'same-book', language: 'es', languages: ['es'] };
+  assert.equal(bookCountSignature(book), bookCountSignature({ ...book, contentRevision: '' }));
+  assert.notEqual(bookCountSignature(book), bookCountSignature({ ...book, contentRevision: 'ocr-1' }));
+  assert.notEqual(bookCountSignature({ ...book, contentRevision: 'ocr-1' }), bookCountSignature({ ...book, contentRevision: 'ocr-2' }));
+});
 
 test('word totals include repeated forms, names and numbers while Mandarin Han positions stay separate', () => {
   const section = { text: 'María leyó libros libros 2026. 中文𠀀。', tokens: '[]', languages: '[]' };

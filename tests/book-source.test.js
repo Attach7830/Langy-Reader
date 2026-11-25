@@ -13,6 +13,9 @@ test('download labels and cache-first book opens use only completed packs belong
   pack('langy-pack-one-book-v1', 'book'); pack('langy-pack-one-incomplete-v1', 'incomplete', false); pack('langy-pack-two-private-v1', 'private');
   assert.deepEqual([...await downloadedBooks()], ['book']);
   assert.equal(await (await readingFile('/api/books/book/file')).text(), 'langy-pack-one-book-v1'); assert.equal(calls, 0, 'online opens do not wait for a network response');
+  assert.equal(await (await readingFile('/api/books/book/file?revision=ocr-new')).text(), 'network', 'an original offline PDF must not mask an updated OCR source');
+  saved.get('langy-pack-one-book-v1').set('/api/books/book/offline-data', Response.json({ book: { contentRevision: 'ocr-new' } }));
+  assert.equal(await (await readingFile('/api/books/book/file?revision=ocr-new')).text(), 'langy-pack-one-book-v1', 'a refreshed pack can serve the current PDF offline'); calls = 0;
   assert.equal(await (await readingFile('/api/books/incomplete/file')).text(), 'network');
   assert.equal(await (await readingFile('/api/books/private/file')).text(), 'network'); assert.equal(calls, 2);
   owner = 'two'; assert.deepEqual([...await downloadedBooks()], ['private']); assert.equal(await (await readingFile('/api/books/book/file')).text(), 'network');

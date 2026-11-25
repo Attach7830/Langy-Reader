@@ -46,8 +46,13 @@ export function audiobookshelfProgress({ audio, request }) {
     try {
       const remote = await request(`/api/books/${current.book}/audiobookshelf/progress?recording=${encodeURIComponent(current.recording)}`, { signal: AbortSignal.timeout(8000) });
       if (session !== current) return; current.loaded = true;
+      const firstLink = !current.absLinked;
       current.absLinked = remote.linked; persist();
       if (!remote.linked) { tell(''); return; }
+      if (firstLink && !current.dirty) {
+        if (remote.updated > 0) { await resume(remote); return; }
+        current.version = remote.version; current.dirty = true;
+      }
       if (remote.version !== current.version) { offer(remote); return; }
       current.version = remote.version;
       if (current.dirty) {
@@ -71,7 +76,7 @@ export function audiobookshelfProgress({ audio, request }) {
         if (session?.key === key) continue;
         const original = localStorage.getItem(key); let saved;
         try { saved = JSON.parse(original); } catch { continue; }
-        if (!saved?.dirty || !saved.absConnected || saved.absLinked === false || !saved.book || !saved.recording) continue;
+        if (!saved?.dirty || !saved.absConnected || !saved.book || !saved.recording) continue;
         const path = `/api/books/${encodeURIComponent(saved.book)}/audiobookshelf/progress`;
         try {
           const remote = await request(`${path}?recording=${encodeURIComponent(saved.recording)}`, { signal: AbortSignal.timeout(8000) });

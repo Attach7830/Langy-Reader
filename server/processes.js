@@ -1,8 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 
-const pending = new Set(['queued', 'running', 'generating', 'aligning', 'assembling', 'syncing', 'downloading', 'importing', 'scanning', 'searching', 'ranking', 'retry_wait', 'needs_action', 'waiting']);
-const state = (value) => ['error', 'failed'].includes(value) ? 'failed' : ['retry_wait', 'needs_action', 'waiting'].includes(value) ? 'waiting'
+const pending = new Set(['queued', 'running', 'generating', 'aligning', 'assembling', 'syncing', 'linking', 'awaiting_confirmation', 'downloading', 'importing', 'scanning', 'searching', 'ranking', 'retry_wait', 'needs_action', 'waiting']);
+const state = (value) => ['error', 'failed', 'needs_review'].includes(value) ? 'failed' : ['retry_wait', 'needs_action', 'waiting', 'awaiting_confirmation'].includes(value) ? 'waiting'
   : value === 'queued' ? 'queued' : pending.has(value) ? 'running' : value === 'cancelled' ? 'cancelled' : 'completed';
 
 // A small read-only projection: no NLP, filesystem scans, remote connections or
@@ -24,7 +24,8 @@ export function openProcesses(dir, { library, archive, discovery, learning, demo
       if (!pending.has(row.state) && status !== 'failed') return;
       jobs.push({ id: `${kind}:${row.id || book}`, kind, label, state: status, phase: row.state, bookId: owned?.id,
         title: owned?.title || row.details?.title || row.title || '', created, progress: Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : null,
-        detail: row.error || detail, nextAttempt: row.nextAttempt || null });
+        detail: row.error || detail, nextAttempt: row.nextAttempt || null,
+        ...(kind === 'audiobookshelf' && row.state === 'awaiting_confirmation' ? { decision: row.id } : {}) });
     }
     function read(file, sql, visit) { try { for (const row of rows(file, sql)) visit(row); } catch { unavailable = true; } }
     read('learning.sqlite', "SELECT book,state,error FROM analyses WHERE state!='ready'", (row) => add('analysis', row, 'Vocabulary analysis'));
@@ -48,7 +49,7 @@ export function openProcesses(dir, { library, archive, discovery, learning, demo
       }));
       for (const row of archive.list(visitor)) add('archive', row, 'Download book', { book: row.book?.id, progress: row.total ? row.bytes / row.total * 100 : null, detail: row.notice || '' });
       read('pdf-ocr.sqlite', 'SELECT json FROM jobs ORDER BY rowid DESC LIMIT 100', (value) => { const row = JSON.parse(value.json); add('ocr', row, 'Scan PDF with OCR', { book: row.source }); });
-      if (!visitor?.authenticated || visitor.role === 'admin') read('audiobookshelf.sqlite', 'SELECT json FROM jobs ORDER BY rowid DESC LIMIT 100', (value) => { const row = JSON.parse(value.json); add('audiobookshelf', row, row.kind === 'export' ? 'Export to Audiobookshelf' : 'Import from Audiobookshelf'); });
+      if (!visitor?.authenticated || visitor.id === '') read('audiobookshelf.sqlite', 'SELECT json FROM jobs ORDER BY rowid DESC LIMIT 100', (value) => { const row = JSON.parse(value.json); add('audiobookshelf', row, row.kind === 'export' ? 'Export to Audiobookshelf' : 'Import from Audiobookshelf', { detail: row.notice || '' }); });
     }
     const found = discovery.status(visitor);
     if (found.id && (found.busy || found.error)) add('discovery', { id: found.id, state: found.state, error: found.error }, 'Discover similar books');

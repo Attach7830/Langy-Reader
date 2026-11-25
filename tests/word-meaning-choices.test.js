@@ -61,3 +61,19 @@ test('a late translated gloss preserves the selected card and appears only on th
   f.down('ArrowUp'); assert.ok(f.bubble.textContent.includes('cabello rizado'));
   f.help.clear(); f.show(); await until(() => !f.bubble.hidden); assert.equal(f.bubble.querySelector('[data-word]').textContent, '卷发');
 });
+
+test('touch taps cycle popup cards without new requests, while scrolling, controls, and mouse events do not', async (t) => {
+  const f = fixture(t); f.show(); await until(() => f.bubble.querySelector('.mandarin-card'));
+  const word = () => f.bubble.querySelector('[data-word]').textContent;
+  function pointer(type, target = f.bubble.querySelector('.mandarin-definition'), fields = {}) {
+    const event = new f.dom.window.MouseEvent(type, { bubbles: true, clientX: 20, clientY: 20, ...fields });
+    Object.defineProperties(event, { pointerType: { value: fields.pointerType || 'touch' }, pointerId: { value: 1 } }); target.dispatchEvent(event);
+  }
+  for (const expected of ['卷', '发', '卷发']) { pointer('pointerdown'); pointer('pointerup'); assert.equal(word(), expected); }
+  pointer('pointerdown'); pointer('pointermove', f.bubble, { clientY: 60 }); pointer('pointerup'); assert.equal(word(), '卷发');
+  pointer('pointerdown'); pointer('pointercancel'); pointer('pointerup'); assert.equal(word(), '卷发');
+  const control = f.bubble.querySelector('.meaning-toggle'); pointer('pointerdown', control); pointer('pointerup', control); assert.equal(word(), '卷发');
+  pointer('pointerdown', undefined, { pointerType: 'mouse' }); pointer('pointerup', undefined, { pointerType: 'mouse' }); assert.equal(word(), '卷发');
+  pointer('pointerleave', f.bubble); await delay(220); assert.equal(f.bubble.hidden, false, 'lifting a finger keeps the popup open');
+  assert.equal(f.requests(), 1);
+});
