@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { mergePreferences, validatePreferences } from '../shared/reader-preferences.js';
 import { RequestError } from './books.js';
 
-export function openReaderSettings(dir, { demo = false, username = 'reader' } = {}) {
+export function openReaderSettings(dir, { demo = false, username = 'reader', ownerFor } = {}) {
   const db = new DatabaseSync(join(dir, 'reader-settings.sqlite'));
   db.exec(`PRAGMA journal_mode=WAL;
     CREATE TABLE IF NOT EXISTS instance(id INTEGER PRIMARY KEY CHECK(id=1), uuid TEXT NOT NULL) STRICT;
@@ -13,7 +13,7 @@ export function openReaderSettings(dir, { demo = false, username = 'reader' } = 
   const instance = db.prepare('SELECT uuid FROM instance WHERE id=1').get().uuid;
   function owner(visitor) {
     if (demo && !visitor?.id) throw new RequestError(401, 'Open the demo to save reader settings.');
-    return demo ? `demo:${visitor.id}` : `user:${username}`;
+    return demo ? `demo:${visitor.id}` : ownerFor ? ownerFor(visitor) : `user:${username}`;
   }
   function get(visitor) {
     db.prepare('DELETE FROM preferences WHERE expires IS NOT NULL AND expires<?').run(Date.now());
