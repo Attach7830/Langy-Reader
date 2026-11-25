@@ -1,3 +1,4 @@
+import { processTasks } from './process-tasks.js';
 import { filenameTitle } from '../shared/book-metadata.js';
 
 const defaultDetect = async (file, options) => (await import('./book-metadata.js')).detectBookMetadata(file, options);
@@ -19,7 +20,7 @@ export function bookMetadataFields({ form, status, detect = defaultDetect, activ
     if (!file) return;
     if (!manual.has('title') && !form.elements.title.value) automatic.title = form.elements.title.value = filenameTitle(file.name);
     const before = Object.fromEntries(names.map((name) => [name, form.elements[name].value]));
-    const id = revision, job = controller = new AbortController();
+    const id = revision, job = controller = new AbortController(), finish = processTasks.begin('Detect book details', { title: file.name });
     say('Detecting title, author and language…');
     pending = (async () => {
       let timer;
@@ -37,7 +38,7 @@ export function bookMetadataFields({ form, status, detect = defaultDetect, activ
           : 'Book details detected. Review or edit them before importing.');
       } catch {
         if (id === revision && active()) say('Details could not be detected. You can enter them manually.');
-      } finally { clearTimeout(timer); }
+      } finally { clearTimeout(timer); finish(job.signal.aborted ? new DOMException('Cancelled', 'AbortError') : undefined); }
     })();
   }
   return { start, cancel, reset, async ready() { for (;;) { const work = pending; await work; if (work === pending) return; } } };
