@@ -57,6 +57,21 @@ test('self-hosted users have private libraries, owner-controlled sharing and iso
     for (const path of ['/API/library', '/Api/books/legacy/file', '/OPDS/books']) assert.equal((await fetch(f.base() + path)).status, 401);
     await f.api('/api/account/login', { Origin: 'https://another-site.test' }, { body: { username: 'reader', password: pass }, status: 403 });
   });
+  await t.test('Remember me controls persistent cookies, survives a server restart and remains revocable', async () => {
+    for (const rememberMe of ['false', 1, null]) await f.api('/api/account/login', {}, { body: { username: 'reader', password: pass, rememberMe }, status: 422 });
+    async function signIn(rememberMe) {
+      const response = await fetch(f.base() + '/api/account/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'reader', password: pass, ...(rememberMe === undefined ? {} : { rememberMe }) }) });
+      assert.equal(response.status, 200); return response.headers.getSetCookie().find((value) => value.startsWith('langy_session='));
+    }
+    const short = await signIn(); assert.doesNotMatch(short, /Max-Age|Expires=/iu); assert.match(short, /HttpOnly/iu);
+    const remembered = await signIn(true); assert.match(remembered, /Max-Age=2592000/u); assert.match(remembered, /SameSite=Lax/iu);
+    const headers = { Cookie: remembered.split(';')[0] }; await f.start();
+    assert.equal((await f.api('/api/account', headers)).authenticated, true);
+    const passwordResponse = await fetch(f.base() + '/api/account/password', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ currentPassword: pass, newPassword: pass }) });
+    assert.equal(passwordResponse.status, 200); const renewed = passwordResponse.headers.getSetCookie().find((value) => value.startsWith('langy_session=')); assert.match(renewed, /Max-Age=2592000/u);
+    const current = { Cookie: renewed.split(';')[0] }; await f.api('/api/account/logout', current, { body: {} });
+    assert.equal((await f.api('/api/account', current)).authenticated, false);
+  });
   await t.test('only administrators create users and credentials never appear in responses', async () => {
     const one = await f.api('/api/admin/users', admin, { body: { username: 'member', password: memberPass }, status: 201 });
     await f.api('/api/admin/users', admin, { body: { username: 'third', password: memberPass }, status: 201 });

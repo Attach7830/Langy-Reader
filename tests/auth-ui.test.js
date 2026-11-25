@@ -19,10 +19,12 @@ test('sign-in clears the previous account’s local preferences before the new r
   const requests = [];
   globalThis.fetch = async (path, options) => { requests.push({ path, options }); return Response.json(path === '/api/account' ? { enabled:true,authenticated:false } : { enabled:true,authenticated:true,user:{id:'new-user',username:'new-reader',role:'user'},readerAccountId:'new-reader-id' }); };
   const signing = authenticationGate(); await delay(0); assert.equal(document.body.dataset.auth, 'signed-out'); assert.equal(document.querySelector('#login-screen').hidden, false);
-  const form = document.querySelector('#login-form'); form.elements.username.value = 'new-reader'; form.elements.password.value = 'long-test-reader-password'; form.dispatchEvent(new dom.window.Event('submit',{cancelable:true}));
+  const form = document.querySelector('#login-form'); assert.equal(form.elements.rememberMe.checked, false); form.elements.rememberMe.checked = true;
+  form.elements.username.value = 'new-reader'; form.elements.password.value = 'long-test-reader-password'; form.dispatchEvent(new dom.window.Event('submit',{cancelable:true}));
   const session = await signing; assert.equal(session.user.id,'new-user'); assert.equal(document.body.dataset.auth,'ready'); assert.equal(form.elements.password.value,'');
   assert.equal(localStorage.getItem('langy-progress-v1'),null); assert.equal(localStorage.getItem('langy-account-settings-v1'),null); assert.equal(localStorage.getItem('langy-auth-account'),'new-user');
   assert.equal(requests[1].path,'/api/account/login'); assert.equal(JSON.parse(requests[1].options.body).username,'new-reader');
+  assert.equal(JSON.parse(requests[1].options.body).rememberMe, true);
 });
 
 test('migration of the configured administrator preserves the existing browser preferences', async (t) => {
