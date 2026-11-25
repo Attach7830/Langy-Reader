@@ -27,8 +27,9 @@ try {
   const paragraph = 'La viajera llegó a una casa tranquila cerca del río. En la ventana había una planta pequeña y un libro abierto. Quería conocer la historia del pueblo, así que se sentó a conversar con la mujer que cuidaba el jardín. Todavía quedaban muchas cosas por descubrir.';
   for (const name of ['one', 'two']) zip.file(`OEBPS/${name}.xhtml`, `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>${name}</title></head><body><h1>${name === 'one' ? 'Primera parte' : 'Segunda parte'}</h1><p id="source">${paragraph} <a href="notes.xhtml#note">Leer nota</a></p>${Array.from({ length: 90 }, (_, i) => `<p id="passage-${i}">${paragraph} ${paragraph}</p>`).join('')}</body></html>`);
   zip.file('OEBPS/notes.xhtml', '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Notas</title></head><body><h1 id="note">Una nota del libro</h1><p>Esta explicación ayuda a comprender el pasaje.</p></body></html>');
-  const uploaded = await context.request.post(base + '/api/books', { multipart: { title: 'Reader interactions', language: 'es', file: { name: 'reader.epub', mimeType: 'application/epub+zip', buffer: await zip.generateAsync({ type: 'nodebuffer' }) } } });
+  const uploaded = await context.request.post(base + '/api/books', { multipart: { title: 'Reader interactions', language: 'es', autoAudiobook: 'true', audiobookDelayMinutes: '7', file: { name: 'reader.epub', mimeType: 'application/epub+zip', buffer: await zip.generateAsync({ type: 'nodebuffer' }) } } });
   assert.equal(uploaded.status(), 201, await uploaded.text()); const book = await uploaded.json();
+  const importAudio = await (await context.request.get(base + '/api/books/' + book.id + '/narration')).json();
   const samples = 120 * 8000, wav = Buffer.alloc(44 + samples * 2);
   wav.write('RIFF', 0); wav.writeUInt32LE(36 + samples * 2, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16);
   wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(8000, 24); wav.writeUInt32LE(16000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(samples * 2, 40);
@@ -87,6 +88,15 @@ try {
     await page.locator('#mobile-navigation [data-open-downloads]').click();
     await page.locator('#downloads-dialog').waitFor({ state: 'visible' });
     await page.touchscreen.tap(3, 3); await page.locator('#downloads-dialog').waitFor({ state: 'hidden' });
+  });
+  await check('Import book offers a per-import audiobook delay and the server retains that schedule', async () => {
+    assert.equal(importAudio.scheduled.state, 'waiting'); assert.equal(importAudio.scheduled.minutes, 7);
+    assert.equal(importAudio.scheduled.due, book.addedAt + 7 * 60000);
+    await page.locator('#import-book').click(); await page.locator('#book-dialog').waitFor({ state: 'visible' });
+    const enabled = page.locator('[name=autoAudiobook]'), delayInput = page.locator('[name=audiobookDelayMinutes]');
+    assert.equal(await enabled.isChecked(), false); assert.equal(await delayInput.isDisabled(), true);
+    await enabled.check(); assert.equal(await delayInput.isEnabled(), true); await delayInput.fill('7');
+    await page.locator('#book-dialog [data-close]').first().click();
   });
   await check('completed book packs show Downloaded and open locally even when the source URL fails', async () => {
     await page.waitForFunction(() => Boolean(localStorage.getItem('langy-offline-owner')));
@@ -168,8 +178,8 @@ try {
     assert.equal(after.size, before.size); assert.equal(await page.evaluate(() => visualViewport.scale), 1);
     await delay(500);
   });
-  await check('swiping up with the audio toolbar closed opens sections and expandable bookmarks without changing pages', async () => {
-    const before = await position(); await swipe(0, -160);
+  await check('swiping down with audio controls closed opens sections and expandable bookmarks without changing pages', async () => {
+    const before = await position(); await swipe(0, 160);
     await page.locator('#contents-dialog').waitFor({ state: 'visible' });
     assert.equal(await page.getByRole('button', { name: 'Primera parte', exact: true }).isVisible(), true);
     await page.locator('.toc-bookmarks summary').click();
@@ -178,9 +188,24 @@ try {
   });
   await check('center double taps reveal temporary audio controls and play or pause without stopping when controls hide', async () => {
     const before = await position();
-    const doubleCenter = async () => { await delay(350); const box = await page.locator('.reading-main').boundingBox();
-      await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2); await delay(65);
-      await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2); };
+    const doubleCenter = async () => { await delay(350); const host = await page.locator('.reading-main').boundingBox();
+      const frame = await (await page.locator('#viewer iframe').first().elementHandle()).contentFrame();
+      const point = await frame.evaluate((host) => {
+        const box = window.frameElement.getBoundingClientRect(), x = host.x + host.width / 2;
+        for (let y = Math.max(host.y, box.y) + 6; y < Math.min(host.y + host.height, box.bottom) - 6; y += 4) {
+          const px = x - box.x, py = y - box.y, caret = document.caretRangeFromPoint(px, py), node = caret?.startContainer;
+          if (document.elementFromPoint(px, py)?.closest('a,button,input')) continue;
+          if (node?.nodeType === Node.TEXT_NODE) {
+            const segmenter = new Intl.Segmenter('es', { granularity: 'word' }), segments = segmenter.segment(node.data);
+            const candidates = [segments.containing(caret.startOffset), segments.containing(caret.startOffset - 1)].filter((item) => item?.isWordLike);
+            if (candidates.some((item) => { const range = document.createRange(); range.setStart(node, item.index); range.setEnd(node, item.index + item.segment.length);
+              return [...range.getClientRects()].some((r) => px >= r.left - 1 && px <= r.right + 1 && py >= r.top && py <= r.bottom); })) continue;
+          }
+          return { x, y };
+        }
+      }, host);
+      assert.ok(point, 'Blank center space must be available');
+      await page.touchscreen.tap(point.x, point.y); await delay(65); await page.touchscreen.tap(point.x, point.y); };
     await doubleCenter(); await page.locator('#narration-player').waitFor({ state: 'visible' });
     await page.waitForFunction(() => !document.querySelector('#narration-audio').paused, null, { timeout: 4000 });
     assert.equal((await position()).split('!')[0], before.split('!')[0], 'revealing controls keeps the same source section during reflow');
@@ -190,32 +215,30 @@ try {
     assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false, 'hiding controls must not pause playback');
     await doubleCenter(); await page.waitForFunction(() => document.querySelector('#narration-audio').paused, null, { timeout: 4000 });
   });
-  await check('either swipe direction closes open audio controls without pausing, and an upward swipe when closed opens sections', async () => {
-    await page.locator('#audio-toggle').click(); await page.locator('#narration-player').waitFor({ state: 'visible' });
+  await check('swiping up only toggles audio controls; either direction can hide them without pausing', async () => {
+    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), true);
+    await swipe(0, -160); await page.locator('#narration-player').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#contents-dialog').isVisible(), false);
+    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), true, 'revealing controls must not start playback');
     await page.locator('#narration-play').click();
     await page.waitForFunction(() => !document.querySelector('#narration-audio').paused);
+    for (let n = 0; n < 2; n++) {
+      await swipe(0, -160); await page.locator('#narration-player').waitFor({ state: 'hidden' });
+      assert.equal(await page.locator('#contents-dialog').isVisible(), false, 'an upward closing swipe must never open sections');
+      await swipe(0, -160); await page.locator('#narration-player').waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#contents-dialog').isVisible(), false, 'an upward opening swipe must never open sections');
+      assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false);
+    }
     await swipe(0, 160); await page.locator('#narration-player').waitFor({ state: 'hidden' });
-    assert.equal(await page.locator('#contents-dialog').isVisible(), false, 'closing audio must not also open sections');
-    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false);
-    await swipe(0, -160); await page.locator('#contents-dialog').waitFor({ state: 'visible' });
-    assert.equal(await page.locator('#narration-player').isVisible(), false, 'swiping up with controls closed must not reopen audio');
-    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false);
-    await page.locator('#contents-dialog [data-close]').click();
-    await page.locator('#audio-toggle').click(); await page.locator('#narration-player').waitFor({ state: 'visible' });
-    await swipe(0, -160); await page.locator('#narration-player').waitFor({ state: 'hidden' });
-    assert.equal(await page.locator('#contents-dialog').isVisible(), false, 'an upward closing swipe must not also open sections');
-    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false);
-    await swipe(0, -160); await page.locator('#contents-dialog').waitFor({ state: 'visible' });
-    await page.locator('#contents-dialog [data-close]').click();
-    await page.locator('#audio-toggle').click(); await page.locator('#narration-player').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#contents-dialog').isVisible(), false);
+    await swipe(0, -160); await page.locator('#narration-player').waitFor({ state: 'visible' });
     await page.locator('#podcast-toggle').click(); await page.locator('#podcast-info').waitFor({ state: 'visible' });
     await swipe(0, 100, false, '#podcast-info'); await page.locator('#narration-player').waitFor({ state: 'hidden' });
-    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false, 'a downward swipe on the toolbar itself preserves playback');
-    await page.locator('#audio-toggle').click(); await page.locator('#narration-player').waitFor({ state: 'visible' });
+    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false, 'a downward swipe on the toolbar preserves playback');
+    await swipe(0, -160); await page.locator('#narration-player').waitFor({ state: 'visible' });
     await swipe(0, -100, false, '#podcast-info'); await page.locator('#narration-player').waitFor({ state: 'hidden' });
-    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false, 'an upward swipe on the toolbar itself preserves playback');
-    await page.keyboard.press('Space');
-    await page.waitForFunction(() => document.querySelector('#narration-audio').paused);
+    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false, 'an upward swipe on the toolbar preserves playback');
+    await page.keyboard.press('Space'); await page.waitForFunction(() => document.querySelector('#narration-audio').paused);
   });
   await check('manual page turns with missing word alignment do not snap back while narration is enabled', async () => {
     const before = await position(); await page.locator('#next').click(); await changed(before);
@@ -233,6 +256,29 @@ try {
     assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false);
     await page.locator('#audio-toggle').click(); await page.locator('#narration-play').click();
     await page.locator('#narration-close').click();
+  });
+  await check('double tapping a word starts at its timestamp, including with audio disabled, and never pauses it', async () => {
+    const pattern = '**/api/books/' + book.id + '/chapters/*';
+    const aligned = (route) => route.fulfill({ json: { key: decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-1)), tokens: [], audio: { timings: [{ word: 'viajera', from: 0, to: 7, start: 10, end: 10.5 }] } } });
+    await page.route(pattern, aligned);
+    await page.evaluate(() => { const prefs = JSON.parse(localStorage.getItem('langy-settings-v1')); localStorage.setItem('langy-settings-v1', JSON.stringify({ ...prefs, audioEnabled: false, audioToolbarHidden: true })); });
+    await page.reload(); await page.locator('#viewer iframe').first().waitFor();
+    await page.locator('#contents-button').click(); await page.getByRole('button', { name: 'Primera parte', exact: true }).click();
+    await delay(350);
+    const frame = await (await page.locator('#viewer iframe').first().elementHandle()).contentFrame();
+    const point = await frame.evaluate(() => { const node = document.querySelector('#source').firstChild, from = node.data.indexOf('viajera'), range = document.createRange();
+      range.setStart(node, from); range.setEnd(node, from + 7); const rect = range.getBoundingClientRect(), box = window.frameElement.getBoundingClientRect();
+      return { x: box.x + rect.x + rect.width / 2, y: box.y + rect.y + rect.height / 2 }; });
+    await page.touchscreen.tap(point.x, point.y); await page.locator('#word-help').waitFor({ state: 'visible' });
+    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), true, 'single word taps only show help');
+    for (let n = 0; n < 2; n++) {
+      await delay(350); await page.touchscreen.tap(point.x, point.y); await delay(65); await page.touchscreen.tap(point.x, point.y);
+      await page.waitForFunction(() => { const audio = document.querySelector('#narration-audio'); return !audio.paused && audio.currentTime >= 10 && audio.currentTime < 12; });
+      assert.equal(await page.locator('#contents-dialog').isVisible(), false);
+      await page.locator('#word-help').waitFor({ state: 'hidden' });
+    }
+    await page.keyboard.press('Space'); await page.waitForFunction(() => document.querySelector('#narration-audio').paused);
+    await page.unroute(pattern, aligned);
   });
   await check('sections dismiss on an outside tap and page jumps reach the first and last pages of any section', async () => {
     await page.locator('#contents-button').click(); await page.locator('#contents-dialog').waitFor({ state: 'visible' });
