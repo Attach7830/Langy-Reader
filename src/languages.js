@@ -10,9 +10,18 @@ const codes = `
 `.trim().split(/\s+/u);
 
 const english = new Intl.DisplayNames('en', { type: 'language' });
-export const languageOptions = codes.map((code) => ({ code, label: english.of(code) }))
+export function languageLabel(code) {
+  const language = new Intl.Locale(code);
+  if (language.language === 'zh') {
+    const script = language.script === 'Hans' ? 'Simplified' : language.script === 'Hant' ? 'Traditional' : '';
+    return `Mandarin Chinese${script ? ` (${script})` : ''}${language.region ? ` · ${english.of(code)}` : ''}`;
+  }
+  return english.of(code);
+}
+export const languageOptions = codes.map((code) => ({ code, label: languageLabel(code) }))
   .sort((a, b) => a.label.localeCompare(b.label));
 const localizedNames = new Map();
+for (const { code, label } of languageOptions) localizedNames.set(label.toLocaleLowerCase(), code);
 for (const locale of ['en', 'es', 'pt', 'zh']) {
   const names = new Intl.DisplayNames(locale, { type: 'language' });
   for (const code of codes) if (!localizedNames.has(names.of(code).toLocaleLowerCase())) localizedNames.set(names.of(code).toLocaleLowerCase(), code);
@@ -20,7 +29,8 @@ for (const locale of ['en', 'es', 'pt', 'zh']) {
 
 export function parseLanguage(value) {
   const text = value.trim();
-  const alias = { mandarin: 'zh', 'mandarin chinese': 'zh', 'simplified chinese': 'zh-Hans', 'traditional chinese': 'zh-Hant' }[text.toLowerCase()];
+  const alias = { mandarin: 'zh', 'mandarin chinese': 'zh', 'mandarin (simplified)': 'zh-Hans', 'mandarin (traditional)': 'zh-Hant',
+    'simplified chinese': 'zh-Hans', 'traditional chinese': 'zh-Hant' }[text.toLowerCase()];
   if (alias) return alias;
   const choice = localizedNames.get(text.toLocaleLowerCase());
   try { return choice ?? Intl.getCanonicalLocales(text.replaceAll('_', '-'))[0] ?? ''; }
