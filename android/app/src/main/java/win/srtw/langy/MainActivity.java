@@ -6,6 +6,7 @@ import android.app.DownloadManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.security.keystore.KeyGenParameterSpec;
@@ -13,6 +14,8 @@ import android.security.keystore.KeyProperties;
 import android.util.Base64;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.webkit.HttpAuthHandler;
 import android.webkit.ValueCallback;
@@ -27,6 +30,7 @@ import android.webkit.WebMessagePort;
 import android.webkit.CookieManager;
 import android.webkit.URLUtil;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import org.json.JSONObject;
@@ -42,6 +46,7 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 public class MainActivity extends Activity {
+    private FrameLayout content;
     private WebView web;
     private SharedPreferences preferences;
     private String server = "", username = "", password = "";
@@ -57,8 +62,25 @@ public class MainActivity extends Activity {
         super.onCreate(state);
         preferences = getSharedPreferences("langy", MODE_PRIVATE);
         restore();
+        content = new FrameLayout(this);
+        content.setBackgroundColor(android.graphics.Color.rgb(8, 10, 12));
         web = new WebView(this);
-        setContentView(web);
+        content.addView(web, new FrameLayout.LayoutParams(-1, -1));
+        setContentView(content);
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        if (Build.VERSION.SDK_INT >= 30) {
+            // Android 15+ lays target-SDK-35 windows behind the system bars.
+            // Give the entire WebView a safe viewport, including in landscape,
+            // split screen and when the keyboard or fullscreen mode changes.
+            getWindow().setDecorFitsSystemWindows(false);
+            content.setOnApplyWindowInsetsListener((view, insets) -> {
+                android.graphics.Insets safe = insets.getInsets(WindowInsets.Type.systemBars()
+                    | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
+                view.setPadding(safe.left, safe.top, safe.right, safe.bottom);
+                return WindowInsets.CONSUMED;
+            });
+        }
+        setReaderFullscreen(false);
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -103,7 +125,7 @@ public class MainActivity extends Activity {
             }
             @Override public void onShowCustomView(View view, CustomViewCallback callback) {
                 custom = view; customCallback = callback; web.setVisibility(View.GONE);
-                addContentView(view, new ViewGroup.LayoutParams(-1, -1)); setReaderFullscreen(true);
+                content.addView(view, new FrameLayout.LayoutParams(-1, -1)); setReaderFullscreen(true);
             }
             @Override public void onHideCustomView() {
                 if (custom == null) return;
@@ -127,12 +149,24 @@ public class MainActivity extends Activity {
     }
     private void setReaderFullscreen(boolean enabled) {
         readerFullscreen = enabled;
-        if (enabled) getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        getWindow().getDecorView().setSystemUiVisibility(enabled
-            ? View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-            : View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        if (Build.VERSION.SDK_INT >= 30) {
+            WindowInsetsController bars = getWindow().getInsetsController();
+            if (bars != null) {
+                bars.setSystemBarsAppearance(0, WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                    | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
+                bars.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                if (enabled) bars.hide(WindowInsets.Type.systemBars());
+                else bars.show(WindowInsets.Type.systemBars());
+            }
+            content.requestApplyInsets();
+        } else {
+            if (enabled) getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            getWindow().getDecorView().setSystemUiVisibility(enabled
+                ? View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    | View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                : View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        }
     }
     private void connectFullscreen() {
         if (fullscreenPort != null) fullscreenPort.close();
@@ -161,7 +195,7 @@ public class MainActivity extends Activity {
             });
         } catch (Exception ignored) {}
     }
-    @Override public void onWindowFocusChanged(boolean focused) { super.onWindowFocusChanged(focused); if (focused && readerFullscreen) setReaderFullscreen(true); }
+    @Override public void onWindowFocusChanged(boolean focused) { super.onWindowFocusChanged(focused); if (focused && content != null) setReaderFullscreen(readerFullscreen); }
     private boolean sameServer(Uri target) {
         Uri base = Uri.parse(server);
         return "https".equals(target.getScheme()) && target.getHost() != null && target.getHost().equalsIgnoreCase(base.getHost()) && target.getPort() == base.getPort();
