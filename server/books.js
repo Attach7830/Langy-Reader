@@ -4,6 +4,7 @@ import { join, extname, basename } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import yauzl from 'yauzl';
 import { sampleBook } from './sample.js';
+import { demoSamples } from './demo-samples.js';
 import { baseLanguage } from '../shared/language.js';
 import { archivePath, bookText, epubMetadataValues, filenameTitle, inferBookLanguage, parseEpubContainer, parseEpubPackage } from '../shared/book-metadata.js';
 import { validCoverStyle } from '../shared/book-covers.js';
@@ -201,13 +202,28 @@ export async function openLibrary(dir, limits = null) {
       throw error;
     }
   }
+  let addedDemoSamples = false;
+  if (limits) for (const sample of demoSamples) {
+    if (db.prepare('SELECT id FROM books WHERE id=?').get(sample.id)) continue;
+    const bytes = await sampleBook(sample); await writeFile(join(folder, sample.id + '.epub'), bytes);
+    db.exec('BEGIN');
+    try {
+      db.prepare('INSERT OR IGNORE INTO categories(id,name,owner,expires,language) VALUES(?,?,?,NULL,?)').run(sample.categoryId, sample.categoryName, shared, sample.language);
+      db.prepare('INSERT INTO books(id,title,author,language,format,categoryId,addedAt,owner,expires,bytes,updatedAt,languages,coverStyle) VALUES(?,?,?,?,?,?,?,?,NULL,?,?,?,?)')
+        .run(sample.id, sample.title, '', sample.language, 'epub', sample.categoryId, Date.now(), shared, bytes.byteLength, Date.now(), '[]', sample.coverStyle);
+      db.exec('COMMIT'); addedDemoSamples = true;
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+  }
   db.prepare('INSERT OR IGNORE INTO library_meta VALUES (?, ?)').run('updatedAt', String(Date.now()));
   const touch = () => db.prepare("UPDATE library_meta SET value = ? WHERE key = 'updatedAt'").run(String(Date.now()));
+  if (addedDemoSamples) touch();
 
   if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'shared')) db.exec('ALTER TABLE books ADD COLUMN shared INTEGER NOT NULL DEFAULT 0');
-  const scope = (visitor) => limits ? { sql: "(owner=? OR id='sample')", args: [editable(visitor)] }
+  const demoBookIds = ['sample', ...demoSamples.map((sample) => sample.id)].map((id) => `'${id}'`).join(',');
+  const demoCategoryIds = ['spanish', ...demoSamples.map((sample) => sample.categoryId)].map((id) => `'${id}'`).join(',');
+  const scope = (visitor) => limits ? { sql: `(owner=? OR id IN (${demoBookIds}))`, args: [editable(visitor)] }
     : visitor ? { sql: '(owner=? OR shared=1)', args: [editable(visitor)] } : { sql: '1', args: [] };
-  const categoryScope = limits ? "(owner = ? OR id = 'spanish')" : 'owner = ?';
+  const categoryScope = limits ? `(owner = ? OR id IN (${demoCategoryIds}))` : 'owner = ?';
   const editable = (visitor) => visitor?.id ?? shared;
   const l1Folder = (book, visitor) => (!visitor || book.owner === editable(visitor))
     && Boolean(db.prepare('SELECT l1Folder FROM categories WHERE id=? AND owner=?').get(book.categoryId ?? '', book.owner)?.l1Folder);
@@ -296,7 +312,7 @@ export async function openLibrary(dir, limits = null) {
       const owner = editable(visitor);
       return db.prepare(`SELECT b.id,b.language,r.readAt,r.expires FROM book_read_status r JOIN books b ON b.id=r.book
         WHERE r.owner=? AND (r.expires IS NULL OR r.expires>?) AND (b.expires IS NULL OR b.expires>?)
-          AND ${limits ? "(b.owner=? OR b.id='sample')" : '(b.owner=? OR b.shared=1)'}`)
+          AND ${limits ? `(b.owner=? OR b.id IN (${demoBookIds}))` : '(b.owner=? OR b.shared=1)'}`)
         .all(owner, Date.now(), Date.now(), owner);
     },
     async storage(visitor) {

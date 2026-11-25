@@ -32,7 +32,9 @@ const chapters = [
   },
 ];
 
-export async function sampleBook() {
+const xml = (value) => value.replace(/[&<>"']/gu, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[character]);
+
+export async function sampleBook({ id = 'coffee', title = 'El café de la esquina', language = 'es', chapters: sections = chapters } = {}) {
   const zip = new JSZip();
   zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
   zip.file('META-INF/container.xml', `<?xml version="1.0" encoding="UTF-8"?>
@@ -40,29 +42,29 @@ export async function sampleBook() {
   <rootfiles><rootfile full-path="book/package.opf" media-type="application/oebps-package+xml"/></rootfiles>
 </container>`);
   zip.file('book/package.opf', `<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="uid" version="3.0" xml:lang="es">
+<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="uid" version="3.0" xml:lang="${language}">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:identifier id="uid">urn:langy:sample:coffee</dc:identifier>
-    <dc:title>El café de la esquina</dc:title><dc:language>es</dc:language>
+    <dc:identifier id="uid">urn:langy:sample:${id}</dc:identifier>
+    <dc:title>${xml(title)}</dc:title><dc:language>${language}</dc:language>
     <meta property="dcterms:modified">2026-01-01T00:00:00Z</meta>
   </metadata>
   <manifest>
     <item id="toc" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
-    ${chapters.map((_, i) => `<item id="c${i}" href="c${i}.xhtml" media-type="application/xhtml+xml"/>`).join('')}
+    ${sections.map((_, i) => `<item id="c${i}" href="c${i}.xhtml" media-type="application/xhtml+xml"/>`).join('')}
   </manifest>
-  <spine>${chapters.map((_, i) => `<itemref idref="c${i}"/>`).join('')}</spine>
+  <spine>${sections.map((_, i) => `<itemref idref="c${i}"/>`).join('')}</spine>
 </package>`);
   zip.file('book/nav.xhtml', `<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="es">
-<head><title>Contenido</title></head><body><nav epub:type="toc"><ol>
-${chapters.map((chapter, i) => `<li><a href="c${i}.xhtml">${chapter.title}</a></li>`).join('')}
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${language}">
+<head><title>${language.startsWith('zh') ? '目录' : language === 'es' ? 'Contenido' : 'Contents'}</title></head><body><nav epub:type="toc"><ol>
+${sections.map((chapter, i) => `<li><a href="c${i}.xhtml">${xml(chapter.title)}</a></li>`).join('')}
 </ol></nav></body></html>`);
-  chapters.forEach(({ title, paragraphs }, i) => {
+  sections.forEach(({ title, paragraphs }, i) => {
     zip.file(`book/c${i}.xhtml`, `<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="es" lang="es">
-<head><title>${title}</title></head><body>
-<p class="sample-chapter">Capítulo ${i + 1}</p><h1>${title}</h1>
-${paragraphs.map((text) => `<p>${text}</p>`).join('\n')}
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="${language}" lang="${language}">
+<head><title>${xml(title)}</title></head><body>
+<p class="sample-chapter">${language.startsWith('zh') ? `第${i + 1}章` : `${language === 'es' ? 'Capítulo' : 'Chapter'} ${i + 1}`}</p><h1>${xml(title)}</h1>
+${paragraphs.map((text) => `<p>${xml(text)}</p>`).join('\n')}
 </body></html>`);
   });
   return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
