@@ -51,6 +51,7 @@ async function requestAPI(path, { body, method, signal, keepalive } = {}) {
   const result = await response.json().catch(() => null);
   if (!response.ok || !result) {
     const error = new Error(result?.error || 'Langy Reader could not complete the request.');
+    if (result?.authenticationRequired && globalThis.window?.CustomEvent) window.dispatchEvent(new window.CustomEvent('langy-auth-expired'));
     error.status = response.status;
     error.details = result;
     throw error;
