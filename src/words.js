@@ -166,10 +166,11 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
       }
     }
     heading.textContent = item.word;
-    display(cache.get(key) || { text: 'Looking up word…', language: 'en' });
+    const reuse = preferences().cacheAI !== false;
+    display(reuse && cache.get(key) || { text: 'Looking up word…', language: 'en' });
     bubble.hidden = false;
     place(item.rect);
-    if (cache.has(key)) return;
+    if (reuse && cache.has(key)) return;
 
     const lookup = new AbortController();
     controller = lookup;
@@ -183,7 +184,7 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
         const local = await request('/api/mandarin/word', { method: 'POST', signal: lookup.signal, body: mandarin });
         if (active !== item) return;
         item.resolvedWord = local.word;
-        const result = { mandarin: local };
+        const result = { mandarin: local }; let complete = true;
         display(result); place(item.rect);
         if (!(mode === 'translation' && /^en(?:-|$)/u.test(target))) {
           try {
@@ -192,9 +193,9 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
             if (useContextHelp && extra.status === 'missing' && passage.trim()) extra = { ...await askWord('context', passage), status: 'context' };
             Object.assign(result, extra);
           }
-          catch (error) { if (error.name === 'AbortError') throw error; result.text = error.message; }
+          catch (error) { if (error.name === 'AbortError') throw error; complete = false; result.text = error.message; }
         }
-        cache.set(key, result);
+        if (reuse && preferences().cacheAI !== false && complete) cache.set(key, result);
         if (cache.size > 220) cache.delete(cache.keys().next().value);
         if (active === item) { display(result); place(item.rect); }
         return;
@@ -207,7 +208,7 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
         place(item.rect);
         result = { ...await askWord('context', context), status: 'context' };
       }
-      cache.set(key, result);
+      if (reuse && preferences().cacheAI !== false) cache.set(key, result);
       if (cache.size > 220) cache.delete(cache.keys().next().value);
       if (active === item) display(result);
     } catch (error) {

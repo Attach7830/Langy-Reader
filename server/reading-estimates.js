@@ -3,7 +3,7 @@ import { RequestError } from './books.js';
 import { readingSamples } from './book-text.js';
 
 // This lane runs independently of narration/alignment, with one LLM request at a time.
-export function readingEstimates({ db, ai, timeoutMs = 100000 }) {
+export function readingEstimates({ db, ai, timeoutMs = 100000, withAI = (_visitor, task) => task(), visitorForBook = () => undefined }) {
   for (const [name, type] of [['jobId', 'TEXT'], ['queuedAt', 'INTEGER NOT NULL DEFAULT 0'], ['startedAt', 'INTEGER']]) {
     if (!db.prepare('PRAGMA table_info(estimates)').all().some((column) => column.name === name)) db.exec(`ALTER TABLE estimates ADD COLUMN ${name} ${type}`);
   }
@@ -51,7 +51,7 @@ export function readingEstimates({ db, ai, timeoutMs = 100000 }) {
           controller.signal.addEventListener('abort', onAbort, { once: true });
           timer = setTimeout(() => controller.abort(new RequestError(504, 'Reading estimate timed out. Retry the estimate or check the model’s inference queue.')), timeoutMs);
         });
-        result = await Promise.race([Promise.resolve().then(() => ai.readingLevel(sample, controller.signal)), cancelled]);
+        result = await Promise.race([Promise.resolve().then(() => withAI(visitorForBook(row.book), () => ai.readingLevel(sample, controller.signal))), cancelled]);
       }
       if (valid()) db.prepare("UPDATE estimates SET state='ready',json=?,error=NULL WHERE book=? AND jobId=?").run(JSON.stringify(result), row.book, row.jobId);
     } catch (error) {

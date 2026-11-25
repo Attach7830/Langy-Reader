@@ -150,7 +150,8 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
         return root?.childElementCount ? { key: `pdf:${pageNumber}`, root, track: () => trackText(root, language, true) } : null;
       },
       audioTarget(key) { return Number(key.split(':')[1]); },
-      revealWord(range) {
+      revealWord(range, { valid = () => true } = {}) {
+        if (!valid() || !range.startContainer.isConnected) return;
         range.startContainer.parentElement?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
       },
       get pageCount() { return pdf.numPages; },

@@ -7,13 +7,13 @@ import { narration } from '../src/narration.js';
 
 async function until(check) { for (let n = 0; n < 100; n++) { if (check()) return; await delay(10); } throw new Error('Narration UI timed out'); }
 
-async function fixture(t) {
+async function fixture(t, { words = [], timings = [], visible = () => true } = {}) {
   const dom = new JSDOM(await readFile(new URL('../index.html', import.meta.url), 'utf8'), { url: 'https://langy.test' });
   const values = { window: dom.window, document: dom.window.document, Option: dom.window.Option, navigator: dom.window.navigator,
     requestAnimationFrame: () => 0, cancelAnimationFrame() {} };
   const originals = new Map(Object.keys(values).map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
   for (const [name, value] of Object.entries(values)) Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
-  const previousFetch = globalThis.fetch, positions = [], navigations = [];
+  const previousFetch = globalThis.fetch, positions = [], navigations = [], reveals = [];
   Object.defineProperty(navigator, 'mediaSession', { configurable: true, value: {
     setActionHandler() {}, setPositionState(value) { if (value) positions.push(value); },
   } });
@@ -24,13 +24,15 @@ async function fixture(t) {
     markers: [{ time: 0, title: 'First chapter' }, { time: 1800, title: 'Second chapter' }],
     segments: [{ key: 'epub:0', start: 0, end: 1800, scale: 1 }, { key: 'epub:1', start: 1800, end: 3600, scale: 1 }] };
   let key = 'epub:0';
-  const local = { root, annotate() {}, match: () => new Map(), rangeFor: () => null, visible: () => true };
-  const view = { audioUnit: () => ({ key, root, track: () => local }), audioTarget: (target) => ({ key: target }) };
+  const local = { root, words, text: ' '.repeat(120), annotate() {}, match: () => new Map(timings.map((stamp, index) => [index, words.find((word) => word.from === stamp.from)])),
+    rangeFor: (word) => word ? { word } : null, visible };
+  const view = { audioUnit: () => ({ key, root, track: () => local }), audioTarget: (target) => ({ key: target }),
+    async revealWord(range, { valid = () => true } = {}) { await delay(0); if (valid()) reveals.push(range.word); } };
   globalThis.fetch = async (path) => {
     if (path === '/api/books/book/narration') return Response.json({ audio: recording, connected: true, recordings: [] });
     const match = path.match(/\/chapters\/([^?]+)/u);
     assert.ok(match, 'Unexpected request: ' + path);
-    return Response.json({ key: decodeURIComponent(match[1]), tokens: [], audio: { timings: [] } });
+    return Response.json({ key: decodeURIComponent(match[1]), tokens: [], audio: { timings } });
   };
   const prefs = { audioEnabled: true, audioRate: 1, audioHighlight: false, audioToolbarHidden: false, podcastMode: true };
   let player;
@@ -43,7 +45,7 @@ async function fixture(t) {
     changePreferences(values) { Object.assign(prefs, values); player.apply(); } });
   player.apply(); await player.refresh();
   const clock = document.querySelector('#narration-time'), seek = document.querySelector('#narration-seek'), rate = document.querySelector('#narration-rate');
-  return { dom, player, audio, clock, seek, prefs, positions, navigations,
+  return { dom, player, audio, clock, seek, prefs, positions, navigations, reveals,
     page(value) { key = value; },
     speed(value) { rate.value = String(value); rate.dispatchEvent(new dom.window.Event('change')); },
     tick(time) { audio.currentTime = time; audio.dispatchEvent(new dom.window.Event('timeupdate')); } };
@@ -58,6 +60,28 @@ test('manual page turns cannot be pulled back by old audio timeupdates before th
   await f.player.endNavigation(navigation);
   assert.equal(f.audio.currentTime, 1800, 'manual turns seek to the new section before audio following resumes');
   f.tick(2000); await delay(5); assert.equal(f.navigations.length, before);
+});
+
+test('a page with unmatched audio words keeps its new position instead of snapping to the chapter beginning', async (t) => {
+  let pageStart = 0;
+  const words = [{ word: 'first', from: 0, to: 5 }, { word: 'middle', from: 50, to: 56 }, { word: 'last', from: 100, to: 104 }];
+  const f = await fixture(t, { words, visible: (word) => word.from >= pageStart && word.from < pageStart + 20,
+    timings: [{ word: 'first', from: 0, start: 0, end: 20 }, { word: 'last', from: 100, start: 1000, end: 1020 }] });
+  const navigation = f.player.beginNavigation(); pageStart = 50;
+  await f.player.endNavigation(navigation); await delay(10);
+  assert.equal(f.audio.currentTime, 500, 'missing page timestamps interpolate between neighboring text anchors');
+  f.tick(510); await delay(10); assert.equal(f.reveals.length, 0, 'a preceding aligned word cannot pull the reader back');
+  f.player.skipBy(-10); await until(() => f.reveals.length === 1);
+  assert.equal(f.reveals[0].from, 0, 'an explicit audio seek still follows the audio location');
+});
+
+test('a delayed audio reveal is discarded when a manual turn starts', async (t) => {
+  const words = [{ word: 'first', from: 0, to: 5 }]; let visible = true;
+  const f = await fixture(t, { words, visible: () => visible, timings: [{ word: 'first', from: 0, start: 0, end: 1800 }] });
+  visible = false; f.tick(30); await Promise.resolve(); await Promise.resolve();
+  const navigation = f.player.beginNavigation(); await delay(10);
+  assert.equal(f.reveals.length, 0, 'an audio reveal queued before the turn must check its navigation generation');
+  await f.player.endNavigation(navigation, { seekToPage: false });
 });
 
 test('audio times update immediately with player or settings speed while media position and seeking stay in recording seconds', async (t) => {

@@ -5,6 +5,7 @@ import express from 'express';
 import multer from 'multer';
 import { maxUpload, openLibrary, RequestError } from './books.js';
 import { openAISettings } from './ai.js';
+import { openAICache } from './ai-cache.js';
 import { openThesaurus } from './thesaurus.js';
 import { vocabularyMeanings } from './vocabulary-meanings.js';
 import { openLearning } from './learning.js';
@@ -38,12 +39,20 @@ const progressSync = openProgressSync(dir, { library, demo,
   username: process.env.READER_SYNC_USER || process.env.READER_USER || 'reader',
   password: process.env.READER_SYNC_PASSWORD || password,
 });
-const ai = await openAISettings(dir, demo);
-const discovery = openBookDiscovery(dir, { library, ai, demo });
+const aiSettings = await openAISettings(dir, demo);
+const aiCache = openAICache(dir, { identity: aiSettings.cacheIdentity,
+  policy(visitor) {
+    if (demo && !visitor?.id) return null;
+    const account = readerSettings.get(visitor);
+    return { owner: account.accountId, enabled: account.preferences.cacheAI !== false, expires: demo ? visitor.expires : null };
+  },
+});
+const ai = aiCache.wrap(aiSettings), withAI = (visitor, task) => aiCache.run(visitor, task);
+const discovery = openBookDiscovery(dir, { library, ai, demo, withAI });
 const lookupSynonyms = openThesaurus();
 const mandarin = openMandarin();
 const nativeLanguage = (visitor) => readerSettings.get(visitor).preferences.nativeLanguage || '';
-const learning = await openLearning(dir, library, demo, ai, { nativeLanguage });
+const learning = await openLearning(dir, library, demo, ai, { nativeLanguage, withAI });
 const readingTime = openReadingTime(dir, { section: (book, key) => learning.vocabulary.section(book, key) });
 const toolsForBook = bookTools({ learning, ai });
 const offlinePack = offlinePacks({ learning, mandarin, lookupSynonyms });
@@ -106,7 +115,7 @@ app.use('/api', (req, res, next) => {
 
 if (demo) {
   const identifyVisitor = await visitorMiddleware(dir);
-  app.use(['/api/library', '/api/categories', '/api/books', '/api/storage', '/api/vocabulary', '/api/discovery', '/api/settings/reader', '/api/reading-time'], identifyVisitor);
+  app.use(['/api/library', '/api/categories', '/api/books', '/api/storage', '/api/vocabulary', '/api/discovery', '/api/settings/reader', '/api/settings/ai-cache', '/api/reading-time'], identifyVisitor);
   app.post(['/api/ai/word', '/api/ai/summary', '/api/mandarin/word', '/api/mandarin/readings', '/api/mandarin/pinyin'], identifyVisitor);
   await library.pruneDemoBooks();
   await learning.prune();
@@ -128,9 +137,12 @@ if (demo) {
   app.post('/api/imports/anna/:id/file', upload.single('file'), async (req, res) => res.json(await archive.accept(req.params.id, req.file, req.body?.details)));
 }
 
+app.use('/api', (req, _res, next) => withAI(req.visitor, next));
+app.delete('/api/settings/ai-cache', (req, res) => { aiCache.clear(req.visitor); res.json({ cleared: true }); });
 app.get('/api/settings/reader', (req, res) => res.json(readerSettings.get(req.visitor)));
 app.patch('/api/settings/reader', (req, res) => {
   const result = readerSettings.patch(req.body, req.visitor);
+  if (!result.conflict && result.preferences.cacheAI === false) aiCache.clear(req.visitor);
   res.status(result.conflict ? 409 : 200).json(result);
 });
 app.get('/api/settings/learning', (req, res) => res.json(learning.settings()));

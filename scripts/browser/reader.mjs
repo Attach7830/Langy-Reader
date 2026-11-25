@@ -50,8 +50,35 @@ try {
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   }
   async function changed(before) { await page.waitForFunction(({ id, before }) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target !== before, { id: book.id, before }, { timeout: 4000 }); }
+  await page.goto(base + '/#library');
+  await page.locator('#books a[href="#read/' + book.id + '"]').waitFor();
+  await check('mobile library uses compact controls and book actions contain no statistics', async () => {
+    assert.equal(await page.locator('#mobile-navigation').isVisible(), true);
+    assert.equal(await page.locator('.mobile-collections').isVisible(), true);
+    assert.equal(await page.locator('.library-rail').isVisible(), false);
+    assert.equal(await page.locator('.book-reading-details').first().isVisible(), false);
+    await page.locator('.book-mobile-menu').first().click();
+    await page.locator('#book-actions-dialog').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#book-actions-dialog .book-word-count, #book-actions-dialog .book-metrics').count(), 0);
+    await page.locator('#book-actions-dialog [data-close]').click();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({ path: output + '/mobile-library.png', fullPage: true });
+  });
+  await check('completed book packs show Downloaded and open locally even when the source URL fails', async () => {
+    await page.waitForFunction(() => Boolean(localStorage.getItem('langy-offline-owner')));
+    const file = await context.request.get(base + '/api/books/' + book.id + '/file'); assert.equal(file.status(), 200);
+    await page.evaluate(async ({ id, source }) => {
+      const owner = localStorage.getItem('langy-offline-owner'), cache = await caches.open(`langy-pack-${owner}-${id}-browser`);
+      await cache.put(`/api/books/${id}/file`, new Response(Uint8Array.from(atob(source), (c) => c.charCodeAt(0))));
+      await cache.put('/__langy_pack_ready__', Response.json({ book: id, owner }));
+      window.dispatchEvent(new CustomEvent('langy-packs-changed'));
+    }, { id: book.id, source: (await file.body()).toString('base64') });
+    await page.locator('.book-download-badge').filter({ hasText: /^Downloaded$/ }).waitFor();
+    await page.route('**/api/books/' + book.id + '/file', (route) => route.abort());
+    await open();
+  });
   await open();
-  await check('page buttons advance reliably across section boundaries', async () => {
+  await check('page buttons advance reliably without duplicate positions', async () => {
     const positions = [];
     for (let i = 0; i < 12; i++) { const before = await position(); await page.locator('#next').click(); await changed(before); positions.push(await position()); }
     assert.equal(new Set(positions).size, positions.length); assert.equal(await page.locator('#reader-message[data-problem="true"]').isVisible(), false);
@@ -85,6 +112,103 @@ try {
     await page.locator('#return-location').click(); await page.waitForTimeout(200);
     assert.equal(await page.frameLocator('#viewer iframe').first().getByText('Leer nota', { exact: true }).isVisible(), true);
   });
+  await check('section boundaries remain stable after forward/back turns and a viewport resize', async () => {
+    await page.locator('#contents-button').click();
+    await page.getByRole('button', { name: 'Segunda parte', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('#position-detail').textContent.includes('Section 2'));
+    for (let n = 0; n < 3; n++) {
+      await page.locator('#previous').click();
+      await page.waitForFunction(() => document.querySelector('#position-detail').textContent.includes('Section 1'));
+      await page.locator('#next').click();
+      await page.waitForFunction(() => document.querySelector('#position-detail').textContent.includes('Section 2'));
+    }
+    await page.setViewportSize({ width: 393, height: 800 }); await delay(500);
+    const before = await position(); await page.locator('#next').click(); await changed(before);
+    const after = await position(); await delay(700); assert.equal(await position(), after, 'a delayed layout must not restore the previous page');
+  });
+  await check('an outer double tap turns once and a single tap does not turn', async () => {
+    const box = await page.locator('.reading-main').boundingBox(), x = box.x + box.width * .9, y = box.y + box.height * .55;
+    const before = await position(); await page.touchscreen.tap(x, y); await delay(400); assert.equal(await position(), before);
+    await page.touchscreen.tap(x, y); await delay(70); await page.touchscreen.tap(x, y); await changed(before);
+    const after = await position(); await delay(500); assert.equal(await position(), after);
+  });
+  await check('pinch enlarges touch text and leaves desktop font size unchanged', async () => {
+    const before = await page.evaluate(() => JSON.parse(localStorage.getItem('langy-settings-v1')));
+    const box = await page.locator('.reading-main').boundingBox(), x = box.x + box.width / 2, y = box.y + box.height / 2;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ id: 1, x: x - 35, y }, { id: 2, x: x + 35, y }] });
+    for (let i = 1; i <= 6; i++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ id: 1, x: x - 35 - i * 3, y }, { id: 2, x: x + 35 + i * 3, y }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.waitForFunction((size) => JSON.parse(localStorage.getItem('langy-settings-v1')).touchSize > size, before.touchSize || before.size);
+    const after = await page.evaluate(() => JSON.parse(localStorage.getItem('langy-settings-v1')));
+    assert.equal(after.size, before.size); assert.equal(await page.evaluate(() => visualViewport.scale), 1);
+    await delay(500);
+  });
+  await check('swiping down opens sections and expandable bookmarks without changing pages', async () => {
+    const before = await position(); await swipe(0, 160);
+    await page.locator('#contents-dialog').waitFor({ state: 'visible' });
+    assert.equal(await page.getByRole('button', { name: 'Primera parte', exact: true }).isVisible(), true);
+    await page.locator('.toc-bookmarks summary').click();
+    await page.locator('.toc-bookmarks').getByText('No bookmarks yet.').waitFor();
+    await page.locator('#contents-dialog [data-close]').click(); assert.equal(await position(), before);
+  });
+  const samples = 120 * 8000, wav = Buffer.alloc(44 + samples * 2);
+  wav.write('RIFF', 0); wav.writeUInt32LE(36 + samples * 2, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(8000, 24); wav.writeUInt32LE(16000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(samples * 2, 40);
+  await page.route('**/browser-audio.wav', (route) => route.fulfill({ body: wav, contentType: 'audio/wav' }));
+  await page.route('**/api/books/' + book.id + '/narration*', (route) => route.fulfill({ json: { connected: true, recordings: [], audio: {
+    id: 'browser', state: 'ready', url: '/browser-audio.wav', duration: 120,
+    segments: [{ key: 'epub:0', start: 0, end: 50, scale: 1 }, { key: 'epub:1', start: 50, end: 110, scale: 1 }, { key: 'epub:2', start: 110, end: 120, scale: 1 }],
+    markers: [{ title: 'Primera parte', time: 0 }, { title: 'Segunda parte', time: 50 }],
+  } } }));
+  await page.route('**/api/books/' + book.id + '/chapters/*', (route) => route.fulfill({ json: { key: decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-1)), tokens: [], audio: { timings: [] } } }));
+  await check('swiping up reveals the player temporarily and center double taps play and pause', async () => {
+    const before = await position(); await swipe(0, -160);
+    await page.locator('#narration-player').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => !document.querySelector('#narration-play').disabled);
+    assert.equal(await position(), before);
+    const doubleCenter = async () => { const box = await page.locator('.reading-main').boundingBox();
+      await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2); await delay(65);
+      await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2); };
+    await doubleCenter(); await page.waitForFunction(() => !document.querySelector('#narration-audio').paused);
+    await doubleCenter(); await page.waitForFunction(() => document.querySelector('#narration-audio').paused);
+    await page.locator('#narration-player').waitFor({ state: 'hidden', timeout: 7000 });
+    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), true);
+  });
+  await check('manual page turns with missing word alignment do not snap back while narration is enabled', async () => {
+    const before = await position(); await page.locator('#next').click(); await changed(before);
+    const after = await position(); await delay(1000); assert.equal(await position(), after);
+  });
+  await check('About and How to are available to self-hosted readers and fit a phone screen', async () => {
+    await page.goto(base + '/#about'); await page.locator('#about-title').waitFor({ state: 'visible' });
+    assert.equal(await page.getByText('A note from the project’s creator', { exact: true }).isVisible(), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({ path: output + '/about-mobile.png' });
+    await page.goto(base + '/#howto'); await page.locator('#howto-title').waitFor({ state: 'visible' });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({ path: output + '/howto-mobile.png' });
+  });
+  await check('AI answer saving is on by default, can be disabled and persists across reloads', async () => {
+    await page.goto(base + '/#library'); await page.locator('#mobile-navigation [data-settings]').click();
+    await page.locator('[data-settings-tab="language"]').click();
+    assert.equal(await page.locator('[name="cacheAI"]').isChecked(), true);
+    await page.locator('[name="cacheAI"]').uncheck(); await page.locator('#settings-form button[type="submit"]').click();
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('langy-settings-v1')).cacheAI === false);
+    await delay(1000); await page.reload(); await page.locator('#mobile-navigation [data-settings]').click();
+    await page.locator('[data-settings-tab="language"]').click(); assert.equal(await page.locator('[name="cacheAI"]').isChecked(), false);
+    await page.locator('#clear-ai-cache').click(); await page.locator('#ai-cache-status').filter({ hasText: 'Saved AI answers cleared.' }).waitFor();
+    await page.locator('#settings [data-close]').first().click();
+  });
+  const desktop = await browser.newContext({ viewport: { width: 1280, height: 900 } }), desktopPage = await desktop.newPage();
+  desktopPage.on('pageerror', (error) => errors.push(error.message));
+  await check('desktop library and project pages retain their full layout', async () => {
+    await desktopPage.goto(base + '/#library'); await desktopPage.locator('#books a').first().waitFor();
+    assert.equal(await desktopPage.locator('.library-rail').isVisible(), true); assert.equal(await desktopPage.locator('#mobile-navigation').isVisible(), false);
+    await desktopPage.screenshot({ path: output + '/library-desktop.png' });
+    await desktopPage.goto(base + '/#about'); await desktopPage.locator('#about-title').waitFor({ state: 'visible' });
+    await desktopPage.screenshot({ path: output + '/about-desktop.png' });
+    assert.equal(await desktopPage.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  });
+  await desktop.close(); assert.deepEqual(errors, [], 'the app must not emit uncaught browser errors');
 } catch (error) { results.push({ name: 'browser setup', pass: false, error: error.stack }); console.error(error); }
 finally {
   await writeFile(join(output, 'report.json'), JSON.stringify({ results, errors }, null, 2));

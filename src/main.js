@@ -206,6 +206,7 @@ function applySettings(updated, aiChanged, notify = true) {
   const relayout = ['size', 'touchSize', 'font', 'line', 'width', 'summaryLanguage', 'showPinyin'].some((key) => settings[key] !== updated[key]);
   const syncChanged = settings.progressSyncEnabled !== updated.progressSyncEnabled;
   const libraryChanged = settings.nativeLanguage !== updated.nativeLanguage || settings.quietLibrary !== updated.quietLibrary;
+  const cacheChanged = settings.cacheAI !== updated.cacheAI;
   settings = saveSettings(updated, { notify });
   document.documentElement.dataset.immersion = String(settings.immersionMode);
   $('#immersion-toggle').setAttribute('aria-pressed', String(settings.immersionMode));
@@ -214,12 +215,12 @@ function applySettings(updated, aiChanged, notify = true) {
   applyAppearance();
   syncFullscreen();
   audio.apply();
-  if (aiChanged) {
+  if (aiChanged || cacheChanged) {
     summaries.clear();
     words.reset();
-    void checkAI();
+    if (aiChanged) void checkAI();
   }
-  if (relayout || aiChanged) resetSummary();
+  if (relayout || aiChanged || cacheChanged) resetSummary();
   Promise.resolve(renderer?.apply?.(readingPreferences(settings))).then(() => {
     pageGestures.refresh();
     pinyin.refresh();
@@ -254,6 +255,7 @@ function showScreen(screen) {
   readerScreen.hidden = screen !== 'reader';
   $('#library-screen').hidden = screen !== 'library';
   $('#about-screen').hidden = screen !== 'about';
+  $('#howto-screen').hidden = screen !== 'howto';
   $('#discovery-screen').hidden = screen !== 'discovery';
   if (screen !== 'discovery') discovery.leave();
   $('#library-header').hidden = screen === 'reader';
@@ -373,7 +375,7 @@ async function explainSummary(mode, label, selected) {
   title.lang = mode === 'question' ? entry.body.language : 'en';
   summaryDetailBody.lang = entry.body.language;
   summaryDetail.hidden = false;
-  if (entry.details.has(key)) {
+  if (settings.cacheAI !== false && entry.details.has(key)) {
     detailState('complete', entry.details.get(key));
     summaryDetail.scrollIntoView({ block: 'nearest' });
     return;
@@ -390,7 +392,7 @@ async function explainSummary(mode, label, selected) {
       body: { ...entry.body, mode, question, brief: entry.text },
     });
     if (summaryController !== controller) return;
-    entry.details.set(key, result);
+    if (settings.cacheAI !== false) entry.details.set(key, result);
     detailState('complete', result);
   } catch (error) {
     if (summaryController === controller && error.name !== 'AbortError') detailState('error', error.message);
@@ -431,7 +433,7 @@ async function generateSummary() {
   const { id, title, author, language } = activeBook;
   const outputLanguage = settings.summaryLanguage;
   const key = JSON.stringify([id, activePosition?.target, outputLanguage, title, author, text]);
-  if (summaries.has(key)) return showSummaryResult(summaries.get(key));
+  if (settings.cacheAI !== false && summaries.has(key)) return showSummaryResult(summaries.get(key));
   const controller = new AbortController();
   summaryController = controller;
   summaryState('loading', 'Generating a summary…');
@@ -441,7 +443,7 @@ async function generateSummary() {
     const { text: answer, suggestions = [] } = await api('/api/ai/summary', { method: 'POST', signal: controller.signal, body });
     if (summaryController !== controller) return;
     const entry = { text: answer, suggestions, body, details: new Map() };
-    summaries.set(key, entry);
+    if (settings.cacheAI !== false) summaries.set(key, entry);
     if (summaries.size > 90) summaries.delete(summaries.keys().next().value);
     showSummaryResult(entry);
   } catch (error) {
@@ -574,11 +576,11 @@ async function route() {
     await discovery.open();
     return;
   }
-  if (location.hash === '#about' && library.state.demo) {
+  if (['#about', '#howto'].includes(location.hash)) {
     if (activeBook) closeReader();
-    showScreen('about');
-    document.title = 'About · Langy Reader';
-    $('#about-title').focus({ preventScroll: true });
+    const screen = location.hash.slice(1); showScreen(screen);
+    document.title = `${screen === 'about' ? 'About' : 'How to'} · Langy Reader`;
+    $(`#${screen}-title`).focus({ preventScroll: true });
     return;
   }
   const match = /^#read\/([a-z0-9-]+)$/i.exec(location.hash);
@@ -743,6 +745,10 @@ $('#ai-status').addEventListener('click', checkAI);
 document.addEventListener('fullscreenchange', syncFullscreen);
 document.addEventListener('keydown', keydown);
 window.addEventListener('resize', words.clear);
+window.addEventListener('langy-ai-cache-cleared', () => { summaries.clear(); words.reset(); resetSummary(); });
+for (const button of document.querySelectorAll('[data-document-section]')) button.addEventListener('click', () => {
+  const section = document.getElementById(button.dataset.documentSection); section?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
 if (typeof matchMedia === 'function') matchMedia('(pointer: coarse)').addEventListener('change', () => {
   words.clear(); void renderer?.apply?.(readingPreferences(settings)).then(() => { pinyin.refresh(); vocabulary.refresh(); }).catch(reportError);
 });
@@ -769,7 +775,7 @@ try {
   void readingSync.flushSaved();
   void refreshOfflineReader();
   settingsUI.setDemo(snapshot.demo);
-  $('#about-link').hidden = !snapshot.demo;
+  $('#about-link').hidden = false;
   window.addEventListener('hashchange', route);
   await route();
 } catch (error) {

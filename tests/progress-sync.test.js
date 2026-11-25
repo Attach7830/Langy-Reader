@@ -16,11 +16,11 @@ import { koReaderDocumentID } from '../server/progress-sync.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const md5 = (value) => createHash('md5').update(value).digest('hex');
-const basic = 'Basic ' + Buffer.from('ian:test-reader-password').toString('base64');
+const basic = 'Basic ' + Buffer.from('reader:test-reader-password').toString('base64');
 const json = { Authorization: basic, 'Content-Type': 'application/json' };
 const xpath = '/body/DocFragment[1]/body/p[2]/text()[1].7';
 const cfi = 'epubcfi(/6/2!/4/2/1:7)';
-const deviceHeaders = (user = 'ian', password = 'test-reader-password') => ({
+const deviceHeaders = (user = 'reader', password = 'test-reader-password') => ({
   'x-auth-user': user, 'x-auth-key': md5(password), Accept: 'application/vnd.koreader.v1+json',
   'Content-Type': 'application/json',
 });
@@ -44,7 +44,7 @@ async function fixture(t, { demo = false, password = 'test-reader-password', syn
     let output = '';
     child = spawn(process.execPath, ['server/index.js'], { cwd: root, env: { ...process.env,
       PORT: String(port), READER_DATA: folder, READER_DEMO: demo ? '1' : '0',
-      READER_USER: 'ian', READER_PASSWORD: password, READER_SYNC_USER: syncUser, READER_SYNC_PASSWORD: syncPassword,
+      READER_USER: 'reader', READER_PASSWORD: password, READER_SYNC_USER: syncUser, READER_SYNC_PASSWORD: syncPassword,
       READER_LANGUAGE_URL: 'http://127.0.0.1:1', READER_KOKORO_URL: '',
     }, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout.on('data', (value) => { output = (output + value).slice(-12000); });
@@ -71,12 +71,16 @@ async function response(base, path, { status = 200, ...options } = {}) {
 test('account reader settings require login, enforce same-origin writes, and persist independently of device progress', async (t) => {
   const f = await fixture(t); let base = await f.start();
   assert.equal((await fetch(base + '/api/settings/reader')).status, 401);
+  assert.equal((await fetch(base + '/api/settings/ai-cache', { method: 'DELETE' })).status, 401);
   const initial = await response(base, '/api/settings/reader', { headers: json });
   assert.equal(initial.revision, 0);
-  const change = { revision: 0, changes: { showPinyin: true, theme: 'midnight', keys: { pinyin: 'j' } } };
+  const change = { revision: 0, changes: { showPinyin: true, theme: 'midnight', cacheAI: false, keys: { pinyin: 'j' } } };
   await response(base, '/api/settings/reader', { method: 'PATCH', headers: { ...json, Origin: 'https://unrelated.test' }, body: JSON.stringify(change), status: 403 });
   const saved = await response(base, '/api/settings/reader', { method: 'PATCH', headers: json, body: JSON.stringify(change) });
   assert.equal(saved.revision, 1); assert.equal(saved.preferences.showPinyin, true);
+  assert.equal(saved.preferences.cacheAI, false);
+  await response(base, '/api/settings/ai-cache', { method: 'DELETE', headers: { ...json, Origin: 'https://unrelated.test' }, status: 403 });
+  assert.deepEqual(await response(base, '/api/settings/ai-cache', { method: 'DELETE', headers: json }), { cleared: true });
   const conflict = await response(base, '/api/settings/reader', { method: 'PATCH', headers: json, body: JSON.stringify(change), status: 409 });
   assert.equal(conflict.accountId, saved.accountId); assert.equal(conflict.revision, 1);
   await response(base, '/api/settings/reader', { method: 'PATCH', headers: json, body: '{"revision":1,"changes":{"apiKey":"never-store"}}', status: 422 });
@@ -167,7 +171,7 @@ test('native KOSync and browser sync share original-book progress with authentic
   assert.deepEqual(await response(base, '/kosync/users/auth', { headers: native }), { authorized: 'OK' });
   for (const path of ['/kosync/users/auth', '/kosync/syncs/progress/' + 'a'.repeat(32)]) {
     assert.equal((await fetch(base + path)).status, 401);
-    assert.equal((await fetch(base + path, { headers: deviceHeaders('ian', 'wrong') })).status, 401);
+    assert.equal((await fetch(base + path, { headers: deviceHeaders('reader', 'wrong') })).status, 401);
   }
   // Native credentials do not bypass the web/OPDS login.
   for (const path of ['/api/library', '/api/settings/ai', '/api/books/sync-book/file', '/opds']) {
@@ -175,7 +179,7 @@ test('native KOSync and browser sync share original-book progress with authentic
   }
   assert.equal((await fetch(base + '/kosync/users/create', { method: 'POST', headers: native, body: '{}' })).status, 403);
   const settings = await response(base, '/api/settings/sync', { headers: json });
-  assert.deepEqual(settings, { available: true, deviceAvailable: true, path: '/kosync', username: 'ian', protocol: 'KOReader Sync' });
+  assert.deepEqual(settings, { available: true, deviceAvailable: true, path: '/kosync', username: 'reader', protocol: 'KOReader Sync' });
   assert.ok(!JSON.stringify(settings).includes('test-reader-password'));
   assert.ok(!JSON.stringify(settings).includes(md5('test-reader-password')));
   assert.deepEqual(await response(base, '/kosync/syncs/progress/' + 'b'.repeat(32), { headers: native }), {});

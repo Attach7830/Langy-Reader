@@ -123,6 +123,7 @@ export function settingsDialog({ preferences, apply }) {
     fields.pdfNight.checked = current.pdfNight;
     fields.synonymContextHelp.checked = current.synonymContextHelp;
     fields.showPinyin.checked = current.showPinyin;
+    fields.cacheAI.checked = current.cacheAI !== false;
     fields.audioHighlight.checked = current.audioHighlight;
     fields.progressSyncEnabled.checked = current.progressSyncEnabled;
     fields.syncDeviceName.value = current.syncDeviceName;
@@ -241,6 +242,7 @@ export function settingsDialog({ preferences, apply }) {
       readingLanguages: preferredLanguages,
       synonymContextHelp: fields.synonymContextHelp.checked,
       showPinyin: fields.showPinyin.checked,
+      cacheAI: fields.cacheAI.checked,
       audioRecordings: preferences().audioRecordings || {},
       audioHighlight: fields.audioHighlight.checked,
       progressSyncEnabled: fields.progressSyncEnabled.checked,
@@ -255,6 +257,16 @@ export function settingsDialog({ preferences, apply }) {
     dialog.close();
     apply(updated, aiChanged);
     toast('Settings saved');
+  });
+
+  $('#clear-ai-cache').addEventListener('click', async () => {
+    const button = $('#clear-ai-cache'); button.disabled = true;
+    try {
+      await api('/api/settings/ai-cache', { method: 'DELETE' });
+      window.dispatchEvent(new CustomEvent('langy-ai-cache-cleared'));
+      message('#ai-cache-status', 'Saved AI answers cleared. New requests may use tokens.');
+    } catch (error) { message('#ai-cache-status', error.message); }
+    finally { button.disabled = false; }
   });
 
   return {

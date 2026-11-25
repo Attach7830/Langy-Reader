@@ -443,7 +443,8 @@ export async function openEpub({ host, url, position, language, settings, hooks,
         return { key: `epub:${index}`, root: contents.content, track: () => trackText(contents.content, language) };
       },
       audioTarget(key) { return { index: Number(key.split(':')[1]) }; },
-      async revealWord(range) {
+      async revealWord(range, { valid = () => true } = {}) {
+        if (!valid() || !range.startContainer.isConnected) return;
         const contents = rendition.getContents().find((content) => content.document === range.startContainer.ownerDocument);
         if (!contents) return;
         await display(contents.cfiFromRange(range));

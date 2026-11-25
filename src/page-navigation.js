@@ -32,7 +32,8 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
   function policy() {
     const action = zoomed() || canPan() ? 'auto' : 'none';
     host.style.touchAction = action; host.classList.toggle('reader-native-zoom', zoomed());
-    for (const { style } of bindings.values()) if (style) style.textContent = 'html,body,body * {touch-action:' + action + ' !important;}';
+    const css = 'html,body,body * {touch-action:' + action + ' !important;}';
+    for (const { style } of bindings.values()) if (style && style.textContent !== css) style.textContent = css;
   }
   function reset() {
     clearTap(); if (pinch) onPinch?.({ phase: 'cancel', factor: pinch.factor });

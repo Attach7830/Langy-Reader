@@ -46,7 +46,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   const pendingStars = new Set();
   const pendingAside = new Set();
   let audioUploading = false;
-  let expandedDetails = new Set(), previousQuiet;
+  let expandedDetails = new Set();
   const audioUI = audioTools({ book: () => learningBook, refresh: learningStatus });
   const absBook = audiobookshelfBook({ book: () => learningBook, changed: learningStatus });
   const offline = offlineDownloads();
@@ -215,7 +215,6 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   function render() {
     const quiet = preferences().quietLibrary !== false;
     expandedDetails = new Set([...books.querySelectorAll('.book-card details[open]')].map((detail) => detail.closest('.book-card').dataset.book));
-    previousQuiet = quiet;
     books.dataset.quiet = String(quiet);
     $('#library-details-toggle').textContent = quiet ? 'Show reading details' : 'Hide reading details';
     $('#library-details-toggle').setAttribute('aria-pressed', String(!quiet));
@@ -229,7 +228,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
       : current?.language ? `${languageName(current.language)} folder · Books added here inherit this language.` : current ? 'Books in this category.' : 'Books without a category.';
     $('#mobile-category').replaceChildren(new Option('All books', 'all'), ...snapshot.categories.map((entry) => new Option(entry.name, entry.id)), new Option('Uncategorized', 'uncategorized'));
     $('#mobile-category').value = category; $('#mobile-edit-category').disabled = !current || snapshot.demo && current.id === 'spanish';
-    $('#mobile-about-link').hidden = !snapshot.demo;
+    $('#mobile-about-link').hidden = false;
     $('#demo-note').hidden = !snapshot.demo;
     const categoryRows = snapshot.categories.map((entry) => {
       const row = element('div', 'category-row');
