@@ -428,7 +428,9 @@ The public demo shows where to configure a personal installation and does not ac
 
 ## Publish the demo at langy.srtw.win
 
-On the server, start a separate Compose project. The demo has its own volume and uses the bundled model with zero AI API fees. Visitors can import up to four EPUB or PDF books, up to **20 MiB each**. Uploads and categories are private to the visitor’s browser session and expire after 24 hours.
+On the server, start a separate Compose project. The demo has its own volume and uses the bundled model with zero AI API fees. It includes three original sample EPUBs: **El café de la esquina** in Spanish, **蓝色的伞** in Mandarin, and **The Note in the Book** in English, with matching language folders. The English and Mandarin samples are added automatically to existing demo volumes after upgrading; personal installations do not receive these extra demo stories. Visitors can read the shared samples and keep their own progress without changing the public stories or folders. Samples do not count toward the four private upload slots.
+
+Visitors can import up to four EPUB or PDF books, up to **20 MiB each**. Uploads and personal categories are private to the visitor’s browser session and expire after 24 hours.
 
 ```bash
 cp .env.demo.example .env.demo
