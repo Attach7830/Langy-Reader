@@ -51,7 +51,7 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
   let zoom = 1;
   let pageNumber = 1;
   let closed = false;
-  let syncResolution;
+  let syncResolution, sectionHeaders = [];
   const excerpts = new Map();
   const shell = document.createElement('div');
   shell.className = 'pdf-sheet';
@@ -117,7 +117,7 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
         return text.slice(offset, offset + 1100);
       });
       hooks.position({
-        target: number, label: `Page ${number} of ${pdf.numPages}`, detail: 'PDF',
+        target: number, heading: sectionHeaders.findLast((entry) => entry.page <= number)?.label || `Page ${number}`, label: `Page ${number} of ${pdf.numPages}`, detail: 'PDF',
         percent: number / pdf.numPages, previous: number > 1, next: number < pdf.numPages,
       });
     } catch (error) {
@@ -131,6 +131,18 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
     const initial = Number.isInteger(position) ? Math.min(pdf.numPages, Math.max(position, 1)) : 1;
     const [outline] = await Promise.all([pdf.getOutline().catch(() => null), draw(initial)]);
     const contents = pdfContents(outline);
+    void Promise.all(contents.map(async (entry) => {
+      try {
+        const destination = typeof entry.target === 'string' ? await pdf.getDestination(entry.target) : entry.target;
+        if (destination?.[0] == null) return null;
+        return { label: entry.label, page: (Number.isInteger(destination[0]) ? destination[0] : await pdf.getPageIndex(destination[0])) + 1 };
+      } catch { return null; }
+    })).then((entries) => {
+      if (closed || signal.aborted) return;
+      sectionHeaders = entries.filter(Boolean).sort((a, b) => a.page - b.page);
+      hooks.position({ target: pageNumber, heading: sectionHeaders.findLast((entry) => entry.page <= pageNumber)?.label || `Page ${pageNumber}`, label: `Page ${pageNumber} of ${pdf.numPages}`, detail: 'PDF',
+        percent: pageNumber / pdf.numPages, previous: pageNumber > 1, next: pageNumber < pdf.numPages });
+    }).catch(() => {});
     let dimensions = [host.clientWidth, host.clientHeight];
     let schedule;
     observer = new ResizeObserver(() => {

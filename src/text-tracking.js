@@ -17,7 +17,8 @@ export function trackText(root, language, pdf = false) {
     content = { text, runs };
   }
   const words = textWords(content.text, language);
-  const frame = root.ownerDocument.defaultView.frameElement;
+  // Search also tracks parsed EPUB chapters before they have a browsing window.
+  const frame = root.ownerDocument.defaultView?.frameElement;
   const annotations = new Map();
   let runIndex = 0;
   const wordRuns = new Map(words.map((word) => {

@@ -30,7 +30,7 @@ try {
   zip.file('OEBPS/cover.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRZsAAAAASUVORK5CYII=', 'base64'));
   zip.file('OEBPS/nav.xhtml', '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Contents</title></head><body><nav epub:type="toc"><ol><li><a href="one.xhtml">Primera parte</a></li><li><a href="two.xhtml">Segunda parte</a></li><li><a href="notes.xhtml">Notas</a></li></ol></nav></body></html>');
   const paragraph = 'La viajera llegó a una casa tranquila cerca del río. En la ventana había una planta pequeña y un libro abierto. Quería conocer la historia del pueblo, así que se sentó a conversar con la mujer que cuidaba el jardín. Todavía quedaban muchas cosas por descubrir.';
-  for (const name of ['one', 'two']) zip.file(`OEBPS/${name}.xhtml`, `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>${name}</title></head><body><h1>${name === 'one' ? 'Primera parte' : 'Segunda parte'}</h1><p id="source">${paragraph} <a href="notes.xhtml#note">Leer nota</a></p>${Array.from({ length: 90 }, (_, i) => `<p id="passage-${i}">${paragraph} ${paragraph}</p>`).join('')}</body></html>`);
+  for (const name of ['one', 'two']) zip.file(`OEBPS/${name}.xhtml`, `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>${name}</title></head><body><h1>${name === 'one' ? 'Primera parte' : 'Segunda parte'}</h1><p id="source">${paragraph} <a href="notes.xhtml#note">Leer nota</a></p>${Array.from({ length: 90 }, (_, i) => `${name === 'two' && i === 45 ? '<p>En el puerto, el <em id="search-destination">faro violeta</em> ilumina la costa.</p>' : ''}<p id="passage-${i}">${paragraph} ${paragraph}</p>`).join('')}</body></html>`);
   zip.file('OEBPS/notes.xhtml', '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Notas</title></head><body><h1 id="note">Una nota del libro</h1><p>Esta explicación ayuda a comprender el pasaje.</p></body></html>');
   const uploaded = await context.request.post(base + '/api/books', { multipart: { title: 'Reader interactions', language: 'es', autoAudiobook: 'true', audiobookDelayMinutes: '7', file: { name: 'reader.epub', mimeType: 'application/epub+zip', buffer: await zip.generateAsync({ type: 'nodebuffer' }) } } });
   assert.equal(uploaded.status(), 201, await uploaded.text()); const book = await uploaded.json();
@@ -203,6 +203,52 @@ try {
     await open();
   });
   await open();
+  await check('offline background book-tool checks do not create repeated attention alerts', async () => {
+    let aborted = 0;
+    const unavailable = async (route) => { await delay(550); await route.abort(); aborted++; };
+    const paths = ['**/api/books/' + book.id + '/narration*', '**/api/books/' + book.id + '/learning'];
+    for (const path of paths) await page.route(path, unavailable);
+    try {
+      await page.reload();
+      await open();
+      for (let n = 0; n < 60 && aborted < 2; n++) await delay(50);
+      assert.ok(aborted >= 2); await delay(100);
+      await page.locator('#reader-more > summary').click(); await page.locator('#reader-more [data-open-processes]').click();
+      await page.locator('#downloads-dialog').waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#process-list .process-card').filter({ hasText: 'Load book tools' }).filter({ hasText: 'Needs attention' }).count(), 0);
+      await page.locator('#downloads-dialog [data-close]').click();
+    } finally { for (const path of paths) await page.unroute(path, unavailable); }
+  });
+  await check('whole-book search jumps to an unrendered chapter, returns to the prior page and survives repeated jumps and reload', async () => {
+    const before = await position();
+    const passageVisible = () => {
+      const frame = document.querySelector('#viewer iframe'), marker = frame?.contentDocument?.getElementById('search-destination'); if (!marker) return false;
+      const range = marker.ownerDocument.createRange(); range.setStart(marker.firstChild, 0); range.setEnd(marker.firstChild, 4);
+      const box = range.getBoundingClientRect(), offset = frame.getBoundingClientRect(), host = document.querySelector('#viewer').getBoundingClientRect();
+      return box.width > 0 && box.left + offset.left < host.right && box.right + offset.left > host.left && box.top + offset.top < host.bottom && box.bottom + offset.top > host.top;
+    };
+    async function searchJump() {
+      await page.locator('#reader-more > summary').click();
+      await page.locator('#book-tools-button').click(); await page.locator('#book-search-form [name=query]').fill('faro violeta');
+      await page.getByRole('button', { name: 'Search whole book', exact: true }).click();
+      const result = page.locator('.book-search-result'); await result.waitFor(); assert.equal(await result.count(), 1); await result.click();
+      await page.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 2 of 3');
+      assert.equal(await page.locator('#reading-subtitle').textContent(), 'Segunda parte');
+      await page.waitForFunction(passageVisible);
+      assert.ok(Number((await page.locator('#page-label').textContent()).match(/Page (\d+)/)[1]) > 1, 'the jump must reach the passage within the chapter');
+      assert.equal(await page.locator('#reader-message[data-problem="true"]').isVisible(), false);
+    }
+    await searchJump(); await page.locator('#return-location').click();
+    await page.waitForFunction(({ id, before }) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target === before, { id: book.id, before });
+    assert.equal(await page.locator('#reading-subtitle').textContent(), 'Primera parte');
+    await searchJump(); const savedTarget = await position(); await page.reload(); await page.locator('#viewer iframe').first().waitFor();
+    await page.waitForFunction(passageVisible);
+    assert.equal(await position(), savedTarget, 'reload must retain the exact search anchor even when web fonts change pagination');
+    assert.equal(await page.locator('#reading-subtitle').textContent(), 'Segunda parte');
+    assert.equal(await page.locator('#reader-message[data-problem="true"]').isVisible(), false);
+    await page.locator('#contents-button').click(); await page.getByRole('button', { name: 'Primera parte', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 1 of 3');
+  });
   await check('page buttons advance reliably without duplicate positions', async () => {
     const positions = [];
     for (let i = 0; i < 12; i++) { const before = await position(); await page.locator('#next').click(); await changed(before); positions.push(await position()); }
@@ -264,13 +310,20 @@ try {
     await page.touchscreen.tap(x, y); await delay(70); await page.touchscreen.tap(x, y); await changed(before);
     const after = await position(); await delay(500); assert.equal(await position(), after);
   });
-  await check('pinch enlarges touch text and leaves desktop font size unchanged', async () => {
+  await check('repeated pinch gestures enlarge and reduce touch text without changing desktop size or browser zoom', async () => {
     const before = await page.evaluate(() => ({ size: 20, ...JSON.parse(localStorage.getItem('langy-settings-v1')) }));
     const box = await page.locator('.reading-main').boundingBox(), x = box.x + box.width / 2, y = box.y + box.height / 2;
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ id: 1, x: x - 35, y }, { id: 2, x: x + 35, y }] });
-    for (let i = 1; i <= 6; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ id: 1, x: x - 35 - i * 3, y }, { id: 2, x: x + 35 + i * 3, y }] }); await delay(20); }
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    await page.waitForFunction((size) => JSON.parse(localStorage.getItem('langy-settings-v1')).touchSize > size, before.touchSize || before.size, { timeout: 4000 });
+    async function resize(from, to) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ id: 1, x: x - from, y }, { id: 2, x: x + from, y }] });
+      for (let i = 1; i <= 6; i++) { const distance = from + (to - from) * i / 6; await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ id: 1, x: x - distance, y }, { id: 2, x: x + distance, y }] }); await delay(20); }
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    }
+    for (let n = 0; n < 2; n++) {
+      const previous = await page.evaluate(() => JSON.parse(localStorage.getItem('langy-settings-v1')).touchSize || 20);
+      await resize(35, 53); await page.waitForFunction((size) => JSON.parse(localStorage.getItem('langy-settings-v1')).touchSize > size, previous, { timeout: 4000 }); await delay(250);
+      const enlarged = await page.evaluate(() => JSON.parse(localStorage.getItem('langy-settings-v1')).touchSize);
+      await resize(53, 35); await page.waitForFunction((size) => JSON.parse(localStorage.getItem('langy-settings-v1')).touchSize < size, enlarged, { timeout: 4000 }); await delay(250);
+    }
     const after = await page.evaluate(() => JSON.parse(localStorage.getItem('langy-settings-v1')));
     assert.equal(after.size, before.size); assert.equal(await page.evaluate(() => visualViewport.scale), 1);
     await delay(500);

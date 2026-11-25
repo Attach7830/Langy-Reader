@@ -106,6 +106,23 @@ test('zoomed PDF panning, selections, cancellations and dialogs cannot trigger r
   const selection = f.dom.window.getSelection(), range = f.dom.window.document.createRange(); range.selectNodeContents(f.target); selection.addRange(range);
   f.gesture(400, 200); selection.removeAllRanges(); f.active(false); f.gesture(400, 200); assert.deepEqual(f.turns, []);
 });
+
+test('a zoomed PDF accepts a pinch back out while one-finger panning still cannot turn pages', (t) => {
+  let pan = false; const pinches = [], f = fixture(t, { canPan: () => pan, pinch: (event) => pinches.push(event) });
+  function resize(from, to) {
+    pointer('pointerdown', f.target, 300 - from / 2);
+    pointer('pointerdown', f.target, 300 + from / 2, 200, { pointerId: 2, isPrimary: false });
+    pointer('pointermove', f.target, 300 - to / 2);
+    pointer('pointermove', f.target, 300 + to / 2, 200, { pointerId: 2, isPrimary: false });
+    pointer('pointerup', f.target, 300 - to / 2);
+    pointer('pointerup', f.target, 300 + to / 2, 200, { pointerId: 2, isPrimary: false });
+  }
+  resize(100, 200); assert.equal(pinches.at(-1).factor, 2);
+  pan = true; f.nav.refresh(); assert.equal(f.host.style.touchAction, 'pan-x pan-y');
+  f.gesture(400, 200); assert.deepEqual(f.turns, []);
+  resize(200, 100); assert.equal(pinches.at(-1).phase, 'end'); assert.equal(pinches.at(-1).factor, .5);
+  resize(160, 100); assert.equal(pinches.at(-1).factor, .625); assert.deepEqual(f.turns, []);
+});
 test('EPUB iframe coordinates account for scaled offscreen columns, and bindings reset with the book', (t) => {
   const f = fixture(t), frame = f.dom.window.document.createElement('iframe'); f.host.append(frame);
   const doc = frame.contentDocument; doc.body.innerHTML = '<p>Book page</p>';

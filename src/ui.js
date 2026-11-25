@@ -35,7 +35,7 @@ export async function api(path, options = {}) {
       if (globalThis.window?.CustomEvent) window.dispatchEvent(new window.CustomEvent('langy-processes-changed'));
     }
     return result;
-  } catch (error) { finish?.(error); throw error; }
+  } catch (error) { finish?.(error.offline && (!options.method || options.method === 'GET') ? undefined : error); throw error; }
 }
 async function requestAPI(path, { body, method, signal, keepalive } = {}) {
   const form = body instanceof FormData;
@@ -45,7 +45,11 @@ async function requestAPI(path, { body, method, signal, keepalive } = {}) {
     headers: body && !form ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? form ? body : JSON.stringify(body) : undefined,
   }); if (response.headers.get('X-Langy-Offline') === '1') throw new TypeError('Offline'); }
-  catch (error) { if (error.name === 'AbortError' || signal?.aborted) throw error; return offlineRequest(path, { body, method }); }
+  catch (error) {
+    if (error.name === 'AbortError' || signal?.aborted) throw error;
+    try { return await offlineRequest(path, { body, method }); }
+    catch (offlineError) { offlineError.offline = true; throw offlineError; }
+  }
   if (response.headers.get('X-Langy-Cached') === '1' && (path === '/api/library' || /\/bookmarks$/u.test(path))) return offlineRequest(path, { body, method });
   if (response.status === 204) return;
   const result = await response.json().catch(() => null);
