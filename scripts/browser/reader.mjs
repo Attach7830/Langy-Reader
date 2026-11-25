@@ -61,8 +61,8 @@ try {
     try { await action(); results.push({ name, pass: true }); console.log('PASS', name); }
     catch (error) { const diagnostic = await page.evaluate(() => { const prefs = JSON.parse(localStorage.getItem('langy-settings-v1') || '{}'), audio = document.querySelector('#narration-audio'); return { page: document.querySelector('#page-label')?.textContent, section: document.querySelector('#position-detail')?.textContent, size: prefs.size, touchSize: prefs.touchSize, touch: matchMedia('(pointer:coarse)').matches, scale: visualViewport.scale, feedback: document.querySelector('#text-size-feedback')?.textContent, status: document.querySelector('#narration-status')?.textContent, src: audio?.getAttribute('src'), ready: audio?.readyState, paused: audio?.paused, time: audio?.currentTime, selection: document.querySelector('#viewer iframe')?.contentWindow?.getSelection()?.toString(), error: audio?.error?.message }; }).catch(() => null); results.push({ name, pass: false, error: error.stack, diagnostic }); console.error('FAIL', name, error.message, JSON.stringify(diagnostic)); await page.screenshot({ path: `${output}/${results.length}-failure.png` }).catch(() => {}); }
   }
-  async function swipe(dx, dy = 0, wiggle = false) {
-    const box = await page.locator('.reading-main').boundingBox(), x = box.x + box.width * .65, y = box.y + box.height * .5;
+  async function swipe(dx, dy = 0, wiggle = false, selector = '.reading-main') {
+    const box = await page.locator(selector).boundingBox(), x = box.x + box.width * .65, y = box.y + box.height * .5;
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
     if (wiggle) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x - 3, y: y + 18 }] });
     for (let n = 1; n <= 8; n++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + dx * n / 8, y: y + dy * n / 8 }] }); await delay(12); }
@@ -185,7 +185,7 @@ try {
     assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false, 'hiding controls must not pause playback');
     await doubleCenter(); await page.waitForFunction(() => document.querySelector('#narration-audio').paused, null, { timeout: 4000 });
   });
-  await check('swiping down hides an open audio toolbar without pausing, then swiping up opens sections', async () => {
+  await check('either swipe direction closes open audio controls without pausing, and an upward swipe when closed opens sections', async () => {
     await page.locator('#audio-toggle').click(); await page.locator('#narration-player').waitFor({ state: 'visible' });
     await page.locator('#narration-play').click();
     await page.waitForFunction(() => !document.querySelector('#narration-audio').paused);
@@ -196,6 +196,19 @@ try {
     assert.equal(await page.locator('#narration-player').isVisible(), false, 'swiping up with controls closed must not reopen audio');
     assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false);
     await page.locator('#contents-dialog [data-close]').click();
+    await page.locator('#audio-toggle').click(); await page.locator('#narration-player').waitFor({ state: 'visible' });
+    await swipe(0, -160); await page.locator('#narration-player').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('#contents-dialog').isVisible(), false, 'an upward closing swipe must not also open sections');
+    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false);
+    await swipe(0, -160); await page.locator('#contents-dialog').waitFor({ state: 'visible' });
+    await page.locator('#contents-dialog [data-close]').click();
+    await page.locator('#audio-toggle').click(); await page.locator('#narration-player').waitFor({ state: 'visible' });
+    await page.locator('#podcast-toggle').click(); await page.locator('#podcast-info').waitFor({ state: 'visible' });
+    await swipe(0, 100, false, '#podcast-info'); await page.locator('#narration-player').waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false, 'a downward swipe on the toolbar itself preserves playback');
+    await page.locator('#audio-toggle').click(); await page.locator('#narration-player').waitFor({ state: 'visible' });
+    await swipe(0, -100, false, '#podcast-info'); await page.locator('#narration-player').waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false, 'an upward swipe on the toolbar itself preserves playback');
     await page.keyboard.press('Space');
     await page.waitForFunction(() => document.querySelector('#narration-audio').paused);
   });
