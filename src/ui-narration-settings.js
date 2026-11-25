@@ -1,11 +1,17 @@
 import { $, api, message } from './ui.js';
+import { credentialRemoval } from './credential-removal.js';
 
 export function narrationSettings() {
   const fields = $('#settings-form').elements;
-  let config;
+  let config, loading = false, epoch = 0;
+  const removeKey = credentialRemoval({ button: $('#kokoro-remove-key'), input: fields.kokoro_apiKey, endpoint: '/api/settings/learning/key',
+    status: '#kokoro-result', revision: () => epoch, changed(next) { config = next; fields.kokoro_apiKey.placeholder = 'Optional'; } });
   async function load() {
+    if (config || loading) return;
+    const current = epoch; loading = true;
     try {
-      config = await api('/api/settings/learning');
+      const next = await api('/api/settings/learning');
+      if (current !== epoch) return; config = next;
       $('#kokoro-settings').hidden = !config.configurable;
       $('#kokoro-managed').hidden = config.configurable;
       $('#kokoro-managed').textContent = config.previewAudio
@@ -15,21 +21,22 @@ export function narrationSettings() {
       fields.kokoro_autoLanguages.checked = config.autoLanguageVoices !== false;
       for (const language of ['en', 'es', 'zh', 'pt']) fields['kokoro_voice_' + language].value = config.voicesByLanguage?.[language] || '';
       fields.kokoro_apiKey.value = '';
-      fields.kokoro_clearKey.checked = false;
+      removeKey.refresh(config);
       fields.kokoro_apiKey.placeholder = config.hasKey ? 'Saved key · leave blank to keep' : 'Optional';
-    } catch (error) { message('#kokoro-result', error.message); }
+    } catch (error) { if (current === epoch) message('#kokoro-result', error.message); }
+    finally { if (current === epoch) loading = false; }
   }
   async function save() {
     if (!config?.configurable) return;
     const body = {
       baseUrl: fields.kokoro_baseUrl.value, voice: fields.kokoro_voice.value, model: fields.kokoro_model.value,
-      speed: Number(fields.kokoro_speed.value), apiKey: fields.kokoro_apiKey.value, clearKey: fields.kokoro_clearKey.checked,
+      speed: Number(fields.kokoro_speed.value), apiKey: fields.kokoro_apiKey.value,
       autoLanguageVoices: fields.kokoro_autoLanguages.checked,
       voicesByLanguage: Object.fromEntries(Object.entries({ ...config.voicesByLanguage, ...Object.fromEntries(['en', 'es', 'zh', 'pt'].map((language) => [language, fields['kokoro_voice_' + language].value.trim()])) }).filter(([, value]) => value)),
     };
     const changed = ['baseUrl', 'voice', 'model', 'speed'].some((name) => body[name] !== config[name])
-      || body.autoLanguageVoices !== config.autoLanguageVoices || JSON.stringify(body.voicesByLanguage) !== JSON.stringify(config.voicesByLanguage) || body.apiKey || body.clearKey;
-    if (changed) config = await api('/api/settings/learning', { method: 'PUT', body });
+      || body.autoLanguageVoices !== config.autoLanguageVoices || JSON.stringify(body.voicesByLanguage) !== JSON.stringify(config.voicesByLanguage) || body.apiKey;
+    if (changed) { config = await api('/api/settings/learning', { method: 'PUT', body }); removeKey.refresh(config); }
   }
   $('#kokoro-voices').addEventListener('click', async (event) => {
     event.target.disabled = true;
@@ -42,5 +49,5 @@ export function narrationSettings() {
     } catch (error) { message('#kokoro-result', error.message); }
     finally { event.target.disabled = false; }
   });
-  return { load, save, reset() { config = undefined; } };
+  return { load, save, reset() { epoch++; config = undefined; loading = false; removeKey.refresh(null); } };
 }
