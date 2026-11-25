@@ -60,6 +60,16 @@ test('horizontal swipes tolerate an initial wobble and do not open word help or 
   f.gesture(200, 450); click(f.target, 450);
   assert.deepEqual(f.turns, [1, -1]); assert.equal(taps, 0);
 });
+test('consecutive double taps prevent native multi-tap selection from swallowing playback actions', (t) => {
+  let playback = 0; const f = fixture(t, { centerDoubleTap: () => playback++ });
+  for (let pair = 0; pair < 3; pair++) {
+    f.gesture(300, 300); f.tick(50);
+    const down = pointer('pointerdown', f.target, 300);
+    if (!down.defaultPrevented) { const range = f.dom.window.document.createRange(); range.selectNodeContents(f.target); f.dom.window.getSelection().addRange(range); }
+    pointer('pointerup', f.target, 300); assert.equal(playback, pair + 1);
+    assert.equal(f.dom.window.getSelection().isCollapsed, true);
+  }
+});
 test('vertical swipes open audio and sections independently from page-turn settings', (t) => {
   let up = 0, down = 0;
   const f = fixture(t, { canSwipe: () => false, swipeUp: () => up++, swipeDown: () => down++ });

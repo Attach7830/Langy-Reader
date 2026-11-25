@@ -104,6 +104,14 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
         return;
       }
       if (ignored(event.target) || event.defaultPrevented || selection(source)) { clearTap(); return; }
+      const side = zone(start);
+      if (event.pointerType === 'touch' && lastTap?.doc === source && lastTap.side === side
+        && now() - lastTap.time <= doubleTapDelay && Math.hypot(start.x - lastTap.point.x, start.y - lastTap.point.y) <= 30
+        && (side === 0 ? centerDoubleTap : canDoubleTap()) && event.cancelable) {
+        // Native multi-tap selection starts on pointerdown, before our
+        // pointerup action. Keep it from swallowing consecutive double taps.
+        event.preventDefault();
+      }
       gesture = { id: event.pointerId ?? 1, start, time: now(), type: event.pointerType || 'mouse', width: rect.width, moved: false };
     });
     listen('pointermove', (event) => {

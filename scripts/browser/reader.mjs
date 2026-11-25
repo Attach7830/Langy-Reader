@@ -50,7 +50,7 @@ try {
   }
   async function check(name, action) {
     try { await action(); results.push({ name, pass: true }); console.log('PASS', name); }
-    catch (error) { const diagnostic = await page.evaluate(() => { const prefs = JSON.parse(localStorage.getItem('langy-settings-v1') || '{}'), audio = document.querySelector('#narration-audio'); return { size: prefs.size, touchSize: prefs.touchSize, touch: matchMedia('(pointer:coarse)').matches, scale: visualViewport.scale, feedback: document.querySelector('#text-size-feedback')?.textContent, status: document.querySelector('#narration-status')?.textContent, src: audio?.getAttribute('src'), ready: audio?.readyState, error: audio?.error?.message }; }).catch(() => null); results.push({ name, pass: false, error: error.stack, diagnostic }); console.error('FAIL', name, error.message, JSON.stringify(diagnostic)); await page.screenshot({ path: `${output}/${results.length}-failure.png` }).catch(() => {}); }
+    catch (error) { const diagnostic = await page.evaluate(() => { const prefs = JSON.parse(localStorage.getItem('langy-settings-v1') || '{}'), audio = document.querySelector('#narration-audio'); return { size: prefs.size, touchSize: prefs.touchSize, touch: matchMedia('(pointer:coarse)').matches, scale: visualViewport.scale, feedback: document.querySelector('#text-size-feedback')?.textContent, status: document.querySelector('#narration-status')?.textContent, src: audio?.getAttribute('src'), ready: audio?.readyState, paused: audio?.paused, time: audio?.currentTime, selection: document.querySelector('#viewer iframe')?.contentWindow?.getSelection()?.toString(), error: audio?.error?.message }; }).catch(() => null); results.push({ name, pass: false, error: error.stack, diagnostic }); console.error('FAIL', name, error.message, JSON.stringify(diagnostic)); await page.screenshot({ path: `${output}/${results.length}-failure.png` }).catch(() => {}); }
   }
   async function swipe(dx, dy = 0, wiggle = false) {
     const box = await page.locator('.reading-main').boundingBox(), x = box.x + box.width * .65, y = box.y + box.height * .5;
@@ -166,15 +166,15 @@ try {
     await page.locator('#narration-player').waitFor({ state: 'visible' });
     await page.waitForFunction(() => !document.querySelector('#narration-play').disabled, null, { timeout: 5000 });
     assert.equal((await position()).split('!')[0], before.split('!')[0], 'revealing controls keeps the same source section during reflow');
-    const doubleCenter = async () => { const box = await page.locator('.reading-main').boundingBox();
+    const doubleCenter = async () => { await delay(350); const box = await page.locator('.reading-main').boundingBox();
       await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2); await delay(65);
       await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2); };
-    await doubleCenter(); await page.waitForFunction(() => !document.querySelector('#narration-audio').paused);
-    await doubleCenter(); await page.waitForFunction(() => document.querySelector('#narration-audio').paused);
-    await doubleCenter(); await page.waitForFunction(() => !document.querySelector('#narration-audio').paused);
+    await doubleCenter(); await page.waitForFunction(() => !document.querySelector('#narration-audio').paused, null, { timeout: 4000 });
+    await doubleCenter(); await page.waitForFunction(() => document.querySelector('#narration-audio').paused, null, { timeout: 4000 });
+    await doubleCenter(); await page.waitForFunction(() => !document.querySelector('#narration-audio').paused, null, { timeout: 4000 });
     await page.locator('#narration-player').waitFor({ state: 'hidden', timeout: 7000 });
     assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false, 'hiding controls must not pause playback');
-    await doubleCenter(); await page.waitForFunction(() => document.querySelector('#narration-audio').paused);
+    await doubleCenter(); await page.waitForFunction(() => document.querySelector('#narration-audio').paused, null, { timeout: 4000 });
   });
   await check('manual page turns with missing word alignment do not snap back while narration is enabled', async () => {
     const before = await position(); await page.locator('#next').click(); await changed(before);
