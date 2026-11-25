@@ -82,3 +82,12 @@ test('all text generation entry points, including vocabulary and background jobs
   })));
   assert.equal(calls, names.length * 2);
 });
+
+test('contextual phrase explanations reuse saved answers and honor each account cache preference', async (t) => {
+  const f = await fixture(t), service = f.open(); let calls = 0;
+  const ai = service.wrap({ phrase: async () => `Meaning ${++calls}` }), body = { phrase: 'a phrase', context: 'This is a phrase.', language: 'en', translationLanguage: 'es' };
+  const run = (id, data = body) => service.run({ id }, () => ai.phrase(data));
+  assert.equal(await run('one'), await run('one')); assert.equal(calls, 1);
+  await run('one', { ...body, translationLanguage: 'pt' }); await run('two'); assert.equal(calls, 3);
+  f.disabled.add('one'); await run('one'); await run('one'); assert.equal(calls, 5);
+});
