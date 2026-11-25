@@ -25,7 +25,7 @@ test('language folders update existing books and assign language on import and m
   const first = await f.importBook('existing', { language: 'es', categoryId: 'languages' });
   const read = l.setReadStatus(first.id, { read: true });
   const folder = l.saveCategory('languages', { name: 'Portuguese', language: 'pt-BR' }, false);
-  assert.deepEqual(folder, { id: 'languages', name: 'Portuguese', language: 'pt-BR' });
+  assert.deepEqual(folder, { id: 'languages', name: 'Portuguese', language: 'pt-BR', l1Folder: false });
   const check = (id) => {
     const book = l.getBook(id); assert.equal(book.language, 'pt-BR'); assert.deepEqual(book.languages, ['pt-BR']); return book;
   };
@@ -41,6 +41,47 @@ test('language folders update existing books and assign language on import and m
   const reopened = await openLibrary(f.dir);
   assert.equal(reopened.snapshot().categories.find((row) => row.id === folder.id).language, 'pt-BR');
   assert.deepEqual(reopened.readBooks().map((book) => [book.id, book.readAt]), [[first.id, read.readAt]]);
+});
+
+test('L1 folders apply to existing, imported and moved books, persist, and restore assistance when disabled or removed', async (t) => {
+  const f = await fixture(t), l = f.library;
+  assert.equal(l.getBook('sample').l1Folder, false);
+  l.saveCategory('native', { name: 'Native reading' }, true);
+  const first = await f.importBook('first-native', { categoryId: 'native' });
+  const read = l.setReadStatus(first.id, { read: true });
+  l.saveCategory('native', { name: 'Native reading', l1Folder: true }, false);
+  assert.equal(l.getBook(first.id).l1Folder, true); assert.equal(l.getBook(first.id).readAt, read.readAt);
+  assert.equal((await f.importBook('second-native', { categoryId: 'native' })).l1Folder, true);
+  const moved = await f.importBook('moved-native'); assert.equal(moved.l1Folder, false);
+  assert.equal(l.editBook(moved.id, { title: moved.title, language: 'es', categoryId: 'native' }).l1Folder, true);
+  l.saveCategory('native', { name: 'Renamed' }, false);
+  assert.equal(l.snapshot().categories.find((folder) => folder.id === 'native').l1Folder, true, 'legacy saves preserve the choice');
+  const reopened = await openLibrary(f.dir); assert.equal(reopened.getBook(first.id).l1Folder, true);
+  assert.equal(reopened.snapshot().books.find((book) => book.id === first.id).l1Folder, true);
+  reopened.saveCategory('native', { name: 'Renamed', l1Folder: false }, false);
+  assert.equal(reopened.getBook(first.id).l1Folder, false);
+  reopened.saveCategory('native', { name: 'Renamed', l1Folder: true }, false);
+  assert.equal(reopened.editBook(moved.id, { title: moved.title, language: 'es', categoryId: '' }).l1Folder, false);
+  reopened.removeCategory('native'); assert.equal(reopened.getBook(first.id).l1Folder, false);
+  assert.deepEqual(await readFile(l.filePath(l.getBook(first.id))), f.bytes);
+});
+
+test('L1 settings stay with the folder owner and validate without changing shared readers’ assistance', async (t) => {
+  const f = await fixture(t), l = f.library, owner = { id: 'owner', authenticated: true }, reader = { id: 'reader', authenticated: true };
+  l.saveCategory('private-l1', { name: 'My L1', l1Folder: true }, true, owner);
+  const book = await f.importBook('shared-l1', { categoryId: 'private-l1', shared: true }, owner);
+  assert.equal(book.l1Folder, true); assert.equal(l.getBook(book.id, reader).l1Folder, false);
+  assert.equal(l.snapshot(reader).books.find((item) => item.id === book.id).l1Folder, false);
+  assert.throws(() => l.saveCategory('private-l1', { name: 'Other', l1Folder: false }, false, reader), { status: 404 });
+  for (const l1Folder of ['true', 1, null, {}]) assert.throws(() => l.saveCategory('private-l1', { name: 'My L1', l1Folder }, false, owner), { status: 422 });
+  assert.equal(l.getBook(book.id, owner).l1Folder, true);
+});
+
+test('existing catalogs acquire the L1 option with assistance enabled by default', async (t) => {
+  const f = await fixture(t), db = new DatabaseSync(join(f.dir, 'library.sqlite')); t.after(() => db.close());
+  db.exec('ALTER TABLE categories DROP COLUMN l1Folder');
+  const reopened = await openLibrary(f.dir);
+  assert.equal(reopened.snapshot().categories[0].l1Folder, false); assert.equal(reopened.getBook('sample').l1Folder, false);
 });
 
 test('mixed-language choices survive folder assignment and clearing the folder language leaves existing choices intact', async (t) => {
