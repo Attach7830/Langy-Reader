@@ -128,9 +128,10 @@ const accountInfo = (visitor) => ({ ...accounts.describe(visitor), legacyAccount
 app.get('/api/account', async (req, res) => { req.visitor = await accounts.identify(req); res.json(accountInfo(req.visitor)); });
 app.post('/api/account/login', async (req, res) => {
   if (!accounts.enabled) throw new RequestError(403, 'Accounts are not enabled on this installation.');
+  if (req.body?.rememberMe !== undefined && typeof req.body.rememberMe !== 'boolean') throw new RequestError(422, 'Choose whether to remember this sign-in.');
   const visitor = await accounts.authenticate(req.body?.username, req.body?.password, { source: `login:${req.ip}` });
   if (!visitor) return res.status(401).json({ error: 'Incorrect username or password.' });
-  accounts.issue(req, res, visitor); res.json(accountInfo(visitor));
+  accounts.issue(req, res, visitor, { rememberMe: req.body?.rememberMe === true }); res.json(accountInfo(visitor));
 });
 app.post('/api/account/logout', (req, res) => { accounts.logout(req, res); res.json({ signedOut: true }); });
 app.use(async (req, res, next) => {
@@ -144,8 +145,9 @@ app.post('/api/account/password', async (req, res) => {
   if (!accounts.enabled) throw new RequestError(403, 'Accounts are not enabled.');
   const verified = await accounts.authenticate(req.visitor.username, req.body?.currentPassword, { source: `password:${req.ip}` });
   if (!verified) throw new RequestError(403, 'The current password is incorrect.');
+  const rememberMe = accounts.remembered(req);
   await accounts.resetPassword(req.visitor.userId, req.body?.newPassword);
-  accounts.issue(req, res, req.visitor); res.json({ saved: true });
+  accounts.issue(req, res, req.visitor, { rememberMe }); res.json({ saved: true });
 });
 app.get('/api/admin/users', (req, res) => { accounts.requireAdmin(req.visitor); res.json({ users: accounts.list() }); });
 app.post('/api/admin/users', async (req, res) => {

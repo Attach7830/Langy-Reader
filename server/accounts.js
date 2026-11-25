@@ -95,12 +95,18 @@ export async function openAccounts(dir, { demo = false, username = 'reader', pas
     const row = db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user WHERE s.token=? AND s.expires>? AND u.disabled=0').get(digest(token), now());
     return row ? visitorForUser(row) : null;
   }
-  function issue(req, res, visitor) {
-    const token = randomBytes(32).toString('base64url'), duration = 30 * 86400000;
+  function remembered(req) {
+    const token = cookies(req)[sessionName];
+    const row = token && db.prepare('SELECT created,expires FROM sessions WHERE token=? AND expires>?').get(digest(token), now());
+    return Boolean(row && row.expires - row.created > 86400000);
+  }
+  function issue(req, res, visitor, { rememberMe = false } = {}) {
+    const token = randomBytes(32).toString('base64url'), duration = (rememberMe ? 30 : 1) * 86400000;
+    const previous = cookies(req)[sessionName]; if (previous) db.prepare('DELETE FROM sessions WHERE token=?').run(digest(previous));
     db.prepare('DELETE FROM sessions WHERE expires<=?').run(now());
     db.prepare('INSERT INTO sessions VALUES(?,?,?,?)').run(digest(token), visitor.userId, now(), now() + duration);
     db.prepare('DELETE FROM sessions WHERE user=? AND token NOT IN (SELECT token FROM sessions WHERE user=? ORDER BY created DESC,rowid DESC LIMIT 30)').run(visitor.userId, visitor.userId);
-    res.cookie(sessionName, token, { ...cookieOptions(req), maxAge: duration });
+    res.cookie(sessionName, token, { ...cookieOptions(req), ...(rememberMe ? { maxAge: duration } : {}) });
     // Keep stale browser/native Basic credentials from taking over after this session expires.
     res.cookie('langy_no_basic', '1', { ...cookieOptions(req), maxAge: 400 * 86400000 });
   }
@@ -150,7 +156,7 @@ export async function openAccounts(dir, { demo = false, username = 'reader', pas
     db.prepare('UPDATE users SET password=?,sync=?,version=version+1 WHERE id=?').run(...hashes, id);
     db.prepare('DELETE FROM sessions WHERE user=?').run(id); return publicUser(userById(id));
   }
-  return { enabled, demo, identify, authenticate, issue, logout, requireAdmin, create, update, resetPassword, visitorForOwner,
+  return { enabled, demo, identify, authenticate, issue, remembered, logout, requireAdmin, create, update, resetPassword, visitorForOwner,
     preferenceOwner: (visitor) => visitor?.accountKey || userByOwner(visitor?.id || '')?.settingsKey || `user:${username}`,
     list: () => db.prepare('SELECT * FROM users ORDER BY username COLLATE NOCASE').all().map(publicUser),
     describe(visitor) { const user = visitor?.userId && userById(visitor.userId); return { enabled, demo, authenticated: enabled ? Boolean(user && !user.disabled) : true,
