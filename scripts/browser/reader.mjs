@@ -18,6 +18,14 @@ try {
   browser = await chromium.launch({ headless: true });
   context = await browser.newContext({ viewport: { width: 393, height: 851 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, serviceWorkers: 'block' });
   await context.addInitScript(() => { if (window.top === window) { const prefs = JSON.parse(localStorage.getItem('langy-settings-v1') || '{}'); localStorage.setItem('langy-settings-v1', JSON.stringify({ ...prefs, progressSyncEnabled: false })); } });
+  await context.addInitScript(() => {
+    const clock = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime');
+    Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', { ...clock, set(time) {
+      clock.set.call(this, time);
+      if (this.id === 'narration-audio') console.log('Resume clock', time, this.currentTime, this.readyState, this.duration,
+        Array.from({ length: this.seekable.length }, (_, i) => [this.seekable.start(i), this.seekable.end(i)]), new Error('clock setter').stack);
+    } });
+  });
   page = await context.newPage(); page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (message) => { if (message.text().startsWith('Resume ')) console.log(message.text()); });
   await page.route('**/api/ai/word', (route) => route.fulfill({ json: { text: 'A useful dictionary definition.', language: 'en' } }));
