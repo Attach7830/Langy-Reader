@@ -38,6 +38,7 @@ import { audiobookshelfProgress } from './audiobookshelf-progress.js';
 import { setInterfaceLanguage } from './i18n.js';
 import { processTasks } from './process-tasks.js';
 import { processQueue } from './process-queue.js';
+import { coverCache } from './cover-cache.js';
 import { refreshOfflineReader } from './offline-downloads.js';
 import { bookLanguages } from '../shared/language.js';
 import { getProgress, getSettings, keyLabel, languageName, modes, saveProgress, saveSettings, subscribeSettings, syncDeviceId, updateAppearance } from './settings.js';
@@ -224,9 +225,10 @@ function applySettings(updated, aiChanged, notify = true) {
   const relayout = ['size', 'touchSize', 'font', 'line', 'width', 'summaryLanguage', 'showPinyin'].some((key) => settings[key] !== updated[key]);
   const syncChanged = settings.progressSyncEnabled !== updated.progressSyncEnabled;
   const libraryChanged = settings.nativeLanguage !== updated.nativeLanguage || settings.quietLibrary !== updated.quietLibrary || settings.showSharedBooks !== updated.showSharedBooks
-    || settings.libraryLayout !== updated.libraryLayout || settings.coversOnly !== updated.coversOnly;
+    || settings.libraryLayout !== updated.libraryLayout || settings.coversOnly !== updated.coversOnly || settings.cacheCovers !== updated.cacheCovers;
   const cacheChanged = settings.cacheAI !== updated.cacheAI;
   settings = saveSettings(updated, { notify });
+  if (settings.cacheCovers === false) void coverCache.clear().catch(() => {});
   document.documentElement.dataset.immersion = String(settings.immersionMode);
   $('#immersion-toggle').setAttribute('aria-pressed', String(settings.immersionMode));
   if (libraryChanged && !activeBook) void library.refresh().catch((error) => message('#library-error', error.message));

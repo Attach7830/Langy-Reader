@@ -21,7 +21,7 @@ export async function clearAccountData() {
     const deletion = indexedDB.deleteDatabase('langy-offline'); deletion.onsuccess = deletion.onerror = deletion.onblocked = resolve;
   });
   if (globalThis.caches) {
-    for (const name of await caches.keys()) if (name.startsWith('langy-pack-') || name === 'langy-offline-control') await caches.delete(name);
+    for (const name of await caches.keys()) if (name.startsWith('langy-pack-') || name.startsWith('langy-covers-') || name === 'langy-offline-control') await caches.delete(name);
     navigator.serviceWorker?.controller?.postMessage({ type: 'ACCOUNT', id: '' });
   }
   try { for (const key of Object.keys(localStorage)) if (key.startsWith('langy-')) localStorage.removeItem(key); } catch {}

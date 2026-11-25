@@ -1,11 +1,14 @@
 import { $, api, message, toast } from './ui.js';
 import { audiobookshelfSettings } from './audiobookshelf-ui.js';
+import { ocrConnectionSettings } from './ui-ocr-settings.js';
 
 export function deviceSettings() {
   const audiobookshelf = audiobookshelfSettings();
+  const ocr = ocrConnectionSettings();
   let loading = false, loaded = false, epoch = 0;
   async function load() {
     void audiobookshelf.load();
+    void ocr.load();
     if (loading || loaded) return;
     const current = epoch;
     loading = true;
@@ -44,5 +47,5 @@ export function deviceSettings() {
     try { await navigator.clipboard.writeText(input.value); toast('Device address copied'); }
     catch { input.focus(); input.select(); message('#' + kind + '-result', 'Select and copy the address.'); }
   });
-  return { load, save: audiobookshelf.save, reset() { epoch++; loading = loaded = false; audiobookshelf.reset(); $('#opds-url').value = ''; $('#sync-url').value = ''; } };
+  return { load, async save() { await audiobookshelf.save(); await ocr.save(); }, reset() { epoch++; loading = loaded = false; audiobookshelf.reset(); ocr.reset(); $('#opds-url').value = ''; $('#sync-url').value = ''; } };
 }
