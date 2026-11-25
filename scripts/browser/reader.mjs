@@ -163,28 +163,40 @@ try {
     assert.equal(after.size, before.size); assert.equal(await page.evaluate(() => visualViewport.scale), 1);
     await delay(500);
   });
-  await check('swiping down opens sections and expandable bookmarks without changing pages', async () => {
-    const before = await position(); await swipe(0, 160);
+  await check('swiping up with the audio toolbar closed opens sections and expandable bookmarks without changing pages', async () => {
+    const before = await position(); await swipe(0, -160);
     await page.locator('#contents-dialog').waitFor({ state: 'visible' });
     assert.equal(await page.getByRole('button', { name: 'Primera parte', exact: true }).isVisible(), true);
     await page.locator('.toc-bookmarks summary').click();
     await page.locator('.toc-bookmarks').getByText('No bookmarks yet.').waitFor();
     await page.locator('#contents-dialog [data-close]').click(); assert.equal(await position(), before);
   });
-  await check('swiping up reveals the player temporarily and center double taps play and pause', async () => {
-    const before = await position(); await swipe(0, -160);
-    await page.locator('#narration-player').waitFor({ state: 'visible' });
-    await page.waitForFunction(() => !document.querySelector('#narration-play').disabled, null, { timeout: 5000 });
-    assert.equal((await position()).split('!')[0], before.split('!')[0], 'revealing controls keeps the same source section during reflow');
+  await check('center double taps reveal temporary audio controls and play or pause without stopping when controls hide', async () => {
+    const before = await position();
     const doubleCenter = async () => { await delay(350); const box = await page.locator('.reading-main').boundingBox();
       await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2); await delay(65);
       await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2); };
-    await doubleCenter(); await page.waitForFunction(() => !document.querySelector('#narration-audio').paused, null, { timeout: 4000 });
+    await doubleCenter(); await page.locator('#narration-player').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => !document.querySelector('#narration-audio').paused, null, { timeout: 4000 });
+    assert.equal((await position()).split('!')[0], before.split('!')[0], 'revealing controls keeps the same source section during reflow');
     await doubleCenter(); await page.waitForFunction(() => document.querySelector('#narration-audio').paused, null, { timeout: 4000 });
     await doubleCenter(); await page.waitForFunction(() => !document.querySelector('#narration-audio').paused, null, { timeout: 4000 });
     await page.locator('#narration-player').waitFor({ state: 'hidden', timeout: 7000 });
     assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false, 'hiding controls must not pause playback');
     await doubleCenter(); await page.waitForFunction(() => document.querySelector('#narration-audio').paused, null, { timeout: 4000 });
+  });
+  await check('swiping down hides an open audio toolbar without pausing, then swiping up opens sections', async () => {
+    await page.locator('#audio-toggle').click(); await page.locator('#narration-player').waitFor({ state: 'visible' });
+    await page.locator('#narration-play').click();
+    await page.waitForFunction(() => !document.querySelector('#narration-audio').paused);
+    await swipe(0, 160); await page.locator('#narration-player').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('#contents-dialog').isVisible(), false, 'closing audio must not also open sections');
+    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false);
+    await swipe(0, -160); await page.locator('#contents-dialog').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#narration-player').isVisible(), false, 'swiping up with controls closed must not reopen audio');
+    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false);
+    await page.locator('#contents-dialog [data-close]').click();
+    await page.locator('#audio-toggle').click(); await page.locator('#narration-play').click(); await page.locator('#narration-close').click();
   });
   await check('manual page turns with missing word alignment do not snap back while narration is enabled', async () => {
     const before = await position(); await page.locator('#next').click(); await changed(before);
