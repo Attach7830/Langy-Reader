@@ -85,8 +85,7 @@ const pageGestures = pageNavigation({ host: $('.reading-main'),
   canPan: () => viewer.classList.contains('pdf-panning'),
   centerTap: () => { words.clear(); void toggleFullscreen(); },
   centerDoubleTap: () => void togglePlaybackFromGesture(),
-  swipeUp: () => { if ($('#narration-player').hidden) contents(); },
-  swipeDown: () => { if ($('#narration-player').hidden) contents(); else closeAudioToolbar(); },
+  swipeUp: swipeReaderPanels, swipeDown: swipeReaderPanels,
   pinch: pinchText,
   turn: (direction) => { viewer.focus({ preventScroll: true }); void move(direction); },
 });
@@ -118,6 +117,11 @@ const audio = narration({
   },
 });
 const audioPeek = temporaryControls({ changed(visible) { temporaryAudioVisible = visible; audio.apply(); syncFullscreen(); } });
+const audioToolbarGestures = pageNavigation({ host: $('#narration-player'),
+  enabled: () => Boolean(activeBook && renderer && !$('#narration-player').hidden && !document.querySelector('dialog[open]')),
+  canSwipe: () => false, canDoubleTap: () => false, turn() {},
+  swipeUp: closeAudioToolbar, swipeDown: closeAudioToolbar,
+});
 for (const type of ['input', 'change', 'click', 'wheel', 'focusin']) $('#narration-player').addEventListener(type, audioPeek.activity, { passive: true });
 $('#narration-player').addEventListener('pointerdown', audioPeek.hold, { passive: true });
 document.addEventListener('pointerup', audioPeek.release, { passive: true });
@@ -492,6 +496,7 @@ function closeReader() {
   readingTime.stop();
   returnHistory.reset();
   pageGestures.reset();
+  audioToolbarGestures.reset();
   vocabulary.stop();
   pinyin.clear();
   readingSync.stop();
@@ -741,6 +746,9 @@ function toggleAudioToolbar() {
   void audio.refresh();
   viewer.focus({ preventScroll: true });
   toast(visible ? 'Audio toolbar hidden' : 'Audio toolbar shown');
+}
+function swipeReaderPanels() {
+  if ($('#narration-player').hidden) contents(); else closeAudioToolbar();
 }
 function closeAudioToolbar() {
   audioPeek.reset();
