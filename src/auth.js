@@ -67,7 +67,7 @@ export async function authenticationGate() {
       event.preventDefault(); const button = form.querySelector('button[type="submit"]'); if (button.disabled) return;
       button.disabled = true; status.textContent = 'Signing in…';
       try {
-        const value = await request('/api/account/login', { username: form.elements.username.value.trim(), password: form.elements.password.value });
+        const value = await request('/api/account/login', { username: form.elements.username.value.trim(), password: form.elements.password.value, rememberMe: form.elements.rememberMe.checked });
         form.elements.password.value = ''; resolve(await accept(value));
       } catch (error) { status.textContent = error instanceof TypeError ? 'Connect to your Langy server to sign in.' : error.message; }
       finally { button.disabled = false; }
