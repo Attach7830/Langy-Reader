@@ -142,3 +142,30 @@ test('word double taps take priority at both edges, work with page double taps d
   f.tick(400); f.gesture(300,300); f.tick(80); current = other; f.gesture(300,300);
   assert.equal(seeks.length, 3, 'adjacent word taps must not play from either word'); assert.equal(playback, 0);
 });
+
+test('desktop trackpad pinch previews and commits once, leaves ordinary wheel and controls alone', (t) => {
+  const phases = [], timers = new Map(); let timer = 0;
+  const f = fixture(t, { pinch: (value) => phases.push(value), setTimer(callback) { timers.set(++timer, callback); return timer; }, clearTimer(id) { timers.delete(id); } });
+  const wheel = (root = f.target, options = {}) => { const event = new f.dom.window.WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, clientX: 300, clientY: 200, deltaY: -10, ...options }); root.dispatchEvent(event); return event; };
+  assert.equal(wheel(f.target, { ctrlKey: false }).defaultPrevented, false);
+  assert.equal(wheel(f.host.querySelector('input')).defaultPrevented, false);
+  assert.equal(wheel().defaultPrevented, true); wheel(); wheel();
+  assert.equal(phases.filter((item) => item.phase === 'start').length, 1);
+  assert.equal(phases.filter((item) => item.phase === 'move').length, 3);
+  assert.equal(phases.filter((item) => item.phase === 'end').length, 0);
+  assert.equal(timers.size, 1); [...timers.values()][0]();
+  assert.equal(phases.at(-1).phase, 'end'); assert.ok(phases.at(-1).factor > 1);
+  assert.deepEqual(f.turns, []);
+  wheel(); f.nav.reset(); assert.equal(phases.at(-1).phase, 'cancel'); assert.equal(timers.size, 0);
+});
+
+test('Safari pinch scales font without duplicate Ctrl-wheel zoom or page turns', (t) => {
+  const phases = []; const f = fixture(t, { pinch: (value) => phases.push(value) });
+  const gesture = (type, scale) => { const event = new f.dom.window.MouseEvent(type, { bubbles: true, cancelable: true, clientX: 300, clientY: 200 }); Object.defineProperty(event, 'scale', { value: scale }); f.target.dispatchEvent(event); return event; };
+  assert.equal(gesture('gesturestart', 1).defaultPrevented, true);
+  gesture('gesturechange', 1.4);
+  f.target.dispatchEvent(new f.dom.window.WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, clientX: 300, clientY: 200, deltaY: -20 }));
+  gesture('gestureend', 1.5);
+  assert.equal(phases.filter((item) => item.phase === 'start').length, 1);
+  assert.equal(phases.at(-1).factor, 1.5); assert.equal(phases.at(-1).phase, 'end'); assert.deepEqual(f.turns, []);
+});
