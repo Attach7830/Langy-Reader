@@ -30,10 +30,27 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
   const settings = () => ({ configurable: !demo, connected: !demo && Boolean(config.baseUrl && config.apiKey), baseUrl: config.baseUrl,
     hasKey: Boolean(config.apiKey), libraryId: config.libraryId, folderId: config.folderId, autoExport: config.autoExport !== false,
     categoryDestinations: structuredClone(config.categoryDestinations || {}) });
-  function destinationFor(book) {
+  function destinationFor(book, automatic = false) {
     const key = book.categoryId || 'uncategorized', mappings = config.categoryDestinations || {};
-    const selected = Object.hasOwn(mappings, key) ? mappings[key] : config;
+    const selected = Object.hasOwn(mappings, key) ? mappings[key] : automatic ? null : config;
     return { libraryId: selected?.libraryId, folderId: selected?.folderId };
+  }
+  const validDestination = (destination) => identifier(destination?.libraryId) && identifier(destination?.folderId);
+  function refreshAutomaticDestination(job, book) {
+    const destination = destinationFor(book, true);
+    if (!validDestination(destination)) {
+      job.state = 'cancelled'; job.notice = 'Automatic export waiting: map this book’s category to an Audiobookshelf library and folder in Settings → Devices.';
+      return false;
+    }
+    if (!sameDestination(job.destination, destination) || job.categoryId !== (book.categoryId || 'uncategorized')) job.retryAt = null;
+    job.destination = destination; job.categoryId = book.categoryId || 'uncategorized'; return true;
+  }
+  function automaticDestinationChanged(job) {
+    if (!job.automatic) return false;
+    const current = library.getBook(job.book);
+    if (job.categoryId === (current.categoryId || 'uncategorized') && sameDestination(job.destination, destinationFor(current, true))) return false;
+    job.state = 'cancelled'; job.notice = 'The book’s category changed before upload. Automatic export will use its current category mapping.';
+    return true;
   }
   function mappings(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length > 500) throw new RequestError(422, 'Choose valid Audiobookshelf destinations for your categories.');
@@ -90,7 +107,7 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
       try { await writeFile(temp, JSON.stringify(next), { flag: 'wx', mode: 0o600 }); await rename(temp, settingsPath); config = next; }
       finally { await rm(temp, { force: true }); }
       for (const job of jobs.values()) if (job.automatic && job.state === 'queued') {
-        let destination; try { destination = destinationFor(library.getBook(job.book)); } catch {}
+        let destination; try { destination = destinationFor(library.getBook(job.book), true); } catch {}
         if (!config.autoExport || job.server !== server() || !sameDestination(job.destination, destination)) {
           job.state = 'cancelled'; job.notice = 'Automatic export settings changed. The current destination will be used for pending audio.'; persist(job);
         }
@@ -200,7 +217,7 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
     for (const candidate of learning.readyAudiobooks?.() || []) {
       if ([...jobs.values()].filter((job) => ['queued', 'running'].includes(job.state)).length >= 5) break;
       try {
-        const book = library.getBook(candidate.book), destination = destinationFor(book);
+        const book = library.getBook(candidate.book), destination = destinationFor(book, true);
         if (!identifier(destination.libraryId) || !identifier(destination.folderId) || getLink(book, candidate.recording)) continue;
         const handled = [...jobs.values()].some((job) => job.server === server() && job.kind === 'export' && job.state !== 'cancelled'
           && job.book === candidate.book && job.recording === candidate.recording
@@ -214,6 +231,7 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
     const recording = recordingFor(book, job.recording), data = new FormData();
     job.titleKey = titleKey(book.title); job.phase = 'checking'; persist(job);
     const match = await matchingTitle(book, job.destination || destinationFor(book));
+    if (automaticDestinationChanged(job)) return;
     if (match) {
       job.state = 'skipped'; job.item = match.item; job.matchLibrary = match.library;
       job.notice = 'Skipped export: a matching title already exists in Audiobookshelf. Its files and listening position were left unchanged.';
@@ -236,6 +254,7 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
     // The MP3 already contains chapter metadata; metadata.json also retains it for ABS.
     data.set('metadata', new Blob([JSON.stringify({ title: book.title, authors: book.author ? [book.author] : [], language: book.language,
       chapters: (recording.markers || []).map((marker, index, all) => ({ id: index, start: marker.time, end: all[index + 1]?.time ?? recording.duration, title: marker.title })) })], { type: 'application/json' }), 'metadata.json');
+    if (automaticDestinationChanged(job)) return;
     job.phase = 'uploading'; persist(job);
     await call('/api/upload', { method: 'POST', body: data, signal: AbortSignal.timeout(1800000) });
     job.state = 'exported'; job.exportedAt = now(); job.notice = 'Exported. Let Audiobookshelf scan the new files, then select its title and link the matching recording below.';
@@ -250,6 +269,7 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
         try {
           if (job.server !== server()) { job.state = 'cancelled'; job.notice = 'The Audiobookshelf connection changed.'; continue; }
           if (job.automatic && config.autoExport === false) { job.state = 'cancelled'; job.notice = 'Automatic export disabled.'; continue; }
+          if (job.automatic && !refreshAutomaticDestination(job, library.getBook(job.book))) continue;
           if (job.retryAt > now()) continue;
           if (job.state === 'syncing') {
             const book = library.getBook(job.book), recording = learning.recordings.list(book).find((item) => item.id === job.recording);
@@ -280,7 +300,7 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
     if (body.recording != null && body.recording !== '' && !identifier(body.recording)) throw new RequestError(422, 'Choose a valid recording.');
     let selected = body.recording || null, destination;
     if (kind === 'export') {
-      destination = body.destination === undefined ? destinationFor(book) : body.destination;
+      destination = automatic ? destinationFor(book, true) : body.destination === undefined ? destinationFor(book) : body.destination;
       if (!destination || !identifier(destination.libraryId) || !identifier(destination.folderId)) throw new RequestError(422, 'Choose a default export destination or map this category in Settings → Devices → Audiobookshelf.');
       destination = { libraryId: destination.libraryId, folderId: destination.folderId };
       selected = recordingFor(book, body.recording).id;
@@ -293,13 +313,15 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
       else return publicJob(existing);
     }
     if ([...jobs.values()].filter((job) => ['queued', 'running'].includes(job.state)).length >= 5) throw new RequestError(409, 'Five transfers are already queued.');
-    const job = { id: randomUUID(), book: book.id, server: server(), kind, item: body.item, recording: selected, state: 'queued', ...(automatic ? { automatic: true } : {}), ...(destination ? { destination, titleKey: titleKey(book.title) } : {}) };
+    const job = { id: randomUUID(), book: book.id, server: server(), kind, item: body.item, recording: selected, state: 'queued', ...(automatic ? { automatic: true, categoryId: book.categoryId || 'uncategorized' } : {}), ...(destination ? { destination, titleKey: titleKey(book.title) } : {}) };
     jobs.set(job.id, job); persist(job); if (autoStart) void pump(); return publicJob(job);
   }
   function publicJob({ server: _server, ...job }) { return job; }
   const timer = autoStart && !demo ? setInterval(() => void pump(), 3000) : null; timer?.unref();
   if (autoStart) void pump();
   return { settings, save, libraries, items, attach, remote, push, queue, pump,
-    status: (book) => ({ ...settings(), destination: destinationFor(book), jobs: [...jobs.values()].filter((job) => job.book === book.id && job.server === server()).slice(-10).map(publicJob) }),
+    status: (book) => ({ ...settings(), destination: destinationFor(book),
+      automaticExportNotice: config.autoExport !== false && !validDestination(destinationFor(book, true)) ? 'Automatic export waiting: map this book’s category to an Audiobookshelf library and folder in Settings → Devices.' : '',
+      jobs: [...jobs.values()].filter((job) => job.book === book.id && job.server === server()).slice(-10).map(publicJob) }),
     close() { if (closed) return; closed = true; clearInterval(timer); if (!running) db.close(); } };
 }

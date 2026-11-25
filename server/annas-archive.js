@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { maxUpload, normalizeLanguage, RequestError } from './books.js';
 import { publicDownload, downloadURL } from './public-download.js';
+import { importNarrationOptions } from './import-narration.js';
 
 const mirrors = ['https://annas-archive.gl', 'https://annas-archive.pk', 'https://annas-archive.gd'];
 const pending = new Set(['queued', 'downloading', 'importing']);
@@ -125,7 +126,7 @@ export async function openArchive(dir, { library, demo = false, request = public
     const book = await library.importBook(job.outputBook, { path: temporary, size: job.bytes,
       originalname: filename(headers, job.md5, format) }, job.details);
     job.book = book; job.state = 'ready'; job.error = null; job.nextAttempt = null; persist(job);
-    try { onImport(book); } catch { /* Library refresh can start analysis again. */ }
+    try { onImport(book, job.details); } catch { /* Library refresh can start analysis again. */ }
   }
 
   async function downloadFile(job, url) {
@@ -195,6 +196,7 @@ export async function openArchive(dir, { library, demo = false, request = public
     if (language && !normalizeLanguage(language)) throw new RequestError(422, 'Enter a valid book language code.');
     if (body.categoryId && !library.snapshot().categories.some(({ id }) => id === body.categoryId)) throw new RequestError(422, 'Choose a category that exists.');
     const details = Object.fromEntries(['title', 'author', 'language', 'languages', 'categoryId', 'coverStyle'].filter((key) => body[key] !== undefined).map((key) => [key, body[key]]));
+    Object.assign(details, importNarrationOptions(body));
     return { id: randomUUID(), md5, details, mode, batchId, queueUnavailable: body.queueUnavailable ?? true, created: now(), source: 'fast', state: 'queued', bytes: 0, total: null, error: null, nextAttempt: null, attempts: 0 };
   }
   function insert(batch) {
@@ -214,6 +216,7 @@ export async function openArchive(dir, { library, demo = false, request = public
     const batch = body.books.map((book) => {
       if (!book || typeof book !== 'object') throw new RequestError(422, 'Enter a link for each book.');
       return makeJob({ language: body.language, languages: body.languages, categoryId: body.categoryId, coverStyle: body.coverStyle, downloadMode: body.downloadMode, queueUnavailable: body.queueUnavailable,
+        autoAudiobook: body.autoAudiobook, audiobookDelayMinutes: body.audiobookDelayMinutes,
         reference: book.reference, title: book.title, author: body.sameAuthor ? body.author : book.author }, batchId);
     });
     if (new Set(batch.map((job) => job.md5)).size !== batch.length) throw new RequestError(422, 'Each row must refer to a different book edition.');
@@ -243,7 +246,11 @@ export async function openArchive(dir, { library, demo = false, request = public
     if (details === undefined) return;
     if (typeof details === 'string') { try { details = JSON.parse(details); } catch { throw new RequestError(422, 'Invalid book details.'); } }
     if (!details || typeof details !== 'object' || Array.isArray(details)) throw new RequestError(422, 'Invalid book details.');
+    const options = importNarrationOptions({ ...job.details, ...details });
     for (const key of ['title', 'author', 'language', 'languages', 'categoryId', 'coverStyle']) if (Object.hasOwn(details, key)) job.details[key] = details[key];
+    if (Object.hasOwn(details, 'autoAudiobook') || Object.hasOwn(details, 'audiobookDelayMinutes')) {
+      job.details.autoAudiobook = Boolean(options); if (options) job.details.audiobookDelayMinutes = options.audiobookDelayMinutes;
+    }
   }
   const timer = !demo && autoStart ? setInterval(() => { void pump(); }, 60_000) : null;
   timer?.unref();
