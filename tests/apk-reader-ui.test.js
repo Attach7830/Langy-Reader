@@ -65,6 +65,7 @@ test('EPUB page jumps choose any section, validate page numbers, and keep per-se
   page.value = '1.5'; form.dispatchEvent(new dom.window.Event('submit', { cancelable: true })); assert.deepEqual(jumps, []);
   section.value = '1'; section.dispatchEvent(new dom.window.Event('change')); assert.equal(page.value, '1'); assert.equal(page.hasAttribute('max'), false);
   page.value = '7'; form.dispatchEvent(new dom.window.Event('submit', { cancelable: true }));
+  await delay(0);
   assert.deepEqual(jumps, [{ index: 1, page: 7 }]); assert.equal(document.querySelector('#page-jump-dialog').open, false);
 });
 
@@ -73,7 +74,21 @@ test('PDF page jumps use the document range and absolute page numbers', async (t
   bookPageJump({ renderer: () => current, book: () => ({ format: 'pdf' }), go: (page) => jumps.push(page) }).open();
   assert.equal(document.querySelector('#page-jump-section-field').hidden, true);
   const form = document.querySelector('#page-jump-form'); form.elements.page.value = '12';
-  form.dispatchEvent(new dom.window.Event('submit', { cancelable: true })); assert.deepEqual(jumps, [12]);
+  form.dispatchEvent(new dom.window.Event('submit', { cancelable: true })); await delay(0); assert.deepEqual(jumps, [12]);
+});
+
+test('a touch page jump waits for the keyboard viewport to finish resizing before navigating', async (t) => {
+  const dom = await browser(t), jumps = [];
+  dom.window.matchMedia = () => ({ matches: true });
+  let height = 400;
+  const current = { pageNumber: 1, pageCount: 20 };
+  bookPageJump({ renderer: () => current, book: () => ({ format: 'pdf' }), go: (page) => jumps.push({ page, height }) }).open();
+  const form = document.querySelector('#page-jump-form'); form.elements.page.value = '10';
+  form.dispatchEvent(new dom.window.Event('submit', { cancelable: true }));
+  await delay(30); assert.deepEqual(jumps, []);
+  height = 800; dom.window.dispatchEvent(new dom.window.Event('resize'));
+  for (let n = 0; n < 100 && !jumps.length; n++) await delay(10);
+  assert.deepEqual(jumps, [{ page: 10, height: 800 }]);
 });
 
 test('adding a pack closes its dialog immediately and download progress stays visible while more books are queued', async (t) => {
