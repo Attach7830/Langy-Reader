@@ -428,6 +428,13 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       get syncResolution() { return syncResolution; },
       get contents() { return epubContents(book); },
       get sectionIndex() { return activeSection; },
+      get pageNumber() { return rendition.location?.start?.displayed.page || 1; },
+      get pageCount() { return rendition.location?.start?.displayed.total || 1; },
+      get pageSections() {
+        const labels = new Map();
+        for (const item of epubContents(book)) if (item.target && !labels.has(item.target.index)) labels.set(item.target.index, item.label);
+        return book.spine.spineItems.map(({ index }) => ({ index, label: labels.get(index) || `Section ${index + 1}` }));
+      },
       readingRoots() { return rendition.getContents().map((contents) => contents.content).filter(Boolean); },
       vocabularyPages() {
         if (reflowing) return [];
@@ -459,6 +466,24 @@ export async function openEpub({ host, url, position, language, settings, hooks,
         await settle();
       },
       async go(target) {
+        if (Number.isInteger(target?.page)) {
+          await resize();
+          const index = Number.isInteger(target.index) ? target.index : activeSection;
+          const section = book.spine.get(index);
+          if (!section) throw new Error('This section could not be found.');
+          if (index !== activeSection) { await display(index); await settle(); }
+          const location = await rendition.currentLocation();
+          const total = location.start.displayed.total;
+          const page = Math.max(1, Math.min(total, target.page));
+          const manager = rendition.manager;
+          const contents = rendition.getContents().find((content) => content.sectionIndex === index);
+          const vertical = manager.settings.axis === 'vertical';
+          const step = vertical ? manager.layout.height : manager.layout.pageWidth;
+          const offset = !vertical && manager.settings.direction === 'rtl' ? total - page : page - 1;
+          const mapped = manager.mapping.page(contents, section.cfiBase, offset * step, (offset + 1) * step);
+          if (!mapped?.start) throw new Error('This page could not be located.');
+          await display(mapped.start); await settle(); return;
+        }
         if (target?.sync) return resumeProgress(target.sync);
         if (target?.text) {
           const section = book.spine.get(Number(target.key.split(':')[1]));

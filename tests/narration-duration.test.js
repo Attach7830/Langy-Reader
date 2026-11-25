@@ -7,9 +7,9 @@ import { narration } from '../src/narration.js';
 
 async function until(check) { for (let n = 0; n < 100; n++) { if (check()) return; await delay(10); } throw new Error('Narration UI timed out'); }
 
-async function fixture(t, { words = [], timings = [], visible = () => true, roundSeek = (time) => time } = {}) {
+async function fixture(t, { words = [], timings = [], visible = () => true, roundSeek = (time) => time, initialKey = 'epub:0', rendered = true, delayMetadata = false } = {}) {
   const dom = new JSDOM(await readFile(new URL('../index.html', import.meta.url), 'utf8'), { url: 'https://langy.test' });
-  const values = { window: dom.window, document: dom.window.document, Option: dom.window.Option, navigator: dom.window.navigator,
+  const values = { window: dom.window, document: dom.window.document, Option: dom.window.Option, CustomEvent: dom.window.CustomEvent, navigator: dom.window.navigator,
     requestAnimationFrame: () => 0, cancelAnimationFrame() {} };
   const originals = new Map(Object.keys(values).map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
   for (const [name, value] of Object.entries(values)) Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
@@ -25,7 +25,7 @@ async function fixture(t, { words = [], timings = [], visible = () => true, roun
   const recording = { id: 'recording', state: 'ready', url: '/book.mp3', duration: 3600,
     markers: [{ time: 0, title: 'First chapter' }, { time: 1800, title: 'Second chapter' }],
     segments: [{ key: 'epub:0', start: 0, end: 1800, scale: 1 }, { key: 'epub:1', start: 1800, end: 3600, scale: 1 }] };
-  let key = 'epub:0';
+  let key = initialKey;
   const local = { root, words, text: ' '.repeat(120), annotate() {}, match: () => new Map(timings.map((stamp, index) => [index, words.find((word) => word.from === stamp.from)])),
     rangeFor: (word) => word ? { word } : null, visible };
   const view = { audioUnit: () => ({ key, root, track: () => local }), audioTarget: (target) => ({ key: target }),
@@ -42,12 +42,14 @@ async function fixture(t, { words = [], timings = [], visible = () => true, roun
     player?.stop(); globalThis.fetch = previousFetch; dom.window.close();
     for (const [name, descriptor] of originals) { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else delete globalThis[name]; }
   });
-  player = narration({ preferences: () => prefs, renderer: () => view, book: () => ({ id: 'book', title: 'Test audiobook' }),
+  player = narration({ preferences: () => prefs, renderer: () => rendered ? view : undefined, book: () => ({ id: 'book', title: 'Test audiobook' }),
     async navigate(target) { navigations.push(target); key = target.key; return true; },
     changePreferences(values) { Object.assign(prefs, values); player.apply(); } });
-  player.apply(); await player.refresh();
+  function metadata() { audio.currentTime = 0; audio.onloadedmetadata?.(); }
+  player.apply(); await player.refresh(); if (!delayMetadata) metadata();
   const clock = document.querySelector('#narration-time'), seek = document.querySelector('#narration-seek'), rate = document.querySelector('#narration-rate');
-  return { dom, player, audio, clock, seek, prefs, positions, navigations, reveals,
+  return { dom, player, audio, clock, seek, prefs, positions, navigations, reveals, metadata,
+    rendered(value) { rendered = value; },
     page(value) { key = value; },
     speed(value) { rate.value = String(value); rate.dispatchEvent(new dom.window.Event('change')); },
     tick(time) { audio.currentTime = time; audio.dispatchEvent(new dom.window.Event('timeupdate')); } };
@@ -57,11 +59,29 @@ test('manual page turns cannot be pulled back by old audio timeupdates before th
   const f = await fixture(t);
   f.tick(900); await delay(5); const before = f.navigations.length;
   const navigation = f.player.beginNavigation(); f.page('epub:1');
+  assert.equal(f.player.playbackPosition(), null, 'a page turn cannot persist an audio clock from the old page');
   f.tick(950); await delay(5);
   assert.equal(f.navigations.length, before, 'old audio must not navigate back to the previous source section');
   await f.player.endNavigation(navigation);
   assert.equal(f.audio.currentTime, 1800, 'manual turns seek to the new section before audio following resumes');
   f.tick(2000); await delay(5); assert.equal(f.navigations.length, before);
+});
+
+test('audio waits for a resumed reader before seeking or following its saved chapter', async (t) => {
+  const f = await fixture(t, { initialKey: 'epub:1', rendered: false });
+  await f.player.refresh({ seekToPage: true }); await delay(20);
+  assert.equal(f.audio.currentTime, 0, 'an unfinished reader cannot supply a page time');
+  assert.equal(f.navigations.length, 0, 'audio cannot queue a source jump while the reader is opening');
+  f.rendered(true); await f.player.refresh(); await delay(20);
+  assert.equal(f.audio.currentTime, 1800); assert.equal(f.navigations.length, 0);
+});
+
+test('a resumed audio source keeps its saved chapter after delayed metadata resets the media clock', async (t) => {
+  const f = await fixture(t, { initialKey: 'epub:1', delayMetadata: true });
+  assert.equal(f.player.playbackPosition(), null);
+  assert.equal(f.audio.currentTime, 0, 'a stale finite duration cannot make a new source ready for seeking');
+  f.metadata(); await f.player.refresh(); await delay(20);
+  assert.equal(f.audio.currentTime, 1800); assert.deepEqual(f.navigations, []);
 });
 
 test('a rounded audio seek at a chapter boundary does not return the reader to the previous chapter', async (t) => {

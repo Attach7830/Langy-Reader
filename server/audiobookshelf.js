@@ -15,7 +15,7 @@ export function progressVersion(progress) { return progress ? hash([progress.las
 
 export async function openAudiobookshelf(dir, { library, learning, demo = false, request = fetch, autoStart = true }) {
   const settingsPath = join(dir, 'audiobookshelf-settings.json');
-  let config = { baseUrl: '', apiKey: '', libraryId: '', folderId: '' }, writing = Promise.resolve(), running = false, closed = false;
+  let config = { baseUrl: '', apiKey: '', libraryId: '', folderId: '', categoryDestinations: {} }, writing = Promise.resolve(), running = false, closed = false;
   if (!demo) { try { config = { ...config, ...JSON.parse(await readFile(settingsPath, 'utf8')) }; } catch (error) { if (error.code !== 'ENOENT') throw error; } }
   const db = new DatabaseSync(join(dir, 'audiobookshelf.sqlite'));
   db.exec(`PRAGMA journal_mode=WAL;
@@ -26,7 +26,20 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
   const persist = (job) => db.prepare('INSERT INTO jobs VALUES(?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(job.id, JSON.stringify(job));
   for (const job of jobs.values()) if (job.state === 'running') { job.state = job.kind === 'export' ? 'needs_review' : 'error'; job.error = 'The server restarted during this transfer. Check the destination before retrying.'; persist(job); }
   const settings = () => ({ configurable: !demo, connected: !demo && Boolean(config.baseUrl && config.apiKey), baseUrl: config.baseUrl,
-    hasKey: Boolean(config.apiKey), libraryId: config.libraryId, folderId: config.folderId });
+    hasKey: Boolean(config.apiKey), libraryId: config.libraryId, folderId: config.folderId,
+    categoryDestinations: structuredClone(config.categoryDestinations || {}) });
+  function destinationFor(book) {
+    const key = book.categoryId || 'uncategorized', mappings = config.categoryDestinations || {};
+    const selected = Object.hasOwn(mappings, key) ? mappings[key] : config;
+    return { libraryId: selected?.libraryId, folderId: selected?.folderId };
+  }
+  function mappings(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length > 500) throw new RequestError(422, 'Choose valid Audiobookshelf destinations for your categories.');
+    return Object.fromEntries(Object.entries(value).map(([category, destination]) => {
+      if (!identifier(category) || !destination || !identifier(destination.libraryId) || !identifier(destination.folderId)) throw new RequestError(422, 'Each mapped category needs an Audiobookshelf library and folder.');
+      return [category, { libraryId: destination.libraryId, folderId: destination.folderId }];
+    }));
+  }
   function originURL(path, current = config) {
     if (!current.baseUrl || !current.apiKey) throw new RequestError(422, 'Connect Audiobookshelf in Settings → Devices.');
     const base = new URL(current.baseUrl + '/');
@@ -57,8 +70,19 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
       const apiKey = body.clearKey ? '' : typeof body.apiKey === 'string' && body.apiKey.trim() ? body.apiKey.trim() : config.apiKey;
       if (apiKey.length > 4096 || /[\s\x00-\x1f]/u.test(apiKey)) throw new RequestError(422, 'Enter a valid Audiobookshelf API key.');
       for (const key of ['libraryId', 'folderId']) if (body[key] && !identifier(body[key])) throw new RequestError(422, 'Choose a valid Audiobookshelf library and folder.');
-      const next = { baseUrl: url.href.replace(/\/+$/u, ''), apiKey, libraryId: body.libraryId || '', folderId: body.folderId || '' };
-      if (apiKey) await json('/api/libraries', {}, next);
+      const baseUrl = url.href.replace(/\/+$/u, '');
+      const categoryDestinations = mappings(body.categoryDestinations === undefined
+        ? baseUrl === config.baseUrl ? config.categoryDestinations || {} : {} : body.categoryDestinations);
+      const next = { baseUrl, apiKey, libraryId: body.libraryId || '', folderId: body.folderId || '', categoryDestinations };
+      if (Boolean(next.libraryId) !== Boolean(next.folderId)) throw new RequestError(422, 'Choose both a default export library and folder, or leave both empty.');
+      if (apiKey) {
+        const remote = await json('/api/libraries', {}, next);
+        const destinations = [...Object.values(categoryDestinations), ...(next.libraryId ? [next] : [])];
+        for (const destination of destinations) {
+          const target = (remote.libraries || []).find((item) => item.id === destination.libraryId && item.mediaType === 'book');
+          if (!target?.folders?.some((folder) => folder.id === destination.folderId)) throw new RequestError(422, 'An export folder is no longer available in its selected Audiobookshelf library. Choose another destination.');
+        }
+      }
       const temp = `${settingsPath}.${randomUUID()}.tmp`;
       try { await writeFile(temp, JSON.stringify(next), { flag: 'wx', mode: 0o600 }); await rename(temp, settingsPath); config = next; }
       finally { await rm(temp, { force: true }); }
@@ -139,7 +163,8 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
   }
   async function runExport(job, book) {
     const recording = recordingFor(book, job.recording), data = new FormData();
-    for (const [key, value] of Object.entries({ title: book.title, author: book.author, library: config.libraryId, folder: config.folderId })) data.set(key, value);
+    const destination = job.destination || destinationFor(book);
+    for (const [key, value] of Object.entries({ title: book.title, author: book.author, library: destination.libraryId, folder: destination.folderId })) data.set(key, value);
     const audioPath = learning.audioFile(book, recording.id);
     data.set('audio', await openAsBlob(audioPath, { type: 'audio/mpeg' }), `langy-${recording.id}.mp3`);
     data.set('ebook', await openAsBlob(library.filePath(book)), `langy-${book.id}.${book.format}`);
@@ -175,15 +200,16 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
     if (demo) throw new RequestError(403, 'Audiobookshelf requires your personal installation.');
     originURL('/api/libraries');
     if (body.recording != null && body.recording !== '' && !identifier(body.recording)) throw new RequestError(422, 'Choose a valid recording.');
-    let selected = body.recording || null;
+    let selected = body.recording || null, destination;
     if (kind === 'export') {
-      if (!identifier(config.libraryId) || !identifier(config.folderId)) throw new RequestError(422, 'Choose the destination ABS library and folder in Settings → Devices.');
+      destination = destinationFor(book);
+      if (!identifier(destination.libraryId) || !identifier(destination.folderId)) throw new RequestError(422, 'Choose a default export destination or map this category in Settings → Devices → Audiobookshelf.');
       selected = recordingFor(book, body.recording).id;
     } else if (!identifier(body.item)) throw new RequestError(422, 'Choose an Audiobookshelf title.');
     const existing = [...jobs.values()].find((job) => job.book === book.id && ['queued', 'running', 'syncing'].includes(job.state));
     if (existing) return publicJob(existing);
     if ([...jobs.values()].filter((job) => ['queued', 'running'].includes(job.state)).length >= 5) throw new RequestError(409, 'Five transfers are already queued.');
-    const job = { id: randomUUID(), book: book.id, server: server(), kind, item: body.item, recording: selected, state: 'queued' };
+    const job = { id: randomUUID(), book: book.id, server: server(), kind, item: body.item, recording: selected, state: 'queued', ...(destination ? { destination } : {}) };
     jobs.set(job.id, job); persist(job); if (autoStart) void pump(); return publicJob(job);
   }
   function publicJob({ server: _server, ...job }) { return job; }

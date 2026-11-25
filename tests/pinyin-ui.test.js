@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { JSDOM } from 'jsdom';
-import { pinyinOverlay } from '../src/pinyin.js';
+import { pinyinOverlay, pinyinToolbar } from '../src/pinyin.js';
 import { pinyinCharacters } from '../shared/mandarin-pinyin.js';
 import { readingText } from '../shared/reading-text.js';
 import { getSettings, saveSettings, defaults } from '../src/settings.js';
-import { settingsDialog } from '../src/ui-settings.js';
+import { settingsPage } from '../src/ui-settings.js';
 import { wordHelp } from '../src/words.js';
 
 function globals(t, dom) {
@@ -58,9 +58,12 @@ test('the actual settings checkbox saves pinyin on and off while preserving hove
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   dom.window.HTMLDialogElement.prototype.close = function () { this.open = false; };
   let current = { ...defaults, keys: { ...defaults.keys }, mode: 'translation' }, applied = 0;
-  settingsDialog({ preferences: () => current, apply(value) { current = value; saveSettings(value); applied++; } });
+  const page = settingsPage({ preferences: () => current, apply(value) { current = value; saveSettings(value); applied++; },
+    navigate(tab) { document.querySelector('#settings').hidden = false; page.open(tab); },
+    back() { page.leave(); document.querySelector('#settings').hidden = true; } });
   const form = document.querySelector('#settings-form');
   document.querySelector('[data-settings="language"]').click();
+  assert.equal(document.querySelector('#settings').tagName, 'MAIN', 'settings are a page rather than a dialog');
   assert.equal(form.elements.showPinyin.checked, false);
   form.elements.showPinyin.checked = true;
   form.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
@@ -78,6 +81,21 @@ test('the actual settings checkbox saves pinyin on and off while preserving hove
   assert.equal(getSettings().showPinyin, false);
   assert.equal(getSettings().mode, 'translation');
   assert.equal(getSettings().keys.pinyin, 'j');
+});
+
+test('the reader pinyin button follows Mandarin language variants and saves the shared preference', (t) => {
+  const dom = new JSDOM('<button id="pinyin" aria-label="Pinyin">Pinyin</button>', { url: 'https://langy.test', pretendToBeVisual: true }); globals(t, dom);
+  let currentBook = { language: 'zh-Hans' }, settings = { showPinyin: false, keys: { pinyin: 'y' }, mode: 'translation' };
+  const button = document.querySelector('button');
+  const toolbar = pinyinToolbar({ button, preferences: () => settings, book: () => currentBook,
+    change(showPinyin) { settings = { ...settings, showPinyin }; } });
+  assert.equal(button.hidden, false); button.click(); assert.equal(settings.showPinyin, true);
+  assert.equal(settings.mode, 'translation'); assert.equal(button.getAttribute('aria-pressed'), 'true');
+  settings.showPinyin = false; toolbar.refresh(); assert.equal(button.getAttribute('aria-pressed'), 'false');
+  for (const language of ['zh-Hant', 'cmn', 'cmn-Hans-CN']) { currentBook = { language }; toolbar.refresh(); assert.equal(button.hidden, false); }
+  currentBook = { language: 'en', languages: ['en', 'zh'] }; toolbar.refresh(); assert.equal(button.hidden, false);
+  for (const language of ['es', 'ja', 'ko']) { currentBook = { language }; toolbar.refresh(); assert.equal(button.hidden, true); }
+  currentBook = undefined; toolbar.refresh(); assert.equal(button.hidden, true);
 });
 
 test('hover in an English passage resolves a Chinese compound across inline markup and includes pinyin with inline pinyin off', async (t) => {

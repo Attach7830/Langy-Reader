@@ -1,11 +1,17 @@
 import { $, element, api } from './ui.js';
+import { dismissOnBackdrop } from './dialog-backdrop.js';
 
-export function bookContents({ renderer, book, go, focus = () => {} }) {
+export function bookContents({ renderer, book, go, focus = () => {}, jumpPage }) {
   const dialog = $('#contents-dialog'), body = $('#contents-body');
+  dismissOnBackdrop(dialog, focus);
   return { open() {
     const current = renderer(); if (!current || dialog.open) return;
     const entries = current.contents || [], isPdf = book().format === 'pdf';
     $('#contents-title').textContent = 'Book sections'; body.replaceChildren();
+    if (jumpPage) {
+      const button = element('button', 'button secondary', 'Jump to page'); button.type = 'button';
+      button.addEventListener('click', () => { dialog.close(); jumpPage(); }); body.append(button);
+    }
     const search = document.createElement('input'); search.type = 'search'; search.placeholder = 'Find a chapter or section'; search.setAttribute('aria-label', 'Find a chapter or section');
     const field = element('label', 'field', 'Chapters and sections'); field.append(search); body.append(field);
     const lists = [], empty = element('p', 'field-note', 'No matching sections.'); empty.hidden = true;

@@ -5,7 +5,7 @@ export function audiobookshelfProgress({ audio, request }) {
   const notice = $('#abs-sync-notice'); let session, checking, syncingSaved, offered, applying = false, suspended = false;
   const keyFor = (state) => `langy-listening-${offlineOwner()}-${state.book}-${state.recording}`;
   function persist() { if (session) try { localStorage.setItem(session.key, JSON.stringify({ book: session.book, recording: session.recording, duration: session.duration,
-    absConnected: session.absConnected, absLinked: session.absLinked, time: session.time, version: session.version, dirty: session.dirty })); } catch {} }
+    absConnected: session.absConnected, absLinked: session.absLinked, time: session.time, readingTarget: session.readingTarget, version: session.version, dirty: session.dirty })); } catch {} }
   function tell(text) { message('#abs-sync-status', text); }
   async function resume(remote) {
     if (!session || remote.recording !== session.recording) return;
@@ -25,14 +25,19 @@ export function audiobookshelfProgress({ audio, request }) {
     const key = keyFor(state);
     if (session?.key !== key) {
       let saved; try { saved = JSON.parse(localStorage.getItem(key) || 'null'); } catch {}
-      session = { ...state, key, absLinked: saved?.absLinked, time: saved?.time ?? state.time, version: saved?.version || 'none', dirty: Boolean(saved?.dirty), serial: 0, loaded: !state.absConnected };
+      // Keep a newer reading page authoritative. An older listening clock can
+      // resume within that same saved page, but cannot pull a manual jump back.
+      const samePage = saved?.readingTarget != null && saved.readingTarget === state.readingTarget;
+      session = { ...state, key, absLinked: saved?.absLinked, time: samePage ? saved.time : state.time,
+        version: saved?.version || 'none', dirty: samePage && Boolean(saved?.dirty), serial: 0, loaded: !state.absConnected };
       notice.hidden = true;
-      if (saved && Number.isFinite(saved.time) && saved.time >= 0 && saved.time <= state.duration) {
+      if (samePage && Number.isFinite(saved.time) && saved.time >= 0 && saved.time <= state.duration) {
         applying = true; void audio.resumeAt(saved.time).finally(() => { applying = false; });
       }
       void sync(); return;
     }
     session.absConnected = state.absConnected;
+    session.readingTarget = state.readingTarget;
     if (!applying && session.loaded && Math.abs(state.time - session.time) > .25) { session.time = state.time; session.dirty = true; session.serial++; persist(); }
   }
   async function sync() {

@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { JSDOM } from 'jsdom';
 import { bookContents } from '../src/book-contents.js';
+import { bookPageJump } from '../src/book-page-jump.js';
 import { offlineDownloads } from '../src/offline-downloads.js';
 import { readingPackQueue } from '../src/offline-download-queue.js';
 
@@ -40,6 +41,54 @@ test('PDF sections retain a working page-number fallback when the file has no ch
   const input = document.querySelector('#contents-body input[type="number"]'); input.value = '7';
   document.querySelector('.pdf-jump').dispatchEvent(new dom.window.Event('submit', { cancelable: true }));
   assert.deepEqual(jumps, [7]); assert.equal(document.querySelector('#contents-dialog').open, false);
+});
+
+test('sections close on a backdrop tap while inside clicks and drags out keep them open', async (t) => {
+  const dom = await browser(t), jumps = []; let focused = 0;
+  const ui = bookContents({ renderer: () => ({ contents: [] }), book: () => ({ format: 'epub' }), go: (target) => jumps.push(target), focus: () => focused++ });
+  ui.open(); const dialog = document.querySelector('#contents-dialog');
+  dialog.getBoundingClientRect = () => ({ left: 50, top: 50, right: 350, bottom: 450 });
+  const event = (type, x, y) => dialog.dispatchEvent(new dom.window.MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 }));
+  event('pointerdown', 100, 100); event('click', 100, 100); assert.equal(dialog.open, true);
+  event('pointerdown', 100, 100); event('click', 5, 5); assert.equal(dialog.open, true);
+  event('pointerdown', 5, 5); event('click', 5, 5); assert.equal(dialog.open, false);
+  assert.equal(focused, 1); assert.deepEqual(jumps, []);
+});
+
+test('EPUB page jumps choose any section, validate page numbers, and keep per-section numbering explicit', async (t) => {
+  const dom = await browser(t), jumps = [];
+  const current = { sectionIndex: 0, pageNumber: 3, pageCount: 10, pageSections: [{ index: 0, label: 'First chapter' }, { index: 1, label: 'Second chapter' }] };
+  const ui = bookPageJump({ renderer: () => current, book: () => ({ format: 'epub' }), go: (target) => { jumps.push(target); return true; } });
+  ui.open(); const form = document.querySelector('#page-jump-form'), page = form.elements.page, section = form.elements.section;
+  assert.equal(page.value, '3'); assert.equal(page.max, '10'); assert.match(document.querySelector('#page-jump-note').textContent, /restart in each section/u);
+  page.value = '11'; form.dispatchEvent(new dom.window.Event('submit', { cancelable: true })); assert.deepEqual(jumps, []);
+  page.value = '1.5'; form.dispatchEvent(new dom.window.Event('submit', { cancelable: true })); assert.deepEqual(jumps, []);
+  section.value = '1'; section.dispatchEvent(new dom.window.Event('change')); assert.equal(page.value, '1'); assert.equal(page.hasAttribute('max'), false);
+  page.value = '7'; form.dispatchEvent(new dom.window.Event('submit', { cancelable: true }));
+  await delay(0);
+  assert.deepEqual(jumps, [{ index: 1, page: 7 }]); assert.equal(document.querySelector('#page-jump-dialog').open, false);
+});
+
+test('PDF page jumps use the document range and absolute page numbers', async (t) => {
+  const dom = await browser(t), jumps = [], current = { pageNumber: 3, pageCount: 12 };
+  bookPageJump({ renderer: () => current, book: () => ({ format: 'pdf' }), go: (page) => jumps.push(page) }).open();
+  assert.equal(document.querySelector('#page-jump-section-field').hidden, true);
+  const form = document.querySelector('#page-jump-form'); form.elements.page.value = '12';
+  form.dispatchEvent(new dom.window.Event('submit', { cancelable: true })); await delay(0); assert.deepEqual(jumps, [12]);
+});
+
+test('a touch page jump waits for the keyboard viewport to finish resizing before navigating', async (t) => {
+  const dom = await browser(t), jumps = [];
+  dom.window.matchMedia = () => ({ matches: true });
+  let height = 400;
+  const current = { pageNumber: 1, pageCount: 20 };
+  bookPageJump({ renderer: () => current, book: () => ({ format: 'pdf' }), go: (page) => jumps.push({ page, height }) }).open();
+  const form = document.querySelector('#page-jump-form'); form.elements.page.value = '10';
+  form.dispatchEvent(new dom.window.Event('submit', { cancelable: true }));
+  await delay(30); assert.deepEqual(jumps, []);
+  height = 800; dom.window.dispatchEvent(new dom.window.Event('resize'));
+  for (let n = 0; n < 100 && !jumps.length; n++) await delay(10);
+  assert.deepEqual(jumps, [{ page: 10, height: 800 }]);
 });
 
 test('adding a pack closes its dialog immediately and download progress stays visible while more books are queued', async (t) => {

@@ -32,7 +32,16 @@ try {
   const samples = 120 * 8000, wav = Buffer.alloc(44 + samples * 2);
   wav.write('RIFF', 0); wav.writeUInt32LE(36 + samples * 2, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16);
   wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(8000, 24); wav.writeUInt32LE(16000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(samples * 2, 40);
-  await page.route('**/browser-audio.wav', (route) => route.fulfill({ body: wav, contentType: 'audio/wav' }));
+  // Match Express sendFile's byte-range support so native media seeks can
+  // reach later chapters while preload="metadata" has buffered only the start.
+  await page.route('**/browser-audio.wav', (route) => {
+    const range = /^bytes=(\d+)-(\d*)$/u.exec(route.request().headers().range || '');
+    if (!range) return route.fulfill({ body: wav, contentType: 'audio/wav', headers: { 'Accept-Ranges': 'bytes' } });
+    const start = Number(range[1]), end = Math.min(wav.length - 1, range[2] ? Number(range[2]) : wav.length - 1);
+    if (start > end) return route.fulfill({ status: 416, headers: { 'Content-Range': `bytes */${wav.length}` } });
+    return route.fulfill({ status: 206, body: wav.subarray(start, end + 1), contentType: 'audio/wav',
+      headers: { 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${start}-${end}/${wav.length}` } });
+  });
   await page.route('**/api/books/' + book.id + '/narration*', (route) => route.fulfill({ json: { connected: true, recordings: [], audio: {
     id: 'browser', state: 'ready', url: '/browser-audio.wav', duration: 120,
     segments: [{ key: 'epub:0', start: 0, end: 50, scale: 1 }, { key: 'epub:1', start: 50, end: 110, scale: 1 }, { key: 'epub:2', start: 110, end: 120, scale: 1 }],
@@ -50,7 +59,7 @@ try {
   }
   async function check(name, action) {
     try { await action(); results.push({ name, pass: true }); console.log('PASS', name); }
-    catch (error) { const diagnostic = await page.evaluate(() => { const prefs = JSON.parse(localStorage.getItem('langy-settings-v1') || '{}'), audio = document.querySelector('#narration-audio'); return { size: prefs.size, touchSize: prefs.touchSize, touch: matchMedia('(pointer:coarse)').matches, scale: visualViewport.scale, feedback: document.querySelector('#text-size-feedback')?.textContent, status: document.querySelector('#narration-status')?.textContent, src: audio?.getAttribute('src'), ready: audio?.readyState, paused: audio?.paused, time: audio?.currentTime, selection: document.querySelector('#viewer iframe')?.contentWindow?.getSelection()?.toString(), error: audio?.error?.message }; }).catch(() => null); results.push({ name, pass: false, error: error.stack, diagnostic }); console.error('FAIL', name, error.message, JSON.stringify(diagnostic)); await page.screenshot({ path: `${output}/${results.length}-failure.png` }).catch(() => {}); }
+    catch (error) { const diagnostic = await page.evaluate(() => { const prefs = JSON.parse(localStorage.getItem('langy-settings-v1') || '{}'), audio = document.querySelector('#narration-audio'); return { page: document.querySelector('#page-label')?.textContent, section: document.querySelector('#position-detail')?.textContent, size: prefs.size, touchSize: prefs.touchSize, touch: matchMedia('(pointer:coarse)').matches, scale: visualViewport.scale, feedback: document.querySelector('#text-size-feedback')?.textContent, status: document.querySelector('#narration-status')?.textContent, src: audio?.getAttribute('src'), ready: audio?.readyState, paused: audio?.paused, time: audio?.currentTime, selection: document.querySelector('#viewer iframe')?.contentWindow?.getSelection()?.toString(), error: audio?.error?.message }; }).catch(() => null); results.push({ name, pass: false, error: error.stack, diagnostic }); console.error('FAIL', name, error.message, JSON.stringify(diagnostic)); await page.screenshot({ path: `${output}/${results.length}-failure.png` }).catch(() => {}); }
   }
   async function swipe(dx, dy = 0, wiggle = false) {
     const box = await page.locator('.reading-main').boundingBox(), x = box.x + box.width * .65, y = box.y + box.height * .5;
@@ -118,9 +127,10 @@ try {
   await check('hyperlink jumps expose an immediately usable Back to text control', async () => {
     await page.goto(base + '/#library'); await page.evaluate(() => localStorage.removeItem('langy-progress-v1')); await page.reload(); await open();
     await page.frameLocator('#viewer iframe').first().getByText('Leer nota', { exact: true }).tap();
-    await page.waitForTimeout(350); assert.equal(await page.locator('#return-location').isVisible(), true);
-    await page.locator('#return-location').click(); await page.waitForTimeout(200);
-    assert.equal(await page.frameLocator('#viewer iframe').first().getByText('Leer nota', { exact: true }).isVisible(), true);
+    await page.locator('#return-location').waitFor({ state: 'visible', timeout: 5000 });
+    await page.locator('#return-location').click();
+    await page.locator('#return-location').waitFor({ state: 'hidden', timeout: 5000 });
+    await page.frameLocator('#viewer iframe').first().getByText('Leer nota', { exact: true }).waitFor({ state: 'visible', timeout: 5000 });
   });
   await check('section boundaries remain stable after forward/back turns and a viewport resize', async () => {
     await page.locator('#contents-button').click();
@@ -180,6 +190,60 @@ try {
     const before = await position(); await page.locator('#next').click(); await changed(before);
     const after = await position(); await delay(1000); assert.equal(await position(), after);
   });
+  await check('the audio close button hides both player modes without pausing playback', async () => {
+    await page.locator('#audio-toggle').click(); await page.locator('#narration-player').waitFor({ state: 'visible' });
+    await page.locator('#narration-play').click();
+    await page.waitForFunction(() => !document.querySelector('#narration-audio').paused);
+    await page.locator('#narration-close').click(); await page.locator('#narration-player').waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false);
+    await page.locator('#audio-toggle').click(); await page.locator('#narration-player').waitFor({ state: 'visible' });
+    await page.locator('#podcast-toggle').click(); await page.locator('#narration-close').click();
+    await page.locator('#narration-player').waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false);
+    await page.locator('#audio-toggle').click(); await page.locator('#narration-play').click();
+    await page.locator('#narration-close').click();
+  });
+  await check('sections dismiss on an outside tap and page jumps reach the first and last pages of any section', async () => {
+    await page.locator('#contents-button').click(); await page.locator('#contents-dialog').waitFor({ state: 'visible' });
+    await page.touchscreen.tap(3, 3); await page.locator('#contents-dialog').waitFor({ state: 'hidden' });
+    await page.locator('#reader-more > summary').click(); await page.locator('#jump-page').click();
+    await page.locator('#page-jump-dialog').waitFor({ state: 'visible' });
+    await page.locator('#page-jump-section').selectOption('0'); await page.locator('#page-jump-number').fill('5');
+    await page.getByRole('button', { name: 'Go to page', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 1 of 3' && /^Page 5 of /.test(document.querySelector('#page-label').textContent));
+    await page.locator('#reader-more > summary').click(); await page.locator('#jump-page').click();
+    const last = await page.locator('#page-jump-number').getAttribute('max'); await page.locator('#page-jump-number').fill(last);
+    await page.getByRole('button', { name: 'Go to page', exact: true }).click();
+    await page.waitForFunction((last) => document.querySelector('#page-label').textContent === `Page ${last} of ${last}`, last);
+    await page.locator('#next').click(); await page.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 2 of 3');
+    await page.locator('#reader-more > summary').click(); await page.locator('#jump-page').click();
+    await page.locator('#page-jump-section').selectOption('2'); await page.locator('#page-jump-number').fill('1');
+    await page.getByRole('button', { name: 'Go to page', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 3 of 3');
+  });
+  await check('Settings opens as its own page, keeps drafts between tabs and returns to the saved book position', async () => {
+    const before = await position();
+    await page.locator('#reader-more > summary').click(); await page.locator('#reader-more [data-settings="reading"]').click();
+    await page.waitForURL('**/#settings/reading'); await page.locator('#settings').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('dialog#settings').count(), 0); assert.equal(await page.locator('#reader-screen').isVisible(), false);
+    await page.locator('[data-settings-tab="language"]').click(); await page.locator('[name="cacheAI"]').uncheck();
+    await page.locator('[data-settings-tab="reading"]').click(); await page.locator('[data-settings-tab="language"]').click();
+    assert.equal(await page.locator('[name="cacheAI"]').isChecked(), false);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({ path: output + '/settings-mobile.png' });
+    await page.locator('#settings-back').click(); await page.waitForURL('**/#read/' + book.id);
+    await page.waitForFunction(({ id, before }) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target === before, { id: book.id, before });
+    await page.locator('#viewer iframe').first().waitFor();
+    assert.equal(await page.locator('#pinyin-toggle').isVisible(), false);
+    const updated = await context.request.patch(base + '/api/books/' + book.id, { data: { language: 'zh-Hans', languages: [] } }); assert.equal(updated.status(), 200);
+    await page.goto(base + '/#library'); await page.reload(); await open();
+    await page.locator('#pinyin-toggle').waitFor({ state: 'visible' }); await page.locator('#pinyin-toggle').click();
+    assert.equal(await page.locator('#pinyin-toggle').getAttribute('aria-pressed'), 'true');
+    await page.locator('#pinyin-toggle').click(); assert.equal(await page.locator('#pinyin-toggle').getAttribute('aria-pressed'), 'false');
+    const edges = await page.evaluate(() => { const host = document.querySelector('#viewer').getBoundingClientRect(), area = document.querySelector('.reading-main').getBoundingClientRect(); return { left: host.left - area.left, right: area.right - host.right, radius: getComputedStyle(document.querySelector('#viewer')).borderRadius }; });
+    assert.equal(edges.left, 0); assert.equal(edges.right, 0); assert.equal(edges.radius, '0px');
+    await page.screenshot({ path: output + '/reader-mobile.png' });
+  });
   await check('About and How to are available to self-hosted readers and fit a phone screen', async () => {
     await page.goto(base + '/#about'); await page.locator('#about-title').waitFor({ state: 'visible' });
     assert.equal(await page.getByText('A note from the project’s creator', { exact: true }).isVisible(), true);
@@ -198,7 +262,7 @@ try {
     await delay(1000); await page.reload(); await page.locator('#mobile-navigation [data-settings]').click();
     await page.locator('[data-settings-tab="language"]').click(); assert.equal(await page.locator('[name="cacheAI"]').isChecked(), false);
     await page.locator('#clear-ai-cache').click(); await page.locator('#ai-cache-status').filter({ hasText: 'Saved AI answers cleared.' }).waitFor();
-    await page.locator('#settings [data-close]').first().click();
+    await page.locator('#settings-back').click();
   });
   const desktop = await browser.newContext({ viewport: { width: 1280, height: 900 } }), desktopPage = await desktop.newPage();
   desktopPage.on('pageerror', (error) => errors.push(error.message));

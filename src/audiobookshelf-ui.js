@@ -1,39 +1,97 @@
 import { $, api, element, message, toast } from './ui.js';
 
 export function audiobookshelfSettings() {
-  let config, libraries = [];
+  let config, libraries = [], categories = [], loading, choicesLoaded = false, epoch = 0;
   const url = $('#abs-url'), key = $('#abs-key'), library = $('#abs-library'), folder = $('#abs-folder');
-  function folders(selected) {
-    const current = libraries.find((item) => item.id === library.value);
-    folder.replaceChildren(...(current?.folders || []).map((item) => new Option(item.fullPath || item.path || item.id, item.id)));
-    if ([...folder.options].some((option) => option.value === selected)) folder.value = selected;
+  const mappings = $('#abs-category-destinations'), mappingRows = $('#abs-category-rows');
+  function libraryOptions(select, selected, defaultOption = 'Choose a library') {
+    select.disabled = false;
+    select.replaceChildren(new Option(defaultOption, ''), ...libraries.map((item) => new Option(item.name, item.id)));
+    if (selected && !libraries.some((item) => item.id === selected)) select.append(new Option('Unavailable saved library', selected));
+    select.value = selected || '';
   }
-  async function loadLibraries() {
-    const result = await api('/api/audiobookshelf/libraries'); libraries = result.libraries;
-    library.replaceChildren(...libraries.map((item) => new Option(item.name, item.id)));
-    if (libraries.some((item) => item.id === config.libraryId)) library.value = config.libraryId;
-    folders(config.folderId);
+  function folders(select, libraryId, selected, isMapping = false) {
+    const available = libraries.find((item) => item.id === libraryId)?.folders || [];
+    select.replaceChildren(new Option(isMapping && !libraryId ? 'Use default folder' : 'Choose a folder', ''),
+      ...available.map((item) => new Option(item.fullPath || item.path || item.id, item.id)));
+    if (selected && !available.some((item) => item.id === selected)) select.append(new Option('Unavailable saved folder', selected));
+    select.value = selected || ''; select.disabled = !libraryId;
   }
-  async function load() {
-    try {
-      config = await api('/api/settings/audiobookshelf'); $('#abs-connection').hidden = !config.configurable;
-      $('#abs-demo-note').hidden = config.configurable; url.value = config.baseUrl; key.value = ''; key.placeholder = config.hasKey ? 'Saved key' : 'Audiobookshelf API key';
-      if (config.connected) await loadLibraries(); message('#abs-settings-status');
-    } catch (error) { message('#abs-settings-status', error.message); }
+  function renderMappings() {
+    mappingRows.replaceChildren();
+    for (const category of [{ id: 'uncategorized', name: 'Uncategorized' }, ...categories]) {
+      const selected = config.categoryDestinations?.[category.id];
+      const row = element('fieldset', 'abs-category-row'); row.dataset.absCategory = category.id;
+      const group = element('div', 'form-grid'), libLabel = element('label', 'field', 'Audiobookshelf library'), folderLabel = element('label', 'field', 'Folder');
+      const lib = document.createElement('select'), target = document.createElement('select');
+      lib.setAttribute('aria-label', `${category.name} export library`); target.setAttribute('aria-label', `${category.name} export folder`);
+      lib.dataset.absLibrary = ''; target.dataset.absFolder = '';
+      libraryOptions(lib, selected?.libraryId, 'Use default destination'); folders(target, lib.value, selected?.folderId, true);
+      lib.addEventListener('change', () => folders(target, lib.value, '', true));
+      libLabel.append(lib); folderLabel.append(target); group.append(libLabel, folderLabel);
+      row.append(element('legend', '', category.name), group); mappingRows.append(row);
+    }
+    mappings.hidden = false;
   }
-  library.addEventListener('change', () => folders());
+  async function loadLibraries(version = epoch) {
+    const [choices, catalog] = await Promise.all([api('/api/audiobookshelf/libraries'), api('/api/library')]);
+    if (version !== epoch) return;
+    libraries = choices.libraries; categories = catalog.categories || []; choicesLoaded = true;
+    libraryOptions(library, config.libraryId); folders(folder, library.value, config.folderId); renderMappings();
+  }
+  function load() {
+    if (loading) return loading;
+    const version = epoch;
+    $('#abs-connection').hidden = true; mappings.hidden = true; choicesLoaded = false;
+    loading = (async () => {
+      try {
+        const next = await api('/api/settings/audiobookshelf'); if (version !== epoch) return;
+        config = next; $('#abs-connection').hidden = !config.configurable; $('#abs-demo-note').hidden = config.configurable;
+        url.value = config.baseUrl; key.value = ''; $('#abs-clear-key').checked = false;
+        key.placeholder = config.hasKey ? 'Saved key' : 'Audiobookshelf API key';
+        if (config.connected) await loadLibraries(version);
+        else { library.replaceChildren(); folder.replaceChildren(); library.disabled = folder.disabled = true; }
+        message('#abs-settings-status');
+      } catch (error) { if (version === epoch) message('#abs-settings-status', error.message); }
+      finally { if (version === epoch) loading = null; }
+    })(); return loading;
+  }
+  function draft() {
+    const baseUrl = url.value.trim().replace(/\/+$/u, ''), changedServer = baseUrl !== config.baseUrl;
+    const categoryDestinations = choicesLoaded ? Object.fromEntries([...mappingRows.children].flatMap((row) => {
+      const lib = row.querySelector('[data-abs-library]'), target = row.querySelector('[data-abs-folder]');
+      return lib.value ? [[row.dataset.absCategory, { libraryId: lib.value, folderId: target.value }]] : [];
+    })) : config.categoryDestinations || {};
+    return { baseUrl, apiKey: key.value, clearKey: $('#abs-clear-key').checked,
+      libraryId: changedServer ? '' : choicesLoaded ? library.value : config.libraryId || '',
+      folderId: changedServer ? '' : choicesLoaded ? folder.value : config.folderId || '',
+      categoryDestinations: changedServer ? {} : categoryDestinations };
+  }
+  library.addEventListener('change', () => folders(folder, library.value));
+  async function save({ force = false } = {}) {
+    if (loading) await loading;
+    if (!config?.configurable) return;
+    const body = draft();
+    const ordered = (value) => JSON.stringify(Object.entries(value || {}).sort(([a], [b]) => a.localeCompare(b)));
+    const changed = body.baseUrl !== config.baseUrl || body.apiKey || body.clearKey || body.libraryId !== config.libraryId
+      || body.folderId !== config.folderId || ordered(body.categoryDestinations) !== ordered(config.categoryDestinations);
+    if (!changed && !force) return;
+    const version = epoch;
+    const next = await api('/api/settings/audiobookshelf', { method: 'PUT', body });
+    if (version !== epoch) return;
+    config = next;
+    key.value = ''; $('#abs-clear-key').checked = false;
+    if (config.connected) await loadLibraries(version);
+    else { mappings.hidden = true; library.disabled = folder.disabled = true; }
+    message('#abs-settings-status', config.connected ? 'Audiobookshelf connection and export destinations saved.' : 'Connection key removed.');
+  }
   $('#abs-save').addEventListener('click', async (event) => {
-    event.target.disabled = true; message('#abs-settings-status', 'Connecting to Audiobookshelf…');
-    try {
-      config = await api('/api/settings/audiobookshelf', { method: 'PUT', body: { baseUrl: url.value.trim(), apiKey: key.value,
-        libraryId: library.value || config?.libraryId || '', folderId: folder.value || config?.folderId || '', clearKey: $('#abs-clear-key').checked } });
-      key.value = ''; $('#abs-clear-key').checked = false;
-      if (config.connected) await loadLibraries();
-      message('#abs-settings-status', config.connected ? 'Connected. Choose the destination library and folder, then save again to use them for exports.' : 'Connection key removed.');
-    } catch (error) { message('#abs-settings-status', error.message); }
-    finally { event.target.disabled = false; }
+    event.target.disabled = true; $('#abs-connection').inert = true; message('#abs-settings-status', 'Saving Audiobookshelf…');
+    try { await save({ force: true }); }
+    catch (error) { message('#abs-settings-status', error.message); }
+    finally { event.target.disabled = false; $('#abs-connection').inert = false; }
   });
-  return { load };
+  return { load, save, reset() { epoch++; loading = null; config = undefined; choicesLoaded = false; libraries = []; categories = []; mappingRows.replaceChildren(); mappings.hidden = true; } };
 }
 
 export function audiobookshelfBook({ book, changed }) {
@@ -67,10 +125,18 @@ export function audiobookshelfBook({ book, changed }) {
       const [choices, audio] = await Promise.all([api('/api/audiobookshelf/libraries'), api(`/api/books/${book().id}/narration`)]);
       if (version !== epoch) return;
       library.replaceChildren(...choices.libraries.map((item) => new Option(item.name, item.id)));
-      if (choices.libraries.some((item) => item.id === config.libraryId)) library.value = config.libraryId;
+      const mappings = config.categoryDestinations || {}, category = book().categoryId || 'uncategorized';
+      const destination = Object.hasOwn(mappings, category) ? mappings[category] : config;
+      const targetLibrary = choices.libraries.find((item) => item.id === destination.libraryId);
+      const targetFolder = targetLibrary?.folders?.find((item) => item.id === destination.folderId);
+      if (targetLibrary) library.value = targetLibrary.id;
+      $('#abs-export-destination').textContent = targetFolder
+        ? `Export destination: ${targetLibrary.name} · ${targetFolder.fullPath || targetFolder.path || targetFolder.id}`
+        : 'Choose a default export destination or map this category in Settings → Devices → Audiobookshelf.';
       const recordings = [...(audio.audio.state === 'ready' ? [{ id: audio.audio.id, name: audio.audio.name || 'Generated narration' }] : []), ...(audio.recordings || [])];
       recording.replaceChildren(...recordings.filter((item, index) => recordings.findIndex((other) => other.id === item.id) === index).map((item) => new Option(item.name, item.id)));
-      $('#abs-export').disabled = $('#abs-link').disabled = !recordings.length;
+      $('#abs-link').disabled = !recordings.length;
+      $('#abs-export').disabled = !recordings.length || !targetFolder;
       $('#abs-book-tools').hidden = false; if (library.value) await loadItems(); await status(version);
     } catch (cause) { if (version === epoch) error(cause.message); }
   }

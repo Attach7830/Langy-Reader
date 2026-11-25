@@ -8,7 +8,9 @@ import { openAudiobookshelf } from '../server/audiobookshelf.js';
 async function fixture(t, options = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'langy-abs-')); t.after(() => rm(dir, { recursive: true, force: true }));
   await writeFile(join(dir, 'book.epub'), 'EPUB'); await writeFile(join(dir, 'audio.mp3'), 'AUDIO');
-  const book = { id: 'book', title: 'A Book', author: 'An Author', language: 'es', format: 'epub' }, calls = [], imported = [];
+  const book = { id: 'book', title: 'A Book', author: 'An Author', language: 'es', format: 'epub', categoryId: 'spanish' }, calls = [], imported = [];
+  const remoteLibraries = [{ id: 'lib', mediaType: 'book', folders: [{ id: 'folder', path: '/books' }, { id: 'spanish-folder', path: '/books/es' }] },
+    { id: 'other-lib', mediaType: 'book', folders: [{ id: 'other-folder', path: '/books/zh' }] }];
   let progress = null, state = 'uploaded';
   const item = { id: 'remote-item', mediaType: 'book', media: { duration: 100, metadata: { title: 'A Book' }, tracks: [{ index: 1, title: 'part.mp3', contentUrl: '/abs/s/item/remote-item/part.mp3', duration: 100 }] } };
   const library = { uploads: dir, getBook: () => book, filePath: () => join(dir, 'book.epub') };
@@ -20,7 +22,7 @@ async function fixture(t, options = {}) {
   const request = async (value, opts) => {
     const url = new URL(value); calls.push({ path: url.pathname, options: opts });
     assert.equal(url.origin, 'http://192.168.1.20:13378'); assert.equal(opts.headers.Authorization, 'Bearer synthetic-test-token'); assert.equal(opts.redirect, 'error');
-    if (url.pathname === '/abs/api/libraries') return Response.json({ libraries: [{ id: 'lib', mediaType: 'book', folders: [{ id: 'folder', path: '/books' }] }] });
+    if (url.pathname === '/abs/api/libraries') return Response.json({ libraries: remoteLibraries });
     if (url.pathname === '/abs/api/items/remote-item') return Response.json(item);
     if (url.pathname === '/abs/api/me/progress/remote-item') {
       if (opts.method === 'PATCH') { progress = { ...JSON.parse(opts.body), lastUpdate: (progress?.lastUpdate || 1000) + 1 }; return new Response('OK'); }
@@ -30,9 +32,10 @@ async function fixture(t, options = {}) {
     if (url.pathname === '/abs/s/item/remote-item/part.mp3') return new Response('DOWNLOADED AUDIO');
     assert.fail('Unexpected ABS path: ' + url.pathname);
   };
-  const service = await openAudiobookshelf(dir, { library, learning, autoStart: false, request, ...options }); t.after(() => service.close());
-  return { dir, service, book, calls, imported, item, setProgress(value) { progress = value; },
-    connect: () => service.save({ baseUrl: 'http://192.168.1.20:13378/abs', apiKey: 'synthetic-test-token', libraryId: 'lib', folderId: 'folder' }) };
+  let service = await openAudiobookshelf(dir, { library, learning, autoStart: false, request, ...options }); t.after(() => service.close());
+  return { dir, get service() { return service; }, book, calls, imported, item, remoteLibraries, setProgress(value) { progress = value; },
+    async restart() { service.close(); service = await openAudiobookshelf(dir, { library, learning, autoStart: false, request, ...options }); },
+    connect: (updates = {}) => service.save({ baseUrl: 'http://192.168.1.20:13378/abs', apiKey: 'synthetic-test-token', libraryId: 'lib', folderId: 'folder', ...updates }) };
 }
 test('Audiobookshelf uses the configured remote host/subpath, stores credentials privately and exports book/audio metadata', async (t) => {
   const f = await fixture(t); await f.connect();
@@ -62,4 +65,44 @@ test('ABS downloads never forward credentials to a different origin and demo con
   assert.equal(f.service.status(f.book).jobs[0].state, 'error'); assert.match(f.service.status(f.book).jobs[0].error, /outside the configured server/u);
   const demo = await openAudiobookshelf(f.dir, { library: {}, learning: {}, demo: true, autoStart: false }); t.after(() => demo.close());
   await assert.rejects(demo.libraries(), { status: 403 });
+});
+
+test('category exports use their mapped library and folder while unmapped books use the default', async (t) => {
+  const f = await fixture(t);
+  await f.connect({ categoryDestinations: { spanish: { libraryId: 'lib', folderId: 'spanish-folder' }, chinese: { libraryId: 'other-lib', folderId: 'other-folder' } } });
+  const destinations = [];
+  for (const categoryId of ['spanish', 'chinese', 'portuguese', null]) {
+    f.book.categoryId = categoryId; f.service.queue(f.book, 'export', { recording: 'recording' }); await f.service.pump();
+    const body = f.calls.filter((call) => call.path === '/abs/api/upload').at(-1).options.body;
+    destinations.push([body.get('library'), body.get('folder')]);
+  }
+  assert.deepEqual(destinations, [['lib', 'spanish-folder'], ['other-lib', 'other-folder'], ['lib', 'folder'], ['lib', 'folder']]);
+});
+
+test('queued export destinations survive category changes, mapping changes and a restart', async (t) => {
+  const f = await fixture(t);
+  await f.connect({ categoryDestinations: { spanish: { libraryId: 'lib', folderId: 'spanish-folder' } } });
+  const queued = f.service.queue(f.book, 'export', { recording: 'recording' });
+  assert.deepEqual(queued.destination, { libraryId: 'lib', folderId: 'spanish-folder' });
+  f.book.categoryId = null;
+  await f.connect({ categoryDestinations: { spanish: { libraryId: 'other-lib', folderId: 'other-folder' } } });
+  await f.restart(); await f.service.pump();
+  assert.deepEqual(f.service.settings().categoryDestinations.spanish, { libraryId: 'other-lib', folderId: 'other-folder' });
+  const body = f.calls.find((call) => call.path === '/abs/api/upload').options.body;
+  assert.equal(body.get('library'), 'lib'); assert.equal(body.get('folder'), 'spanish-folder');
+});
+
+test('category mappings validate folder membership, support uncategorized books, and survive legacy saves', async (t) => {
+  const f = await fixture(t), categoryDestinations = { uncategorized: { libraryId: 'other-lib', folderId: 'other-folder' } };
+  await f.connect({ categoryDestinations });
+  await f.connect(); assert.deepEqual(f.service.settings().categoryDestinations, categoryDestinations);
+  for (const invalid of [[], { spanish: null }, { spanish: { libraryId: 'lib', folderId: 'other-folder' } }, { spanish: { libraryId: '../bad', folderId: 'folder' } }]) {
+    await assert.rejects(f.connect({ categoryDestinations: invalid }), { status: 422 });
+    assert.deepEqual(f.service.settings().categoryDestinations, categoryDestinations);
+  }
+  f.book.categoryId = null; f.service.queue(f.book, 'export', { recording: 'recording' }); await f.service.pump();
+  assert.equal(f.calls.filter((call) => call.path === '/abs/api/upload').at(-1).options.body.get('folder'), 'other-folder');
+  await f.connect({ libraryId: '', folderId: '', categoryDestinations: { spanish: { libraryId: 'lib', folderId: 'spanish-folder' } } });
+  assert.throws(() => f.service.queue(f.book, 'export', { recording: 'recording' }), { status: 422 });
+  f.book.categoryId = 'spanish'; assert.equal(f.service.queue(f.book, 'export', { recording: 'recording' }).destination.folderId, 'spanish-folder');
 });

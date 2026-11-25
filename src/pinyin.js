@@ -2,6 +2,17 @@ import { readingText } from '../shared/reading-text.js';
 import { hanPattern, nodeLanguage, bookLanguages } from '../shared/language.js';
 import { pdfPinyinLayout } from './pinyin-layout.js';
 
+export function pinyinToolbar({ button, preferences, book, change }) {
+  function refresh() {
+    const settings = preferences();
+    button.hidden = !book() || !bookLanguages(book()).includes('zh');
+    button.setAttribute('aria-pressed', String(settings.showPinyin));
+    button.title = `${settings.showPinyin ? 'Hide' : 'Show'} pinyin${settings.keys?.pinyin ? ` (${settings.keys.pinyin.toUpperCase()})` : ''}`;
+  }
+  button.addEventListener('click', () => { if (!button.hidden) { change(!preferences().showPinyin); refresh(); } });
+  refresh(); return { refresh };
+}
+
 // Draw pronunciation beside original text ranges. The EPUB/PDF text and its
 // position paths are never wrapped, split or replaced with ruby annotations.
 export function pinyinOverlay({ host, preferences, renderer, book, request }) {

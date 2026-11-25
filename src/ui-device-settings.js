@@ -47,5 +47,5 @@ export function deviceSettings() {
     try { await navigator.clipboard.writeText(input.value); toast('Device address copied'); }
     catch { input.focus(); input.select(); message('#' + kind + '-result', 'Select and copy the address.'); }
   });
-  return { load, reset() { epoch++; loading = false; $('#opds-url').value = ''; $('#sync-url').value = ''; } };
+  return { load, save: audiobookshelf.save, reset() { epoch++; loading = false; audiobookshelf.reset(); $('#opds-url').value = ''; $('#sync-url').value = ''; } };
 }
