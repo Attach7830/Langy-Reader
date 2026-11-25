@@ -12,6 +12,25 @@ import { uploadedAudio } from '../server/uploaded-audio.js';
 
 const run = promisify(execFile);
 
+test('replacing a generated recording deletes its files but retains section audio used by another recording', async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), 'langy-recording-replacement-')), book = { id: 'book', language: 'es', languages: ['es'] };
+  const learning = await openLearning(folder, { getBook: () => book }, false, {}, { autoRepair: false }), db = new DatabaseSync(join(folder, 'learning.sqlite')), audioFolder = join(folder, 'narration');
+  t.after(async () => { await learning.remove(book.id); db.close(); await rm(folder, { recursive: true, force: true }); });
+  db.prepare("INSERT INTO analyses(book,owner,language,state) VALUES('book','','es','ready')").run();
+  db.prepare("INSERT INTO chapters(book,key,ordinal,title,text,digest) VALUES('book','section',0,'Page','Una historia.','digest')").run();
+  for (const id of ['shared', 'old-only']) {
+    db.prepare("INSERT INTO audio(id,book,chapter,digest,options,state,created) VALUES(?,'book','section','digest','{}','ready',1)").run(id); await writeFile(join(audioFolder, `${id}.mp3`), id);
+  }
+  for (const [id, parts] of [['old', ['shared', 'old-only']], ['kept', ['shared']]]) {
+    db.prepare("INSERT INTO book_audio(id,book,digest,options,state,parts,created) VALUES(?,'book','digest','{}','ready',?,1)").run(id, JSON.stringify(parts.map((id) => ({ id })))); await writeFile(join(audioFolder, `${id}.mp3`), id);
+  }
+  await learning.removeRecording(book, 'old'); await learning.removeRecording(book, 'old');
+  assert.equal(db.prepare("SELECT id FROM book_audio WHERE id='old'").get(), undefined);
+  await assert.rejects(access(join(audioFolder, 'old.mp3')), { code: 'ENOENT' }); await assert.rejects(access(join(audioFolder, 'old-only.mp3')), { code: 'ENOENT' });
+  assert.equal(await readFile(join(audioFolder, 'shared.mp3'), 'utf8'), 'shared'); assert.equal(await readFile(join(audioFolder, 'kept.mp3'), 'utf8'), 'kept');
+  assert.ok(db.prepare("SELECT id FROM audio WHERE id='shared'").get());
+});
+
 test('own recordings sync independently, can be selected and downloaded, reuse transcripts, and reject unrelated audio', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'langy-own-audio-'));
   const original = globalThis.fetch;
@@ -55,7 +74,7 @@ test('own recordings sync independently, can be selected and downloaded, reuse t
     assert.equal((await ready(first.id)).state, 'ready');
     learning.recordings.queue(book, second.id);
     assert.equal((await ready(second.id)).state, 'ready');
-    assert.equal(learning.narration(book).audio.state, 'missing');
+    assert.equal(learning.narration(book).audio.id, second.id, 'the latest synced recording becomes available without a selection step');
     const selected = learning.narration(book, first.id);
     assert.equal(selected.audio.kind, 'uploaded');
     assert.equal(selected.audio.name, 'Narrator one');

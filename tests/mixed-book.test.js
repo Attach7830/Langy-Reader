@@ -81,5 +81,5 @@ test('a mixed book keeps Mandarin totals separate, categorizes with characters, 
   await until(() => { const result = learning.recordings.list(book).find((item) => item.id === recording.id); if (result.state === 'error') throw new Error(result.error); return result.state === 'ready'; });
   assert.deepEqual(transcriptionLanguages, ['mul']);
   assert.equal(learning.narration(book, recording.id).audio.state, 'ready');
-  assert.equal(learning.narration(book).audio.id, generated.id);
+  assert.equal(learning.narration(book).audio.id, recording.id, 'a synced import becomes the latest recording automatically');
 });

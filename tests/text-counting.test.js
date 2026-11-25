@@ -52,6 +52,30 @@ async function fixture(t, { failed = false, scanned = false } = {}) {
   return { dir, library, learning, db, bytes, book: library.getBook('illustrated'), calls: () => calls, connect: () => { available = true; } };
 }
 
+test('an OCR revision reindexes the same PDF and ignores an older analysis finishing after replacement', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'langy-ocr-counts-')), library = await openLibrary(dir), upload = join(library.uploads, 'scan.pdf');
+  const original = '%PDF-1.4\nscanned\n%%EOF'; await writeFile(upload, original);
+  const imported = await library.importBook('ocr-book', { path: upload, originalname: 'scan.pdf', size: original.length }, { language: 'es' }), book = library.getBook(imported.id);
+  let release, oldStarted = false; const gate = new Promise((resolve) => { release = resolve; }), previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (new URL(url).pathname === '/pdf') return Response.json({ chapters: [{ key: 'pdf:1', title: 'Page 1', text: String(options.body).includes('searchable') ? 'Una historia nueva y completa.' : 'Una historia.' }] });
+    const { text, language } = JSON.parse(options.body);
+    if (text === 'Una historia.') { oldStarted = true; await gate; }
+    const tokens = textWords(text, language).map((word) => ({ ...word, lemma: word.word.toLowerCase() }));
+    return Response.json({ tokens, lemmas: tokens.map((word) => word.lemma), method: 'contextual' });
+  };
+  const learning = await openLearning(dir, library, false, { async readingLevel() { return { band: 'Intermediate' }; } }, { autoRepair: false }), db = new DatabaseSync(join(dir, 'learning.sqlite'));
+  t.after(async () => { release(); await learning.remove(book.id); db.close(); globalThis.fetch = previousFetch; await rm(dir, { recursive: true, force: true }); });
+  learning.ensure(book); await until(() => oldStarted);
+  const output = join(library.uploads, 'ocr.pdf'); await writeFile(output, '%PDF-1.4\nsearchable\n%%EOF');
+  await library.replacePDF(book.id, { path: output }, { revision: 'ocr-new', expectedRevision: '' }); const updated = library.getBook(book.id);
+  learning.ensure(updated); release();
+  await until(() => learning.info(updated).state === 'ready');
+  assert.equal(db.prepare('SELECT contentRevision FROM analyses WHERE book=?').get(book.id).contentRevision, 'ocr-new');
+  assert.equal(learning.info(updated).counts.words, 5); assert.equal(learning.chapters(updated).chapters.length, 1);
+  assert.equal(learning.textSections(updated)[0].text, 'Una historia nueva y completa.');
+});
+
 test('EPUB word counts and reading totals recover an existing NLP error, skip image sections, and replay exposures after successful analysis', async (t) => {
   const f = await fixture(t, { failed: true });
   f.library.setReadStatus(f.book.id, { read: true });
