@@ -53,6 +53,7 @@ export function audiobookshelfSettings() {
       try {
         const next = await api('/api/settings/audiobookshelf'); if (version !== epoch) return;
         config = next; $('#abs-connection').hidden = !config.configurable; $('#abs-demo-note').hidden = config.configurable;
+        if (config.managed) $('#abs-demo-note').textContent = 'The administrator manages their Audiobookshelf connection. Your private books and listening progress are not exported through their account.';
         url.value = config.baseUrl; key.value = ''; removeKey.refresh(config); $('#abs-auto-export').checked = config.autoExport !== false;
         key.placeholder = config.hasKey ? 'Saved key' : 'Audiobookshelf API key';
         if (config.connected) void loadLibraries(version).catch((error) => { if (version === epoch) message('#abs-settings-status', error.message); });
