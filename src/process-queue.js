@@ -7,13 +7,14 @@ export function processQueue() {
   let disposed = false, account, jobs = [], local = processTasks.snapshot(), timer, pending, redraw, signature = '', dismissed = new Set();
   const version = (job) => `${job.id}:${job.state}:${job.created || 0}`;
   function render() {
-    const entries = [...jobs, ...local.tasks].filter((job) => !dismissed.has(version(job)));
+    const entries = [...jobs, ...local.tasks].filter((job) => !['complete', 'completed', 'cancelled'].includes(job.state) && !dismissed.has(version(job)));
     const count = entries.filter(active).length + local.downloads.filter(active).length;
     const failed = entries.some((job) => job.state === 'failed') || local.downloads.some((job) => job.state === 'failed');
     for (const selector of ['#process-queue-count', '#mobile-process-count']) {
       const badge = $(selector); if (badge) { badge.textContent = String(count || (failed ? '!' : '')); badge.hidden = !count && !failed; }
     }
     button.dataset.active = String(count > 0); button.dataset.failed = String(failed);
+    $('#clear-finished-processes').hidden = !failed;
     const next = JSON.stringify(entries);
     if (next !== signature) {
       signature = next; entries.sort((a, b) => Number(!active(a)) - Number(!active(b)) || b.created - a.created);
