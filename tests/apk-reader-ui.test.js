@@ -120,6 +120,11 @@ test('Android settings keep server controls available without a title bar, while
   dom.window.dispatchEvent(new dom.window.MessageEvent('message', { data: '__LANGY_FULLSCREEN_TOKEN__', ports: [port] })); assert.deepEqual(messages, ['exit']);
   const controls = dom.window.document.querySelector('[data-settings-panel="devices"] #android-app-controls');
   assert.ok(controls);
+  const edges = dom.window.document.querySelector('#android-reader-edges');
+  assert.ok(edges, 'the APK carries the border correction independently of server styles');
+  assert.match(edges.textContent, /\(pointer: coarse\)/u, 'touch tablets share the adjustment');
+  assert.match(edges.textContent, /\.reading-main\s*\{\s*padding: 0/u);
+  assert.match(edges.textContent, /\.viewer:not\(\.pdf-viewer\)/u, 'fixed PDF layouts keep their own surface');
   const buttons = controls.querySelectorAll('button'); buttons[0].click(); buttons[1].click();
   assert.deepEqual(messages.slice(-2), ['connection', 'reload']);
   dom.window.document.documentElement.classList.add('focus-mode'); await delay(0); assert.equal(messages.at(-1), 'enter');
@@ -128,4 +133,9 @@ test('Android settings keep server controls available without a title bar, while
   dom.window.document.dispatchEvent(new dom.window.Event('fullscreenchange')); assert.equal(messages.at(-1), 'enter');
   dom.window.__langyFullscreenCleanup(); assert.equal(closed, true);
   assert.equal(dom.window.document.querySelector('#android-app-controls'), null);
+  assert.equal(dom.window.document.querySelector('#android-reader-edges'), null);
+  dom.window.eval(await readFile(new URL('../android/app/src/main/assets/reader-fullscreen.js', import.meta.url), 'utf8'));
+  dom.window.dispatchEvent(new dom.window.MessageEvent('message', { data: '__LANGY_FULLSCREEN_TOKEN__', ports: [port] }));
+  assert.equal(dom.window.document.querySelectorAll('#android-reader-edges').length, 1, 'reconnecting cannot duplicate the injected style');
+  dom.window.__langyFullscreenCleanup();
 });
