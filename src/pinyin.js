@@ -5,7 +5,7 @@ import { pdfPinyinLayout } from './pinyin-layout.js';
 export function pinyinToolbar({ button, preferences, book, change }) {
   function refresh() {
     const settings = preferences();
-    button.hidden = !book() || !bookLanguages(book()).includes('zh');
+    button.hidden = !book() || Boolean(book().l1Folder) || !bookLanguages(book()).includes('zh');
     button.setAttribute('aria-pressed', String(settings.showPinyin));
     button.title = `${settings.showPinyin ? 'Hide' : 'Show'} pinyin${settings.keys?.pinyin ? ` (${settings.keys.pinyin.toUpperCase()})` : ''}`;
   }
@@ -23,7 +23,7 @@ export function pinyinOverlay({ host, preferences, renderer, book, request }) {
   let serial = 0, scheduled, controller;
   function clear() { serial++; controller?.abort(); cancelAnimationFrame(scheduled); layer.replaceChildren(); layer.hidden = true; }
   async function draw(epoch) {
-    if (epoch !== serial || !book() || !preferences().showPinyin) return;
+    if (epoch !== serial || !book() || book().l1Folder || !preferences().showPinyin) return;
     const roots = renderer()?.readingRoots?.() || [renderer()?.audioUnit?.()?.root].filter(Boolean);
     if (!roots.length) return;
     controller = new AbortController();
@@ -102,7 +102,7 @@ export function pinyinOverlay({ host, preferences, renderer, book, request }) {
   }
   function refresh() {
     clear(); const epoch = serial;
-    if (book() && preferences().showPinyin) scheduled = requestAnimationFrame(() => { scheduled = requestAnimationFrame(() => { void draw(epoch); }); });
+    if (book() && !book().l1Folder && preferences().showPinyin) scheduled = requestAnimationFrame(() => { scheduled = requestAnimationFrame(() => { void draw(epoch); }); });
   }
   host.addEventListener('scroll', refresh, { passive: true });
   new ResizeObserver(refresh).observe(host);

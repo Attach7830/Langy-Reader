@@ -8,7 +8,7 @@ export function phraseHelp({ book, preferences, request, onSelection = () => {} 
   function inspect(root) {
     const doc = root.ownerDocument, selection = doc.getSelection();
     if (panel.contains(document.activeElement)) return;
-    if (!book() || !selection?.rangeCount || selection.isCollapsed) { if (selected?.root === root) clear(); return; }
+    if (!book() || book().l1Folder || !selection?.rangeCount || selection.isCollapsed) { if (selected?.root === root) clear(); return; }
     const range = selection.getRangeAt(0), phrase = selection.toString().trim();
     if (!root.contains(range.startContainer) || !root.contains(range.endContainer) || !phrase || phrase.length > 700) { if (selected?.root === root) clear(); return; }
     if (selected?.phrase === phrase && selected.root === root) return;
@@ -35,7 +35,7 @@ export function phraseHelp({ book, preferences, request, onSelection = () => {} 
   panel.addEventListener('pointerdown', (event) => { if (event.target.closest('button')) event.preventDefault(); });
   close.addEventListener('click', clear);
   explain.addEventListener('click', async () => {
-    if (!selected || explain.disabled) return;
+    if (!selected || explain.disabled || book()?.l1Folder) return;
     const value = selected, visit = ++epoch; controller?.abort(); controller = new AbortController();
     explain.disabled = true; answer.textContent = 'Explaining phrase…';
     try {
