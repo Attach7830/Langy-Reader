@@ -2,8 +2,6 @@ FROM python:3.12-slim-bookworm
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 LANGY_MODELS=/opt/models HF_HUB_DISABLE_XET=1
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates ocrmypdf tesseract-ocr-all && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY install_ocr_models.py ./
-RUN python install_ocr_models.py
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && python -m spacy download es_core_news_sm \
@@ -21,6 +19,8 @@ COPY spanish_dictionary.py spanish_lexicon.py ./
 COPY book_alignment.py ./
 COPY vocabulary_filters.py ./
 COPY pdf_ocr.py ./
+COPY install_ocr_models.py ./
+RUN python install_ocr_models.py
 USER langy
 EXPOSE 8000
 CMD ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
