@@ -8,11 +8,12 @@ import { deviceSettings } from '../src/ui-device-settings.js';
 import { phraseHelp } from '../src/phrase-help.js';
 import { offlineDownloads } from '../src/offline-downloads.js';
 import { processTasks } from '../src/process-tasks.js';
+import { processQueue } from '../src/process-queue.js';
 
 async function until(check) { for (let i = 0; i < 100; i++) { if (check()) return; await delay(10); } throw new Error('Reader tool did not update'); }
 async function browser(t) {
   const dom = new JSDOM(await readFile(new URL('../index.html', import.meta.url), 'utf8'), { url: 'https://langy.test', pretendToBeVisual: true });
-  const names = ['window', 'document', 'localStorage', 'navigator', 'Option', 'Node', 'location', 'CustomEvent'];
+  const names = ['window', 'document', 'localStorage', 'navigator', 'Option', 'Node', 'location', 'CustomEvent', 'requestAnimationFrame', 'cancelAnimationFrame'];
   const saved = new Map(names.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)])), originalFetch = globalThis.fetch;
   for (const name of names) Object.defineProperty(globalThis, name, { configurable: true, value: dom.window[name] });
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
@@ -103,4 +104,16 @@ test('completed offline downloads leave the queue automatically without removing
   job.state = 'failed'; job.error = 'Reconnect and retry'; publish([job]);
   assert.equal(document.querySelectorAll('#offline-download-list .download-card').length, 1);
   assert.match(document.querySelector('#offline-download-list').textContent, /Retry download/u);
+});
+
+test('the process panel refreshes active server tasks and removes completed tasks without dismissal', async (t) => {
+  let panel; t.after(() => panel?.dispose());
+  await browser(t); processTasks.clearFinished(); processTasks.setDownloads([]); let state = 'running';
+  globalThis.fetch = async () => Response.json({ accountId: 'queue-reader', jobs: [{ id: 'server-task', state, label: 'Work in progress' }] });
+  panel = processQueue(); panel.setAccount('queue-reader');
+  document.querySelector('#open-process-queue').click();
+  await until(() => Boolean(document.querySelector('[data-process="server-task"]')));
+  state = 'completed'; window.dispatchEvent(new window.CustomEvent('langy-processes-changed'));
+  await until(() => !document.querySelector('[data-process="server-task"]'));
+  assert.equal(document.querySelector('#process-empty').hidden, false);
 });
