@@ -5,6 +5,8 @@ import { rm } from 'node:fs/promises';
 import express from 'express';
 import multer from 'multer';
 import { maxUpload, openLibrary, RequestError } from './books.js';
+import { openAccounts } from './accounts.js';
+import { openAIProfiles } from './ai-profiles.js';
 import { openAISettings } from './ai.js';
 import { openProcesses } from './processes.js';
 import { openAICache } from './ai-cache.js';
@@ -38,21 +40,33 @@ await verifyStorage(dir);
 const limits = demo ? { upload: demoUploadLimit, books: demoBookLimit, storage: demoStorageLimit } : null;
 const library = await openLibrary(dir, limits);
 const password = process.env.READER_PASSWORD || '';
-const readerSettings = openReaderSettings(dir, { demo, username: process.env.READER_USER || 'reader' });
+const accounts = await openAccounts(dir, { demo, username: process.env.READER_USER || 'reader', password, reservedUsernames: [process.env.READER_SYNC_USER] });
+const readerSettings = openReaderSettings(dir, { demo, username: process.env.READER_USER || 'reader', ownerFor: accounts.preferenceOwner });
+const syncUsername = process.env.READER_SYNC_USER || process.env.READER_USER || 'reader';
+const syncPassword = process.env.READER_SYNC_PASSWORD || '';
+const syncExpected = syncPassword ? createHash('sha256').update(`${syncUsername}:${createHash('md5').update(syncPassword).digest('hex')}`).digest() : null;
 const progressSync = openProgressSync(dir, { library, demo,
   username: process.env.READER_SYNC_USER || process.env.READER_USER || 'reader',
-  password: process.env.READER_SYNC_PASSWORD || password,
+  password: syncPassword || password,
+  authenticate: accounts.enabled ? async (name, key, req) => {
+    const rootName = process.env.READER_USER || 'reader';
+    if (syncExpected && name === syncUsername) return timingSafeEqual(syncExpected, createHash('sha256').update(`${name}:${key}`).digest()) ? accounts.visitorForOwner('') : null;
+    if ((syncPassword || syncUsername !== rootName) && name.toLowerCase() === rootName.toLowerCase()) return null;
+    const loginName = name === syncUsername && !syncPassword ? rootName : name;
+    return accounts.authenticate(loginName, key, { sync: true, source: `sync:${req.ip}` });
+  } : undefined,
 });
 const aiSettings = await openAISettings(dir, demo);
-const aiCache = openAICache(dir, { identity: aiSettings.cacheIdentity,
+const aiProfiles = await openAIProfiles(dir, aiSettings, accounts, { demo });
+const aiCache = openAICache(dir, { identity: aiProfiles.cacheIdentity,
   policy(visitor) {
     if (demo && !visitor?.id) return null;
     const account = readerSettings.get(visitor);
     return { owner: account.accountId, enabled: account.preferences.cacheAI !== false, expires: demo ? visitor.expires : null };
   },
 });
-const ai = aiCache.wrap(aiSettings), withAI = (visitor, task) => aiCache.run(visitor, task);
-const discovery = openBookDiscovery(dir, { library, ai, demo, withAI });
+const ai = aiCache.wrap(aiProfiles), withAI = (visitor, task) => aiProfiles.run(visitor, () => aiCache.run(visitor, task));
+const discovery = openBookDiscovery(dir, { library, ai, demo, withAI, visitorForOwner: accounts.visitorForOwner });
 const lookupSynonyms = openThesaurus();
 const mandarin = openMandarin();
 const bookPinyin = openBookPinyin(dir, mandarin, { demo });
@@ -68,7 +82,7 @@ const ocr = await openPDFOCR(dir, { library, demo, onImport: (book) => learning.
 const audiobookshelf = await openAudiobookshelf(dir, { library, learning, demo });
 const processes = openProcesses(dir, { library, archive, discovery, learning, demo, account: readingAccount });
 const uploadLimit = limits?.upload ?? maxUpload;
-const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 8, fieldSize: 1024 } });
+const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 9, fieldSize: 1024 } });
 const audioUpload = multer({ dest: library.uploads, limits: { fileSize: maxAudioUpload, files: 1, fields: 1, fieldSize: 1024 } });
 const chapterUpload = multer({ storage: chapterStorage(library.uploads), limits: { fileSize: maxAudioUpload, files: chapterFileLimit, fields: 1, fieldSize: 1024 } });
 const demoUploads = demo ? [limitJobs({ perMinute: 32, perVisitor: 8 })] : [];
@@ -76,6 +90,8 @@ const demoGenerations = demo ? [limitJobs({ perMinute: 45, perVisitor: 16 })] : 
 const demoDictionaryRequests = demo ? [limitJobs({ perMinute: 600, perVisitor: 240 })] : [];
 const app = express();
 app.disable('x-powered-by');
+// Keep route and authorization matching consistent, including owner-only tools.
+app.set('case sensitive routing', true);
 
 app.use((req, res, next) => {
   res.set({
@@ -93,20 +109,6 @@ app.get('/healthz', (_, res) => res.type('text/plain').send('ok'));
 // router accepts those headers; they never grant access to the library/settings.
 app.use('/kosync', progressSync.router);
 
-if (password) {
-  const digest = (text) => createHash('sha256').update(text).digest();
-  const expected = digest(`${process.env.READER_USER || 'reader'}:${password}`);
-  app.use((req, res, next) => {
-    const auth = req.get('Authorization') || '';
-    if (auth.startsWith('Basic ') && timingSafeEqual(digest(Buffer.from(auth.slice(6), 'base64')), expected)) {
-      return next();
-    }
-    res.set('WWW-Authenticate', 'Basic realm="Langy Reader", charset="UTF-8"').status(401).send('Sign in to Langy Reader.');
-  });
-}
-
-app.use('/opds', opdsRouter({ library, demo, onDownload: demo ? undefined : progressSync.bookDocument }));
-
 app.use('/api', (req, res, next) => {
   res.set('Cache-Control', 'no-store');
   if (['GET', 'HEAD'].includes(req.method)) return next();
@@ -119,6 +121,58 @@ app.use('/api', (req, res, next) => {
   next();
 }, express.json({ limit: '320kb', strict: true }));
 
+
+const isAdministrator = (req) => !accounts.enabled || req.visitor?.role === 'admin';
+const usesOwnerAudiobookshelf = (req) => !accounts.enabled || req.visitor?.id === '';
+const accountInfo = (visitor) => ({ ...accounts.describe(visitor), legacyAccount: visitor?.id === '', readerAccountId: visitor ? readerSettings.get(visitor).accountId : null });
+app.get('/api/account', async (req, res) => { req.visitor = await accounts.identify(req); res.json(accountInfo(req.visitor)); });
+app.post('/api/account/login', async (req, res) => {
+  if (!accounts.enabled) throw new RequestError(403, 'Accounts are not enabled on this installation.');
+  const visitor = await accounts.authenticate(req.body?.username, req.body?.password, { source: `login:${req.ip}` });
+  if (!visitor) return res.status(401).json({ error: 'Incorrect username or password.' });
+  accounts.issue(req, res, visitor); res.json(accountInfo(visitor));
+});
+app.post('/api/account/logout', (req, res) => { accounts.logout(req, res); res.json({ signedOut: true }); });
+app.use(async (req, res, next) => {
+  if (demo || !accounts.enabled || !/^\/(?:api|opds)(?:\/|$)/iu.test(req.path)) return next();
+  req.visitor = await accounts.identify(req);
+  if (req.visitor) return next();
+  if (req.path.startsWith('/opds')) res.set('WWW-Authenticate', 'Basic realm="Langy Reader", charset="UTF-8"');
+  res.status(401).json({ error: 'Sign in to Langy Reader.', authenticationRequired: true });
+});
+app.post('/api/account/password', async (req, res) => {
+  if (!accounts.enabled) throw new RequestError(403, 'Accounts are not enabled.');
+  const verified = await accounts.authenticate(req.visitor.username, req.body?.currentPassword, { source: `password:${req.ip}` });
+  if (!verified) throw new RequestError(403, 'The current password is incorrect.');
+  await accounts.resetPassword(req.visitor.userId, req.body?.newPassword);
+  accounts.issue(req, res, req.visitor); res.json({ saved: true });
+});
+app.get('/api/admin/users', (req, res) => { accounts.requireAdmin(req.visitor); res.json({ users: accounts.list() }); });
+app.post('/api/admin/users', async (req, res) => {
+  accounts.requireAdmin(req.visitor); const user = await accounts.create(req.body ?? {}); await aiProfiles.prepare(user); res.status(201).json(user);
+});
+app.patch('/api/admin/users/:id', (req, res) => { accounts.requireAdmin(req.visitor); res.json(accounts.update(req.params.id, req.body ?? {})); });
+app.post('/api/admin/users/:id/password', async (req, res) => { accounts.requireAdmin(req.visitor); res.json(await accounts.resetPassword(req.params.id, req.body?.password)); });
+app.use('/opds', opdsRouter({ library, demo, onDownload: demo ? undefined : progressSync.bookDocument }));
+app.use((req, _res, next) => {
+  if (accounts.enabled && !usesOwnerAudiobookshelf(req) && /^\/api\/(?:audiobookshelf(?:\/|$)|settings\/audiobookshelf(?:\/|$))/u.test(req.path) && (req.method !== 'GET' || req.path.startsWith('/api/audiobookshelf/'))) throw new RequestError(403, 'Audiobookshelf is managed by the instance owner.');
+  if (accounts.enabled && !isAdministrator(req)) {
+    const service = /^\/api\/(?:settings\/(?:learning|archive|audiobookshelf)(?:\/|$)|audiobookshelf(?:\/|$))/u.test(req.path);
+    if (service && (req.method !== 'GET' || req.path.startsWith('/api/audiobookshelf/'))) throw new RequestError(403, 'Server connections are managed by the administrator.');
+  }
+  next();
+});
+app.use('/api/books/:id', (req, _res, next) => {
+  if (demo) return next();
+  const book = library.getBook(req.params.id, req.visitor);
+  if (accounts.enabled && /^\/audiobookshelf(?:\/|$)/u.test(req.path) && !usesOwnerAudiobookshelf(req) && (req.method !== 'GET' || req.path !== '/audiobookshelf')) throw new RequestError(403, 'Audiobookshelf is managed by the instance owner.');
+  const modifiesBook = !['GET', 'HEAD'].includes(req.method) && (req.path === '/' && ['PATCH','DELETE'].includes(req.method)
+    || /^\/(?:learning|reading-estimate|narration|recordings|ivoox|audio|ocr|audiobookshelf)(?:\/|$)/u.test(req.path));
+  if (modifiesBook && book.canEdit === false) throw new RequestError(403, 'Only the book owner can change this shared book.');
+  next();
+});
+app.use('/api', (req, _res, next) => demo ? next() : withAI(req.visitor, next));
+
 if (demo) {
   const identifyVisitor = await visitorMiddleware(dir);
   app.use(['/api/library', '/api/categories', '/api/books', '/api/storage', '/api/vocabulary', '/api/discovery', '/api/processes', '/api/settings/reader', '/api/settings/ai-cache', '/api/reading-time'], identifyVisitor);
@@ -130,23 +184,24 @@ if (demo) {
   app.get('/api/settings/ai', (_, res) => res.json(ai.settings()));
   app.put('/api/settings/ai', async (req, res) => res.json(await ai.save(req.body ?? {})));
   app.delete('/api/settings/ai/key', async (_req, res) => res.json(await ai.removeKey()));
+  app.delete('/api/settings/ai/override', async (_req, res) => res.json(await aiProfiles.useServer()));
   app.post('/api/settings/ai/models', async (req, res) => res.json({ models: await ai.models(req.body ?? {}) }));
   app.put('/api/settings/learning', (req, res) => res.json(learning.save(req.body ?? {})));
   app.delete('/api/settings/learning/key', (_req, res) => res.json(learning.save({ ...learning.settings(), clearKey: true })));
   app.post('/api/settings/learning/voices', async (req, res) => res.json(await learning.voices()));
   app.put('/api/settings/archive', async (req, res) => res.json(await archive.save(req.body ?? {})));
   app.delete('/api/settings/archive/key', async (_req, res) => res.json(await archive.removeKey()));
-  app.post('/api/imports/anna', (req, res) => res.status(202).json(archive.queue(req.body ?? {})));
-  app.get('/api/imports/anna', (req, res) => res.json({ jobs: archive.list() }));
-  app.post('/api/imports/anna/batch', (req, res) => res.status(202).json(archive.queueBatch(req.body ?? {})));
-  app.post('/api/imports/anna/:id/retry', (req, res) => res.status(202).json(archive.retry(req.params.id)));
-  app.delete('/api/imports/anna/:id', (req, res) => res.json(archive.cancel(req.params.id)));
-  app.get('/api/imports/anna/:id', (req, res) => res.json(archive.job(req.params.id)));
-  app.post('/api/imports/anna/:id/continue', (req, res) => res.status(202).json(archive.continue(req.params.id, req.body)));
-  app.post('/api/imports/anna/:id/file', upload.single('file'), async (req, res) => res.json(await archive.accept(req.params.id, req.file, req.body?.details)));
+  app.post('/api/imports/anna', (req, res) => res.status(202).json(archive.queue(req.body ?? {}, req.visitor)));
+  app.get('/api/imports/anna', (req, res) => res.json({ jobs: archive.list(req.visitor) }));
+  app.post('/api/imports/anna/batch', (req, res) => res.status(202).json(archive.queueBatch(req.body ?? {}, req.visitor)));
+  app.post('/api/imports/anna/:id/retry', (req, res) => res.status(202).json(archive.retry(req.params.id, req.visitor)));
+  app.delete('/api/imports/anna/:id', (req, res) => res.json(archive.cancel(req.params.id, req.visitor)));
+  app.get('/api/imports/anna/:id', (req, res) => res.json(archive.job(req.params.id, req.visitor)));
+  app.post('/api/imports/anna/:id/continue', (req, res) => res.status(202).json(archive.continue(req.params.id, req.body, req.visitor)));
+  app.post('/api/imports/anna/:id/file', upload.single('file'), async (req, res) => res.json(await archive.accept(req.params.id, req.file, req.body?.details, req.visitor)));
 }
 
-app.use('/api', (req, _res, next) => withAI(req.visitor, next));
+if (demo) app.use('/api', (req, _res, next) => withAI(req.visitor, next));
 app.delete('/api/settings/ai-cache', (req, res) => { aiCache.clear(req.visitor); res.json({ cleared: true }); });
 app.get('/api/settings/reader', (req, res) => res.json(readerSettings.get(req.visitor)));
 app.patch('/api/settings/reader', (req, res) => {
@@ -154,13 +209,13 @@ app.patch('/api/settings/reader', (req, res) => {
   if (!result.conflict && result.preferences.cacheAI === false) aiCache.clear(req.visitor);
   res.status(result.conflict ? 409 : 200).json(result);
 });
-app.get('/api/settings/learning', (req, res) => res.json(learning.settings()));
-app.get('/api/settings/audiobookshelf', (_req, res) => res.json(audiobookshelf.settings()));
+app.get('/api/settings/learning', (req, res) => res.json({ ...learning.settings(), ...(accounts.enabled && !isAdministrator(req) ? { configurable: false, managed: true } : {}) }));
+app.get('/api/settings/audiobookshelf', (req, res) => res.json(usesOwnerAudiobookshelf(req) ? audiobookshelf.settings() : { configurable: false, managed: true, connected: false, hasKey: false }));
 app.put('/api/settings/audiobookshelf', async (req, res) => res.json(await audiobookshelf.save(req.body ?? {})));
 if (!demo) app.delete('/api/settings/audiobookshelf/key', async (_req, res) => res.json(await audiobookshelf.removeKey()));
 app.get('/api/audiobookshelf/libraries', async (_req, res) => res.json(await audiobookshelf.libraries()));
 app.get('/api/audiobookshelf/libraries/:id/items', async (req, res) => res.json(await audiobookshelf.items(req.params.id, Number(req.query.page || 0))));
-app.get('/api/books/:id/audiobookshelf', (req, res) => res.json(audiobookshelf.status(library.getBook(req.params.id, req.visitor))));
+app.get('/api/books/:id/audiobookshelf', (req, res) => res.json(usesOwnerAudiobookshelf(req) ? audiobookshelf.status(library.getBook(req.params.id, req.visitor)) : { configurable: false, connected: false, managed: true, jobs: [] }));
 app.post('/api/books/:id/audiobookshelf/export', (req, res) => res.status(202).json(audiobookshelf.queue(library.getBook(req.params.id, req.visitor), 'export', req.body ?? {})));
 app.post('/api/books/:id/audiobookshelf/import', (req, res) => res.status(202).json(audiobookshelf.queue(library.getBook(req.params.id, req.visitor), 'import', req.body ?? {})));
 app.post('/api/books/:id/audiobookshelf/link', async (req, res) => res.json(await audiobookshelf.attach(library.getBook(req.params.id, req.visitor), req.body ?? {})));
@@ -178,7 +233,7 @@ app.get('/api/books/:id/bookmarks', (req, res) => res.json({ bookmarks: library.
 app.get('/api/books/:id/search', (req, res) => res.json(toolsForBook.search(library.getBook(req.params.id, req.visitor), req.query.q)));
 app.get('/api/books/:id/offline', async (req, res) => {
   const pack = await offlinePack(library.getBook(req.params.id, req.visitor), req.query.recording);
-  pack.narration.absConnected = audiobookshelf.settings().connected; res.json(pack);
+  pack.narration.absConnected = (usesOwnerAudiobookshelf(req) && audiobookshelf.settings().connected); res.json(pack);
 });
 app.post('/api/books/:id/bookmarks/remove', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor), existing = library.bookmarks(book.id, req.visitor).find((item) => item.target === req.body?.target);
@@ -195,18 +250,18 @@ app.post('/api/books/:id/question', ...demoGenerations, async (req, res) => {
 app.post('/api/books/:id/bookmarks', (req, res) => res.json(library.saveBookmark(req.params.id, req.body ?? {}, req.visitor)));
 app.delete('/api/books/:id/bookmarks/:bookmark', (req, res) => res.json(library.removeBookmark(req.params.id, req.params.bookmark, req.visitor)));
 app.post('/api/books/:id/ocr', (req, res) => res.status(202).json(ocr.queue(library.getBook(req.params.id, req.visitor), req.body ?? {})));
-app.get('/api/settings/archive', (_, res) => res.json(archive.settings()));
-app.get('/api/settings/sync', (_, res) => res.json(progressSync.settings()));
+app.get('/api/settings/archive', (req, res) => res.json({ ...archive.settings(), ...(accounts.enabled && !isAdministrator(req) ? { configurable: false, managed: true } : {}) }));
+app.get('/api/settings/sync', (req, res) => res.json(progressSync.settings(req.visitor)));
 if (!demo) {
-  app.get('/api/books/:id/progress', async (req, res) => res.json(await progressSync.get(library.getBook(req.params.id))));
+  app.get('/api/books/:id/progress', async (req, res) => res.json(await progressSync.get(library.getBook(req.params.id, req.visitor), req.visitor)));
   app.put('/api/books/:id/progress', async (req, res) => {
-    const result = await progressSync.put(library.getBook(req.params.id), req.body);
+    const result = await progressSync.put(library.getBook(req.params.id, req.visitor), req.body, req.visitor);
     res.status(result.conflict ? 409 : 200).json(result);
   });
 }
-app.get('/api/settings/opds', (_, res) => res.json({
-  available: !demo, path: '/opds', username: !demo && password ? process.env.READER_USER || 'reader' : '',
-  authenticated: !demo && Boolean(password), pageSize: opdsPageSize,
+app.get('/api/settings/opds', (req, res) => res.json({
+  available: !demo, path: '/opds', username: !demo && accounts.enabled ? req.visitor?.username || process.env.READER_USER || 'reader' : '',
+  authenticated: !demo && accounts.enabled, pageSize: opdsPageSize,
 }));
 app.get('/api/storage', async (req, res) => res.json(await library.storage(req.visitor)));
 app.get('/api/reading-time', (req, res) => res.json(readingTime.summary(readingAccount(req.visitor))));
@@ -225,9 +280,9 @@ app.get('/api/library', async (req, res) => {
   const reader = learning.vocabulary.profile(req.visitor);
   res.json({
     ...snapshot,
-    progress: demo ? null : progressSync.snapshot(),
+    progress: demo ? null : progressSync.snapshot(req.visitor),
     storage: await library.storage(req.visitor),
-    archive: { available: !demo, hasKey: archive.settings().hasKey, job: demo ? null : archive.latest(), jobs: demo ? [] : archive.list() },
+    archive: { available: !demo, hasKey: archive.settings().hasKey, job: demo ? null : archive.latest(req.visitor), jobs: demo ? [] : archive.list(req.visitor) },
     vocabulary: { byLanguage: reader.byLanguage, likelyKnown: reader.knownByLanguage, threshold: reader.threshold, reading: reader.reading },
     readingTime: readingTime.summary(readingAccount(req.visitor)),
     books: books.map((book) => ({ ...book, familiarity: learning.vocabulary.familiarity(book, reader) })),
@@ -285,6 +340,8 @@ app.post('/api/books', ...demoUploads, (req, _res, next) => {
 }, upload.single('file'), async (req, res) => {
   let narrationOptions;
   try {
+    const allowed = new Set(['title','author','language','languages','categoryId','coverStyle','autoAudiobook','audiobookDelayMinutes','shared']);
+    if (Object.keys(req.body ?? {}).some((key) => !allowed.has(key))) throw new RequestError(400, 'Too many book details were submitted. Refresh the page and try again.');
     narrationOptions = importNarrationOptions(req.body ?? {});
     if (demo && narrationOptions) throw new RequestError(403, 'Scheduled audiobook generation is available on self-hosted installations.');
   } catch (error) { if (req.file?.path) await rm(req.file.path, { force: true }); throw error; }
@@ -321,7 +378,7 @@ app.delete('/api/books/:id', async (req, res) => {
 app.get('/api/books/:id/learning', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);
   const result = learning.chapters(book), native = nativeLanguage(req.visitor);
-  res.json({ ...result, analysis: learningLanguages(result.analysis, native), chapters: result.chapters.map((chapter) => learningLanguages(chapter, native)),
+  res.json({ ...result, rescanAvailable: result.rescanAvailable && book.canEdit !== false, analysis: learningLanguages(result.analysis, native), chapters: result.chapters.map((chapter) => learningLanguages(chapter, native)),
     familiarity: learning.vocabulary.familiarity(book, learning.vocabulary.profile(req.visitor)) });
 });
 app.post('/api/books/:id/learning', (req, res) => {
@@ -341,15 +398,15 @@ app.get('/api/books/:id/chapters/:key', (req, res) => {
     typeof req.query.recording === 'string' ? req.query.recording : undefined));
 });
 app.get('/api/books/:id/narration', (req, res) => {
-  res.json({ ...learning.narration(library.getBook(req.params.id, req.visitor), typeof req.query.recording === 'string' ? req.query.recording : undefined), absConnected: audiobookshelf.settings().connected });
+  res.json({ ...learning.narration(library.getBook(req.params.id, req.visitor), typeof req.query.recording === 'string' ? req.query.recording : undefined), absConnected: usesOwnerAudiobookshelf(req) && audiobookshelf.settings().connected });
 });
 app.get('/api/books/:id/recordings', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);
-  res.json({ available: !demo, maxUpload: maxAudioUpload, recordings: demo ? [] : learning.recordings.list(book).map((item) => ({ ...item, rescan: learning.rescans.status(book, item.id) })) });
+  res.json({ available: !demo && book.canEdit !== false, maxUpload: maxAudioUpload, recordings: demo ? [] : learning.recordings.list(book).map((item) => ({ ...item, rescan: learning.rescans.status(book, item.id) })) });
 });
 if (!demo) {
   app.post('/api/books/:id/recordings/chapters', (req, _res, next) => {
-    req.audioBook = library.getBook(req.params.id); req.audioUpload = true; req.chapterUpload = true;
+    req.audioBook = library.getBook(req.params.id, req.visitor); req.audioUpload = true; req.chapterUpload = true;
     learning.ensure(req.audioBook);
     if (Number(req.get('Content-Length')) > maxAudioUpload + 1024 * 1024) throw new RequestError(413, 'Chapter files must total 1 GiB or less per recording.');
     next();
@@ -357,34 +414,34 @@ if (!demo) {
     res.status(202).json(await learning.recordings.acceptChapters(req.audioBook, req.files, req.body ?? {}));
   });
   app.get('/api/books/:id/recordings/:recording/chapters/:chapter/file', (req, res) => {
-    const file = learning.recordings.originalChapter(library.getBook(req.params.id), req.params.recording, Number(req.params.chapter));
+    const file = learning.recordings.originalChapter(library.getBook(req.params.id, req.visitor), req.params.recording, Number(req.params.chapter));
     res.type('application/octet-stream').download(file.path, file.name, { dotfiles: 'allow' });
   });
-  app.get('/api/books/:id/ivoox', (req, res) => res.json({ job: learning.ivoox.latest(library.getBook(req.params.id)) }));
+  app.get('/api/books/:id/ivoox', (req, res) => res.json({ job: learning.ivoox.latest(library.getBook(req.params.id, req.visitor)) }));
   app.post('/api/books/:id/ivoox', (req, res) => {
-    const book = library.getBook(req.params.id); learning.ensure(book);
+    const book = library.getBook(req.params.id, req.visitor); learning.ensure(book);
     res.status(202).json({ job: learning.ivoox.queue(book, req.body) });
   });
-  app.delete('/api/books/:id/ivoox', (req, res) => { learning.ivoox.cancel(library.getBook(req.params.id)); res.sendStatus(204); });
-  app.post('/api/books/:id/audio/:recording/rescan', (req, res) => res.status(202).json(learning.rescans.queue(library.getBook(req.params.id), req.params.recording)));
-  app.delete('/api/books/:id/audio/:recording/rescan', (req, res) => res.json(learning.rescans.cancel(library.getBook(req.params.id), req.params.recording)));
+  app.delete('/api/books/:id/ivoox', (req, res) => { learning.ivoox.cancel(library.getBook(req.params.id, req.visitor)); res.sendStatus(204); });
+  app.post('/api/books/:id/audio/:recording/rescan', (req, res) => res.status(202).json(learning.rescans.queue(library.getBook(req.params.id, req.visitor), req.params.recording)));
+  app.delete('/api/books/:id/audio/:recording/rescan', (req, res) => res.json(learning.rescans.cancel(library.getBook(req.params.id, req.visitor), req.params.recording)));
   app.post('/api/books/:id/recordings', (req, _res, next) => {
-    library.getBook(req.params.id);
+    library.getBook(req.params.id, req.visitor);
     req.audioUpload = true;
     if (Number(req.get('Content-Length')) > maxAudioUpload + 16384) return next(new RequestError(413, 'Audio files must be 1 GiB or smaller.'));
     next();
   }, audioUpload.single('file'), async (req, res) => {
-    res.status(201).json(await learning.recordings.accept(library.getBook(req.params.id), req.file, req.body ?? {}));
+    res.status(201).json(await learning.recordings.accept(library.getBook(req.params.id, req.visitor), req.file, req.body ?? {}));
   });
   app.post('/api/books/:id/recordings/:recording/sync', (req, res) => {
-    res.status(202).json(learning.recordings.queue(library.getBook(req.params.id), req.params.recording));
+    res.status(202).json(learning.recordings.queue(library.getBook(req.params.id, req.visitor), req.params.recording));
   });
   app.delete('/api/books/:id/recordings/:recording', async (req, res) => {
-    await learning.recordings.remove(library.getBook(req.params.id), req.params.recording);
+    await learning.recordings.remove(library.getBook(req.params.id, req.visitor), req.params.recording);
     res.sendStatus(204);
   });
   app.get('/api/books/:id/recordings/:recording/file', (req, res) => {
-    const file = learning.recordings.original(library.getBook(req.params.id), req.params.recording);
+    const file = learning.recordings.original(library.getBook(req.params.id, req.visitor), req.params.recording);
     res.type(file.mime).download(file.path, file.name, { dotfiles: 'allow' });
   });
 }
