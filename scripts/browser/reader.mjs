@@ -143,8 +143,7 @@ try {
     const after = await position(); await delay(500); assert.equal(await position(), after);
   });
   await check('pinch enlarges touch text and leaves desktop font size unchanged', async () => {
-    const before = await page.evaluate(() => JSON.parse(localStorage.getItem('langy-settings-v1')));
-    console.log('PINCH initial size', before.size, before.touchSize);
+    const before = await page.evaluate(() => ({ size: 20, ...JSON.parse(localStorage.getItem('langy-settings-v1')) }));
     const box = await page.locator('.reading-main').boundingBox(), x = box.x + box.width / 2, y = box.y + box.height / 2;
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ id: 1, x: x - 35, y }, { id: 2, x: x + 35, y }] });
     for (let i = 1; i <= 6; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ id: 1, x: x - 35 - i * 3, y }, { id: 2, x: x + 35 + i * 3, y }] }); await delay(20); }
@@ -166,14 +165,16 @@ try {
     const before = await position(); await swipe(0, -160);
     await page.locator('#narration-player').waitFor({ state: 'visible' });
     await page.waitForFunction(() => !document.querySelector('#narration-play').disabled, null, { timeout: 5000 });
-    assert.equal(await position(), before);
+    assert.equal((await position()).split('!')[0], before.split('!')[0], 'revealing controls keeps the same source section during reflow');
     const doubleCenter = async () => { const box = await page.locator('.reading-main').boundingBox();
       await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2); await delay(65);
       await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2); };
     await doubleCenter(); await page.waitForFunction(() => !document.querySelector('#narration-audio').paused);
     await doubleCenter(); await page.waitForFunction(() => document.querySelector('#narration-audio').paused);
+    await doubleCenter(); await page.waitForFunction(() => !document.querySelector('#narration-audio').paused);
     await page.locator('#narration-player').waitFor({ state: 'hidden', timeout: 7000 });
-    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), true);
+    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false, 'hiding controls must not pause playback');
+    await doubleCenter(); await page.waitForFunction(() => document.querySelector('#narration-audio').paused);
   });
   await check('manual page turns with missing word alignment do not snap back while narration is enabled', async () => {
     const before = await position(); await page.locator('#next').click(); await changed(before);

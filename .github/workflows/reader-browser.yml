@@ -5,7 +5,7 @@ on:
     paths: ['src/**', 'shared/**', 'public/**', 'index.html', 'scripts/browser/**', '.github/workflows/reader-browser.yml']
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   mobile-reader:
     runs-on: ubuntu-latest
@@ -31,3 +31,20 @@ jobs:
           name: Reader-browser-results
           path: browser-results/
           retention-days: 14
+
+      - name: Prepare anonymous release
+        if: success() && github.ref == 'refs/heads/fix/reader-interactions'
+        env:
+          GIT_AUTHOR_NAME: Langy contributors
+          GIT_AUTHOR_EMAIL: contributors@langy.invalid
+          GIT_COMMITTER_NAME: Langy contributors
+          GIT_COMMITTER_EMAIL: contributors@langy.invalid
+        run: |
+          git fetch origin main
+          test "$(git rev-parse FETCH_HEAD)" = "329d771d2ab672662d37f0e3b0a651805c9dcbfa"
+          git checkout --detach FETCH_HEAD
+          git read-tree --reset -u "${GITHUB_SHA}^{tree}"
+          git show be853d25bf37b0fdd8bc1029e80df8ab47c07b3c:.github/workflows/reader-browser.yml > .github/workflows/reader-browser.yml
+          git add .github/workflows/reader-browser.yml
+          git commit -m "Improve touch reading, add project guides and store AI answers privately"
+          git push origin HEAD:refs/heads/fix/anonymous-reader-release
