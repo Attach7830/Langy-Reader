@@ -25,7 +25,7 @@ const run = promisify(execFile);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const asText = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 
-export async function openLearning(dir, library, demo, ai, { autoRepair = true, nativeLanguage = () => '' } = {}) {
+export async function openLearning(dir, library, demo, ai, { autoRepair = true, nativeLanguage = () => '', withAI = (_visitor, task) => task() } = {}) {
   const folder = join(dir, 'narration');
   await mkdir(folder, { recursive: true });
   const db = new DatabaseSync(join(dir, 'learning.sqlite'));
@@ -77,7 +77,11 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
   migrateSpanishTaggedMorphology(db);
   migrateLexicalFilters(db);
   const vocabulary = readerVocabulary(db, { completedBooks: library.readBooks ? (visitor) => library.readBooks(visitor) : null, nativeLanguage });
-  const estimates = readingEstimates({ db, ai });
+  const estimates = readingEstimates({ db, ai, withAI, visitorForBook(id) {
+    const row = db.prepare('SELECT owner FROM analyses WHERE book=?').get(id);
+    const book = library.getBook(id, { id: row?.owner });
+    return { id: book.owner, expires: book.expires };
+  } });
   let config = {
     baseUrl: process.env.READER_KOKORO_URL || '', voice: process.env.READER_KOKORO_VOICE || 'ef_dora',
     model: 'kokoro', speed: 1, apiKey: process.env.READER_KOKORO_API_KEY || '', autoLanguageVoices: true, voicesByLanguage: {},

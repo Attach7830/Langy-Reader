@@ -51,6 +51,7 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
   const answer = bubble.querySelector('[data-word-answer]');
   const lemmaLabel = bubble.querySelector('[data-word-lemma]');
   const cache = new Map();
+  const boundRoots = new WeakMap();
   let active, controller, timer, interacting = false;
   const selections = new Map();
   let choosers = [], activeChooser;
@@ -165,10 +166,11 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
       }
     }
     heading.textContent = item.word;
-    display(cache.get(key) || { text: 'Looking up word…', language: 'en' });
+    const reuse = preferences().cacheAI !== false;
+    display(reuse && cache.get(key) || { text: 'Looking up word…', language: 'en' });
     bubble.hidden = false;
     place(item.rect);
-    if (cache.has(key)) return;
+    if (reuse && cache.has(key)) return;
 
     const lookup = new AbortController();
     controller = lookup;
@@ -182,7 +184,7 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
         const local = await request('/api/mandarin/word', { method: 'POST', signal: lookup.signal, body: mandarin });
         if (active !== item) return;
         item.resolvedWord = local.word;
-        const result = { mandarin: local };
+        const result = { mandarin: local }; let complete = true;
         display(result); place(item.rect);
         if (!(mode === 'translation' && /^en(?:-|$)/u.test(target))) {
           try {
@@ -191,9 +193,9 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
             if (useContextHelp && extra.status === 'missing' && passage.trim()) extra = { ...await askWord('context', passage), status: 'context' };
             Object.assign(result, extra);
           }
-          catch (error) { if (error.name === 'AbortError') throw error; result.text = error.message; }
+          catch (error) { if (error.name === 'AbortError') throw error; complete = false; result.text = error.message; }
         }
-        cache.set(key, result);
+        if (reuse && preferences().cacheAI !== false && complete) cache.set(key, result);
         if (cache.size > 220) cache.delete(cache.keys().next().value);
         if (active === item) { display(result); place(item.rect); }
         return;
@@ -206,7 +208,7 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
         place(item.rect);
         result = { ...await askWord('context', context), status: 'context' };
       }
-      cache.set(key, result);
+      if (reuse && preferences().cacheAI !== false) cache.set(key, result);
       if (cache.size > 220) cache.delete(cache.keys().next().value);
       if (active === item) display(result);
     } catch (error) {
@@ -226,6 +228,10 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
     let segmenter;
     try { segmenter = new Intl.Segmenter(language, { granularity: 'word' }); }
     catch { /* Use the Unicode word pattern if segmentation is unavailable. */ }
+    let roots = boundRoots.get(root.ownerDocument);
+    if (!roots) { roots = new Map(); boundRoots.set(root.ownerDocument, roots); }
+    for (const [previous] of roots) if (!previous.isConnected) roots.delete(previous);
+    roots.set(root, segmenter);
 
     function inspect(event, tap = false) {
       if (event.pointerType === 'touch' && !tap) return;
@@ -250,10 +256,11 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
     root.addEventListener('pointerdown', (event) => { if (event.pointerType !== 'touch') clear(); }, options);
     root.addEventListener('pointerup', (event) => { if (event.pointerType === 'touch') inspect(event, true); }, options);
     root.addEventListener('click', (event) => {
+      if (event.pointerType === 'touch' || event.sourceCapabilities?.firesTouchEvents) return;
       const item = wordAt(root, event, segmenter);
       if (item) seekWord(item.node, item.index);
     }, options);
-    return () => listeners.abort();
+    return () => { roots.delete(root); listeners.abort(); };
   }
 
   function keydown(event) {
@@ -264,5 +271,9 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
     if (!current) return false;
     event.preventDefault(); current.cycle(event.key === 'ArrowDown' ? 1 : -1); return true;
   }
-  return { clear, bind, keydown, reset: () => { clear(); cache.clear(); } };
+  return { clear, bind, keydown, hitTest(event) {
+    const doc = event.target?.ownerDocument;
+    for (const [root, segmenter] of boundRoots.get(doc) || []) if (root.contains(event.target) && wordAt(root, event, segmenter)) return true;
+    return false;
+  }, reset: () => { clear(); cache.clear(); } };
 }

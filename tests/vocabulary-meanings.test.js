@@ -25,10 +25,10 @@ test('vocabulary meanings use book context, dictionary synonyms and a labelled S
   const translated = await generate(book, { ...body, mode: 'translation' });
   assert.equal(translated.text, 'book'); assert.equal(translated.language, 'en');
   assert.equal(calls[1].source.example.text, 'Leí varios libros.');
-  await generate(book, { ...body, mode: 'translation' }); assert.equal(calls.length, 2, 'successful meanings are cached');
+  await generate(book, { ...body, mode: 'translation' }); assert.equal(calls.length, 3, 'AI answer reuse belongs to the account-scoped generation service');
   entry.example.text = 'El libro era antiguo.';
-  await generate(book, { ...body, mode: 'translation' }); assert.equal(calls.length, 3, 'a changed book example invalidates the meaning');
-  model = 'different-local-model'; await generate(book, { ...body, mode: 'translation' }); assert.equal(calls.length, 4);
+  await generate(book, { ...body, mode: 'translation' }); assert.equal(calls.length, 4, 'a changed book example reaches the generation service');
+  model = 'different-local-model'; await generate(book, { ...body, mode: 'translation' }); assert.equal(calls.length, 5);
   await assert.rejects(generate(book, { ...body, mode: '__proto__' }), { status: 422 });
 });
 

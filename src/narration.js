@@ -1,6 +1,7 @@
 import { $, api, element } from './ui.js';
 import { readerDeadline } from './reader-navigation.js';
 import { deviceMediaControls } from './audio-media-session.js';
+import { visibleAudioPosition } from './audio-page-position.js';
 
 const timeLabel = (value) => {
   const seconds = Math.max(0, Math.floor(value || 0));
@@ -29,7 +30,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   let recording, recordingBook, connection = false, previewAudio = false, unit, local, descriptor, timed = [], timingMap = new Map();
   let lifecycle = 0, controller, poll, animation, bookRequest, following = false, followAgain = false, forceFollow = false;
   let wantPlaying = false, enabled = false, initialSeek = true, highlighted, highlightedWindow;
-  let manualNavigation = false, navigationVersion = 0;
+  let manualNavigation = false, navigationVersion = 0, manualPage;
   const cache = new Map();
   const ready = () => recording?.state === 'ready';
   const playbackSpeed = () => Number.isFinite(audio.playbackRate) && audio.playbackRate > 0 ? audio.playbackRate : 1;
@@ -121,12 +122,9 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     if (latest?.key === current.key) bindLocal(latest, { ...next, recordingId });
   }
   function firstVisibleTime() {
-    for (const stamp of timed) {
-      const word = timingMap.get(stamp.index);
-      if (word && local.visible(word)) return stamp.start;
-    }
     const segment = segmentFor(unit?.key);
-    if (segment) return segment.start;
+    const position = visibleAudioPosition(local, timed, timingMap, segment);
+    if (position) return position.time;
     const ordinal = Number(unit?.key?.split(':')[1]);
     return recording?.segments?.find((part) => Number(part.key.split(':')[1]) > ordinal)?.start ?? recording?.duration ?? 0;
   }
@@ -158,9 +156,11 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
         if (navigation !== navigationVersion || manualNavigation) break;
         if (segmentAt(audio.currentTime)?.key !== segment.key) { followAgain = true; continue; }
         if (unit?.key !== segment.key || !local) continue;
-        const stamp = timed[Math.max(0, atTime(timed, audio.currentTime))];
+        const stamp = timed[Math.max(0, atTime(timed, audio.currentTime + .01))];
         const word = stamp && timingMap.get(stamp.index), range = word && local.rangeFor(word);
-        if (range && (forced || !local.visible(word))) await renderer()?.revealWord(range);
+        const behindPage = manualPage?.key === segment.key && word?.from < manualPage.from && audio.currentTime >= manualPage.time - .05;
+        if (manualPage && (manualPage.key !== segment.key || word?.from >= manualPage.from)) manualPage = undefined;
+        if (range && !behindPage && (forced || !local.visible(word))) await renderer()?.revealWord(range, { valid: () => epoch === lifecycle && navigation === navigationVersion && !manualNavigation });
         if (epoch !== lifecycle) break;
         drawHighlight();
       }
@@ -171,8 +171,9 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     try { await audio.play(); }
     catch { wantPlaying = false; status.textContent = 'Press Play to start narration.'; }
   }
-  function seekTo(time) {
+  function seekTo(time, { page = false } = {}) {
     if (!enabled || !ready() || !Number.isFinite(audio.duration)) return;
+    if (!page) manualPage = undefined;
     initialSeek = false;
     audio.currentTime = Math.max(0, Math.min(recording.duration, time));
     controls(); drawHighlight(); void follow(true);
@@ -271,7 +272,11 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
       await loadCurrent();
       if (navigation !== navigationVersion || epoch !== lifecycle) return;
       syncInitialPosition();
-      if (seekToPage && (!following || manualNavigation) && enabled && ready()) seekTo(firstVisibleTime());
+      if (seekToPage && (!following || manualNavigation) && enabled && ready()) {
+        const position = visibleAudioPosition(local, timed, timingMap, segmentFor(unit?.key));
+        if (position) manualPage = { ...position, key: unit?.key };
+        seekTo(position?.time ?? firstVisibleTime(), { page: true });
+      }
       else { drawHighlight(); void follow(); }
     } catch (error) { if (!previewAudio && error.name !== 'AbortError') status.textContent = error.message; }
   }
@@ -285,7 +290,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     recording = unit = descriptor = local = recordingBook = bookRequest = undefined;
     timed = []; timingMap.clear(); cache.clear();
     following = followAgain = forceFollow = wantPlaying = false;
-    manualNavigation = false; navigationVersion++;
+    manualNavigation = false; manualPage = undefined; navigationVersion++;
     initialSeek = true;
     previewAudio = false;
     recordingCount = 0;
@@ -365,6 +370,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   audio.addEventListener('error', () => { if (audio.getAttribute('src')) status.textContent = 'This book recording could not be played. Try generating it again.'; });
   return {
     refresh, apply, stop, toggle, skipBy,
+    get ready() { return ready(); },
     beginNavigation() { manualNavigation = true; return ++navigationVersion; },
     async endNavigation(version, { seekToPage = true } = {}) {
       if (version !== navigationVersion) return;
@@ -374,7 +380,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
       if (seekToPage && enabled && ready() && segment && unit?.key !== current?.key) seekTo(segment.start);
       try { if (enabled && ready()) await readerDeadline(() => refresh({ seekToPage }), { signal: controller?.signal, milliseconds: 4000 }); }
       catch (error) { if (version === navigationVersion && error?.name !== 'AbortError') status.textContent = 'Waiting for this page’s audio timing. You can keep reading.'; }
-      finally { if (version === navigationVersion) { manualNavigation = false; void follow(true); } }
+      finally { if (version === navigationVersion) { manualNavigation = false; void follow(); } }
     },
     playbackPosition() { return ready() && audio.getAttribute('src') === recording.url && Number.isFinite(audio.duration)
       ? { book: book().id, recording: recording.id, time: audio.currentTime, duration: recording.duration, absConnected } : null; },

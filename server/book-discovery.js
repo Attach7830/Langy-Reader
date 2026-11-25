@@ -47,7 +47,7 @@ async function jsonResponse(response) {
 }
 
 export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl = process.env.READER_SEARCH_URL ?? 'http://search:8080',
-  fetcher = (...args) => fetch(...args), catalogueDelay = 1100, timeoutMs = 240000 } = {}) {
+  fetcher = (...args) => fetch(...args), catalogueDelay = 1100, timeoutMs = 240000, withAI = (_visitor, task) => task() } = {}) {
   const db = new DatabaseSync(join(dir, 'discovery.sqlite'));
   db.exec(`PRAGMA journal_mode=WAL;
     CREATE TABLE IF NOT EXISTS discoveries (
@@ -93,7 +93,7 @@ export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl = 
     if (!books.length) throw new RequestError(422, 'Add a book to your library before requesting recommendations.');
     const input = preferences(body, books), saved = rowFor(visitor), digest = signature(books, input);
     if (busy(saved?.state)) return status(visitor);
-    if (!body.refresh && saved?.state === 'ready' && saved.signature === digest && Date.now() - saved.created < 86400000) return status(visitor);
+    if (ai.reuseEnabled?.() !== false && !body.refresh && saved?.state === 'ready' && saved.signature === digest && Date.now() - saved.created < 86400000) return status(visitor);
     if (db.prepare("SELECT count(*) AS n FROM discoveries WHERE state IN ('queued','scanning','searching','ranking')").get().n >= 12)
       throw new RequestError(503, 'Book discovery is busy. Try again shortly.');
     const config = ai.settings();
@@ -207,7 +207,7 @@ export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl = 
     if (!row) return;
     active = { id: row.id, control: new AbortController() };
     const signal = AbortSignal.any([active.control.signal, AbortSignal.timeout(timeoutMs)]);
-    running = abortable(() => generate(row, signal), signal).catch((error) => {
+    running = abortable(() => withAI(row.owner ? { id: row.owner, expires: row.expires } : undefined, () => generate(row, signal)), signal).catch((error) => {
       if (stopped || active?.control.signal.aborted) return;
       const message = error instanceof RequestError ? error.message : error.name === 'TimeoutError' ? 'Book discovery timed out. Retry or choose a faster local model.' : 'Book discovery failed. Check the AI connection and search service, then retry.';
       db.prepare("UPDATE discoveries SET state='error',error=? WHERE owner=? AND id=? AND state!='cancelled'").run(message, row.owner, row.id);

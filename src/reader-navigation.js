@@ -14,7 +14,8 @@ export function pageTurnQueue({ perform, busy = () => {}, maxPending = 2 }) {
   }
   return {
     request(direction, target, context) {
-      if (running && target != null) return Promise.resolve(false);
+      if (running && target != null && context?.audio) return Promise.resolve(false);
+      if (target != null) pending.splice(0).forEach((item) => item.resolve(false));
       if (pending.length >= maxPending) return Promise.resolve(false);
       return new Promise((resolve, reject) => { pending.push({ direction, target, context, resolve, reject }); if (!running) void drain(generation); });
     },

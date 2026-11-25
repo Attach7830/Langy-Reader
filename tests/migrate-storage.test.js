@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { verifyStorage } from '../server/storage-location.js';
 const run = promisify(execFile);
-const originalSettings = "READER_USER=ian\nREADER_PASSWORD='test$literal#password'\nREADER_PORT=8088\n";
+const originalSettings = "READER_USER=reader\nREADER_PASSWORD='test$literal#password'\nREADER_PORT=8088\n";
 
 // Model Docker's mounts and process outcomes; filesystem copying, byte comparison,
 // dotenv edits, backup permissions and the script's recovery traps execute for real.

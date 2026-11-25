@@ -1,4 +1,4 @@
-import { $, element } from './ui.js';
+import { $, element, api } from './ui.js';
 
 export function bookContents({ renderer, book, go, focus = () => {} }) {
   const dialog = $('#contents-dialog'), body = $('#contents-body');
@@ -40,6 +40,19 @@ export function bookContents({ renderer, book, go, focus = () => {} }) {
       body.append(form);
     }
     if (entries.length) body.append(tocList(entries, 'Book contents'));
+    const saved = element('details', 'toc-bookmarks'), savedList = element('div', 'form-stack');
+    saved.append(element('summary', '', 'Bookmarks'), savedList); body.append(saved); let bookmarksStarted = false;
+    saved.addEventListener('toggle', async () => {
+      if (!saved.open || bookmarksStarted) return; bookmarksStarted = true;
+      savedList.replaceChildren(element('p', 'field-note', 'Loading bookmarks…'));
+      try {
+        const result = await api(`/api/books/${book().id}/bookmarks`); if (renderer() !== current || !savedList.isConnected) return;
+        savedList.replaceChildren(...(result.bookmarks?.length ? result.bookmarks.map((mark) => {
+          const button = element('button', 'toc-item', mark.label || mark.note || 'Bookmark'); button.type = 'button'; button.setAttribute('data-user-content', '');
+          button.addEventListener('click', () => jump(mark.target)); return button;
+        }) : [element('p', 'field-note', 'No bookmarks yet.')]));
+      } catch { savedList.replaceChildren(element('p', 'field-note', 'Could not load bookmarks.')); bookmarksStarted = false; }
+    });
     if (current.readingOutline) {
       const detail = element('details', 'toc-outline'), output = element('div', 'toc-outline-body');
       detail.append(element('summary', '', 'Reading outline'), output); body.append(detail);

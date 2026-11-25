@@ -2,6 +2,7 @@ import { $, api, element, message, toast } from './ui.js';
 import { offlineOwner, packCaches, packPrefix } from './offline-store.js';
 import { readingPackQueue } from './offline-download-queue.js';
 import { fetchPackResource, measuredResponse, downloadProgressLabel } from './offline-transfer.js';
+import { notifyDownloadedBooks } from './book-source.js';
 
 let shellUpdate;
 const fetchOK = fetchPackResource;
@@ -76,7 +77,7 @@ export async function saveReadingPack(book, { recording, audio, progress = () =>
     if (offlineOwner() !== owner) throw new Error('The signed-in account changed during this download. Retry from the current account.');
     await cache.put('/__langy_pack_ready__', new Response(JSON.stringify({ book: book.id, owner, created: Date.now() })));
     for (const old of await packCaches()) if (old !== name && await (await caches.open(old)).match(`/api/books/${book.id}/offline-data`)) await caches.delete(old);
-    await navigator.storage?.persist?.(); return pack;
+    await navigator.storage?.persist?.(); notifyDownloadedBooks(); return pack;
   } catch (error) { await caches.delete(name); if (error.name === 'QuotaExceededError') throw new Error('This device has insufficient browser storage. Remove an offline pack or download without audio.'); throw error; }
 }
 
@@ -87,6 +88,7 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
   const unsubscribe = queue.subscribe((jobs) => {
     const active = jobs.find((job) => job.state === 'downloading'), remaining = jobs.filter(pending), waiting = jobs.some((job) => job.state === 'waiting');
     $('#offline-queue-count').textContent = remaining.length ? ` (${remaining.length})` : '';
+    if ($('#mobile-download-count')) { $('#mobile-download-count').textContent = String(remaining.length); $('#mobile-download-count').hidden = !remaining.length; }
     message('#offline-status', active ? `${active.book.title} · ${downloadProgressLabel(active.progress)}${remaining.length > 1 ? ` · ${remaining.length - 1} queued` : ''}`
       : waiting ? 'Book downloads are waiting for a connection. Open Downloads to retry.' : jobs.some((job) => job.state === 'failed') ? 'A book download needs attention. Open Downloads to retry.' : '');
     const version = JSON.stringify(jobs.map((job) => [job.id, job.state, job.error, job.book.title]));
@@ -130,6 +132,7 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
   window.addEventListener('langy-offline-account', accountReady);
   window.addEventListener('online', resume); window.addEventListener('focus', resume);
   $('#open-offline-downloads').addEventListener('click', () => { $('#downloads-dialog').showModal(); void resume(); });
+  document.querySelectorAll('[data-open-downloads]').forEach((button) => button.addEventListener('click', () => { $('#downloads-dialog').showModal(); void resume(); }));
   $('#offline-save').addEventListener('click', async () => {
     if (!selected || loading) return;
     $('#offline-save').disabled = true; message('#offline-error');
@@ -143,6 +146,7 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
     try {
       for (const name of await packCaches()) if (await (await caches.open(name)).match(`/api/books/${selected.id}/offline-data`)) await caches.delete(name);
       for (const job of queue.snapshot()) if (job.book.id === selected.id) await queue.remove(job.id);
+      notifyDownloadedBooks();
       message('#offline-progress', 'Offline copy removed from this device. The server’s copy is unchanged.');
     } catch (error) { message('#offline-error', error.message); }
   });

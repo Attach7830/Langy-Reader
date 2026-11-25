@@ -1,154 +1,140 @@
-const interactive = 'a, button, input, select, textarea, label, summary, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="link"], [data-page-navigation-ignore], .reader-message';
+const interactive = 'a,button,input,select,textarea,label,summary,[contenteditable]:not([contenteditable="false"]),[role="button"],[role="link"],[data-page-navigation-ignore],.reader-message';
+const doubleTapDelay = 320;
 
-export function pageNavigation({ host, turn, enabled = () => true, canSwipe = () => true, canTap = () => true,
-  canCenterTap = () => false, centerTap = () => {}, now = Date.now }) {
-  const bindings = new Map(), pointers = new Set();
-  let gesture, multiple = false, suppressUntil = 0, pointerSeen = false;
-  const viewport = host.ownerDocument.defaultView.visualViewport;
-  const nativeZoomed = () => (viewport?.scale || 1) > 1.01;
-  function updateTouchPolicy() {
-    host.classList.toggle('reader-native-zoom', nativeZoomed());
-    for (const [root] of bindings) if (root.nodeType === 9) root.documentElement.style.setProperty('touch-action', nativeZoomed() ? 'auto' : 'pan-y pinch-zoom', 'important');
-  }
-  const selected = (doc) => [doc, host.ownerDocument].some((item) => {
-    const selection = item.getSelection?.(); return selection && !selection.isCollapsed;
-  });
+export function pageNavigation({ host, turn, enabled = () => true, canSwipe = () => true, canDoubleTap = () => true,
+  canCenterTap = () => false, centerTap = () => {}, centerDoubleTap, wordAt = () => false, swipeUp, swipeDown,
+  pinch: onPinch, canPan = () => false, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout }) {
+  const bindings = new Map(), pointers = new Map(), doc = host.ownerDocument, viewport = doc.defaultView.visualViewport;
+  const originalTouch = host.style.touchAction;
+  let gesture, pinch, multi = false, suppressUntil = 0, lastTap, tapTimer;
+  const zoomed = () => (viewport?.scale || 1) > 1.01;
   const ignored = (target) => Boolean((target?.nodeType === 1 ? target : target?.parentElement)?.closest?.(interactive));
-  function point(event, doc) {
-    let x = event.clientX, y = event.clientY, win = doc.defaultView;
+  const selection = (source) => [source, doc].some((item) => item.getSelection?.() && !item.getSelection().isCollapsed);
+  const inside = (p, rect) => p && p.x >= rect.left && p.x <= rect.right && p.y >= rect.top && p.y <= rect.bottom;
+  const consume = (event) => { if (event.cancelable) event.preventDefault(); event.stopImmediatePropagation(); };
+  const clearTap = () => { clearTimer(tapTimer); tapTimer = undefined; lastTap = undefined; };
+  function point(event, source) {
+    let x = event.clientX, y = event.clientY, win = source.defaultView;
     if (!win) return null;
-    while (win && win !== host.ownerDocument.defaultView) {
-      const frame = win.frameElement;
-      if (!frame?.isConnected || !host.contains(frame)) return null;
-      const rect = frame.getBoundingClientRect();
-      const scaleX = frame.offsetWidth ? rect.width / frame.offsetWidth : 1;
-      const scaleY = frame.offsetHeight ? rect.height / frame.offsetHeight : 1;
-      x = rect.left + (x + frame.clientLeft) * scaleX;
-      y = rect.top + (y + frame.clientTop) * scaleY;
+    while (win !== doc.defaultView) {
+      const frame = win.frameElement; if (!frame?.isConnected || !host.contains(frame)) return null;
+      const box = frame.getBoundingClientRect();
+      x = box.left + (x + frame.clientLeft) * (frame.offsetWidth ? box.width / frame.offsetWidth : 1);
+      y = box.top + (y + frame.clientTop) * (frame.offsetHeight ? box.height / frame.offsetHeight : 1);
       win = frame.ownerDocument.defaultView;
     }
     return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
   }
-  function inside(position, rect) {
-    return position && position.x >= rect.left && position.x <= rect.right && position.y >= rect.top && position.y <= rect.bottom;
+  function zone(p) {
+    const box = host.getBoundingClientRect(); if (!inside(p, box)) return null;
+    return p.x < box.left + box.width / 3 ? -1 : p.x > box.left + box.width * 2 / 3 ? 1 : 0;
   }
-  function edge(position) {
-    const rect = host.getBoundingClientRect();
-    if (!rect.width || !inside(position, rect)) return 0;
-    const width = Math.min(64, Math.max(18, rect.width * .055));
-    return position.x <= rect.left + width ? -1 : position.x >= rect.right - width ? 1 : 0;
+  function policy() {
+    const action = zoomed() || canPan() ? 'auto' : 'none';
+    host.style.touchAction = action; host.classList.toggle('reader-native-zoom', zoomed());
+    const css = 'html,body,body * {touch-action:' + action + ' !important;}';
+    for (const { style } of bindings.values()) if (style && style.textContent !== css) style.textContent = css;
   }
-  function center(position) {
-    const rect = host.getBoundingClientRect();
-    return inside(position, rect) && position.x >= rect.left + rect.width / 3 && position.x <= rect.right - rect.width / 3;
+  function reset() {
+    clearTap(); if (pinch) onPinch?.({ phase: 'cancel', factor: pinch.factor });
+    gesture = pinch = undefined; pointers.clear(); multi = false; suppressUntil = 0;
   }
-  function consume(event, prevent = false) {
-    if (prevent && event.cancelable) event.preventDefault();
-    event.stopImmediatePropagation();
+  function pair() {
+    const [a, b] = [...pointers.values()]; if (!a || !b) return null;
+    return { distance: Math.hypot(a.x - b.x, a.y - b.y), center: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
   }
-  function resetGesture() { gesture = undefined; pointers.clear(); multiple = false; suppressUntil = 0; pointerSeen = false; }
+  function release(event, source) {
+    const id = event.pointerId ?? 1, current = point(event, source), previous = gesture;
+    pointers.delete(id);
+    if (multi) {
+      consume(event); suppressUntil = now() + 700;
+      if (!pointers.size) {
+        const value = pinch; pinch = gesture = undefined; multi = false;
+        if (value) onPinch?.({ phase: value.changed ? 'end' : 'cancel', factor: value.factor, center: value.center });
+      }
+      return;
+    }
+    if (!previous || previous.id !== id) return;
+    gesture = undefined;
+    if (!current || !enabled() || selection(source) || now() - previous.time > 1000) { clearTap(); suppressUntil = now() + 700; return; }
+    const dx = current.x - previous.start.x, dy = current.y - previous.start.y;
+    const distance = Math.hypot(dx, dy), elapsed = now() - previous.time;
+    const threshold = Math.min(72, Math.max(38, previous.width * .12));
+    if (previous.type === 'touch' && !zoomed() && !canPan() && distance >= threshold) {
+      let handled = false;
+      if (Math.abs(dx) > Math.abs(dy) * 1.4 && canSwipe()) { clearTap(); consume(event); turn(dx < 0 ? 1 : -1); handled = true; }
+      else if (Math.abs(dy) > Math.abs(dx) * 1.5 && (dy < 0 ? swipeUp : swipeDown)) { clearTap(); consume(event); (dy < 0 ? swipeUp : swipeDown)(); handled = true; }
+      if (handled) { suppressUntil = now() + 700; return; }
+    }
+    if (previous.moved || distance > 10 || elapsed > 550 || ignored(event.target)) { clearTap(); suppressUntil = now() + 700; if (previous.type === 'touch') consume(event); return; }
+    if (previous.type !== 'touch' || zoomed()) return;
+    const side = zone(current); if (side == null || side !== zone(previous.start)) return;
+    const doubled = lastTap && lastTap.doc === source && lastTap.side === side && now() - lastTap.time <= doubleTapDelay
+      && Math.hypot(current.x - lastTap.point.x, current.y - lastTap.point.y) <= 30;
+    if (doubled && (side === 0 ? centerDoubleTap : canDoubleTap())) {
+      clearTap(); consume(event); suppressUntil = now() + 700;
+      if (side === 0) centerDoubleTap(); else turn(side);
+      return;
+    }
+    clearTap(); lastTap = { doc: source, side, point: current, time: now() };
+    if (side === 0 && canCenterTap() && !wordAt(event)) tapTimer = setTimer(() => {
+      const pending = lastTap; clearTap();
+      if (pending && enabled() && !selection(source)) centerTap();
+    }, doubleTapDelay);
+  }
   function bind(root) {
     if (!root || bindings.has(root)) return bindings.get(root)?.unbind || (() => {});
-    for (const binding of [...bindings.values()]) if (binding.frame && !binding.frame.isConnected) binding.unbind();
-    const doc = root.nodeType === 9 ? root : root.ownerDocument, frame = doc.defaultView?.frameElement;
-    const style = root.nodeType === 9 ? doc.documentElement.style : null;
-    const originalTouch = style?.getPropertyValue('touch-action'), originalPriority = style?.getPropertyPriority('touch-action');
-    if (style) style.setProperty('touch-action', nativeZoomed() ? 'auto' : 'pan-y pinch-zoom', 'important');
-    const listeners = [];
-    const listen = (type, handler, passive = false) => {
-      root.addEventListener(type, handler, { capture: true, passive }); listeners.push([type, handler]);
-    };
+    for (const item of [...bindings.values()]) if (item.frame && !item.frame.isConnected) item.unbind();
+    const source = root.nodeType === 9 ? root : root.ownerDocument, frame = source.defaultView?.frameElement;
+    const style = root.nodeType === 9 ? source.createElement('style') : null;
+    if (style) source.head?.append(style);
+    const listeners = [], listen = (name, handler) => { root.addEventListener(name, handler, { capture: true, passive: false }); listeners.push([name, handler]); };
     listen('pointerdown', (event) => {
-      pointerSeen = true;
-      if (!pointers.size) { suppressUntil = 0; gesture = undefined; multiple = false; }
-      pointers.add(event.pointerId ?? 1);
-      if (pointers.size > 1 || event.isPrimary === false) { multiple = true; return; }
-      const start = point(event, doc), rect = host.getBoundingClientRect();
-      if (!enabled() || ignored(event.target) || event.defaultPrevented || event.button > 0 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || selected(doc) || !inside(start, rect)) return;
-      gesture = { id: event.pointerId ?? 1, doc, start, time: now(), type: event.pointerType || 'mouse',
-        swipe: canSwipe() && !nativeZoomed(), width: rect.width, moved: false, vertical: false };
-    }, true);
+      policy();
+      if (!pointers.size) { multi = false; gesture = undefined; suppressUntil = 0; }
+      const start = point(event, source), rect = host.getBoundingClientRect();
+      if (!enabled() || event.button > 0 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || !inside(start, rect)) { clearTap(); return; }
+      pointers.set(event.pointerId ?? 1, start);
+      if (pointers.size > 1 || event.isPrimary === false) {
+        multi = true; gesture = undefined; clearTap(); const value = pair();
+        if (!pinch && onPinch && !zoomed() && !canPan() && value?.distance > 8) {
+          pinch = { initial: value.distance, factor: 1, center: value.center, changed: false };
+          onPinch({ phase: 'start', factor: 1, center: value.center });
+        }
+        return;
+      }
+      if (ignored(event.target) || event.defaultPrevented || selection(source)) { clearTap(); return; }
+      const side = zone(start);
+      if (event.pointerType === 'touch' && lastTap?.doc === source && lastTap.side === side
+        && now() - lastTap.time <= doubleTapDelay && Math.hypot(start.x - lastTap.point.x, start.y - lastTap.point.y) <= 30
+        && (side === 0 ? centerDoubleTap : canDoubleTap()) && event.cancelable) {
+        // Native multi-tap selection starts on pointerdown, before our
+        // pointerup action. Keep it from swallowing consecutive double taps.
+        event.preventDefault();
+      }
+      gesture = { id: event.pointerId ?? 1, start, time: now(), type: event.pointerType || 'mouse', width: rect.width, moved: false };
+    });
     listen('pointermove', (event) => {
-      if (!gesture || gesture.id !== (event.pointerId ?? 1) || gesture.doc !== doc) return;
-      const current = point(event, doc);
-      if (!current) return;
-      const dx = Math.abs(current.x - gesture.start.x), dy = Math.abs(current.y - gesture.start.y);
-      if (dx > 10 || dy > 10) gesture.moved = true;
-      if (dy > 12 && dy > dx) gesture.vertical = true;
-    }, true);
-    listen('pointerup', (event) => {
-      pointers.delete(event.pointerId ?? 1);
-      const current = point(event, doc), previous = gesture;
-      if (!previous || previous.id !== (event.pointerId ?? 1) || previous.doc !== doc) {
-        if (multiple) { suppressUntil = now() + 700; consume(event); }
-        if (!pointers.size) { multiple = false; gesture = undefined; }
-        return;
+      const current = point(event, source), id = event.pointerId ?? 1;
+      if (!current || !pointers.has(id)) return;
+      pointers.set(id, current);
+      if (pinch && pointers.size >= 2) {
+        const value = pair(); pinch.factor = Math.max(.4, Math.min(3, value.distance / pinch.initial)); pinch.center = value.center;
+        pinch.changed ||= Math.abs(Math.log(pinch.factor)) > .035;
+        consume(event); onPinch({ phase: 'move', factor: pinch.factor, center: value.center }); return;
       }
-      gesture = undefined;
-      const wasMultiple = multiple;
-      if (!pointers.size) multiple = false;
-      const dx = current ? current.x - previous.start.x : 0, dy = current ? current.y - previous.start.y : 0;
-      const moved = previous.moved || Math.abs(dx) > 10 || Math.abs(dy) > 10;
-      const elapsed = now() - previous.time;
-      if (wasMultiple || !current || selected(doc) || elapsed > 1000 || previous.vertical || !enabled()) {
-        suppressUntil = now() + 700;
-        if (previous.type === 'touch') consume(event);
-        return;
-      }
-      const swipe = previous.type === 'touch' && previous.swipe && canSwipe() && !nativeZoomed() && elapsed <= 1000
-        && Math.abs(dx) >= Math.min(90, Math.max(40, previous.width * .15)) && Math.abs(dx) > Math.abs(dy) * 1.5;
-      const tap = !moved && elapsed <= 600 && !ignored(event.target) && !nativeZoomed();
-      const fullscreen = tap && previous.type === 'touch' && canCenterTap() && center(previous.start) && center(current);
-      const direction = swipe ? (dx < 0 ? 1 : -1)
-        : tap && canTap() && edge(previous.start) === edge(current) ? edge(current) : 0;
-      if (fullscreen || direction || moved || elapsed > 600) {
-        suppressUntil = now() + 700;
-        consume(event, Boolean(direction || fullscreen));
-        if (direction) turn(direction);
-        else if (fullscreen) centerTap();
-      }
+      if (gesture && gesture.id === id && Math.hypot(current.x - gesture.start.x, current.y - gesture.start.y) > 10) { gesture.moved = true; clearTap(); }
     });
-    listen('pointercancel', () => { gesture = undefined; pointers.clear(); multiple = false; suppressUntil = now() + 700; }, true);
-    listen('click', (event) => {
-      const hadPointer = pointerSeen; pointerSeen = false;
-      if (now() < suppressUntil) { suppressUntil = 0; consume(event, true); return; }
-      if (hadPointer) return;
-      if (!enabled() || event.defaultPrevented || event.detail === 0 || ignored(event.target) || selected(doc)
-        || event.button > 0 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
-      const direction = canTap() && !nativeZoomed() ? edge(point(event, doc)) : 0;
-      if (direction) { consume(event, true); turn(direction); }
-    });
-    const unbind = () => {
-      for (const [type, handler] of listeners) root.removeEventListener(type, handler, true);
-      if (style) {
-        if (originalTouch) style.setProperty('touch-action', originalTouch, originalPriority);
-        else style.removeProperty('touch-action');
-      }
-      if (gesture?.doc === doc) resetGesture();
-      bindings.delete(root);
-    };
-    bindings.set(root, { frame, unbind });
-    return unbind;
+    listen('pointerup', (event) => release(event, source));
+    listen('pointercancel', () => { reset(); suppressUntil = now() + 700; });
+    listen('click', (event) => { if (now() < suppressUntil) { suppressUntil = 0; consume(event); } });
+    const unbind = () => { for (const [name, handler] of listeners) root.removeEventListener(name, handler, true); style?.remove(); bindings.delete(root); };
+    bindings.set(root, { frame, style, unbind }); policy(); return unbind;
   }
-  function releaseOutside(event) {
-    if (host.contains(event.target)) return;
-    pointers.delete(event.pointerId ?? 1);
-    if (gesture?.id === (event.pointerId ?? 1)) gesture = undefined;
-    if (!pointers.size) multiple = false;
-  }
-  bind(host);
-  updateTouchPolicy();
-  viewport?.addEventListener('resize', updateTouchPolicy);
-  host.ownerDocument.addEventListener('pointerup', releaseOutside, true);
-  host.ownerDocument.addEventListener('pointercancel', releaseOutside, true);
-  return {
-    bind,
-    reset() { resetGesture(); for (const [root, binding] of [...bindings]) if (root !== host) binding.unbind(); },
-    destroy() {
-      resetGesture(); for (const binding of [...bindings.values()]) binding.unbind();
-      viewport?.removeEventListener('resize', updateTouchPolicy); host.classList.remove('reader-native-zoom');
-      host.ownerDocument.removeEventListener('pointerup', releaseOutside, true);
-      host.ownerDocument.removeEventListener('pointercancel', releaseOutside, true);
-    },
+  function outside(event) { if (!host.contains(event.target) && pointers.has(event.pointerId ?? 1)) release(event, doc); }
+  bind(host); viewport?.addEventListener('resize', policy); doc.addEventListener('pointerup', outside, true);
+  return { bind, refresh: policy,
+    reset() { reset(); for (const [root, item] of [...bindings]) if (root !== host) item.unbind(); },
+    destroy() { reset(); for (const item of [...bindings.values()]) item.unbind(); host.style.touchAction = originalTouch; host.classList.remove('reader-native-zoom'); viewport?.removeEventListener('resize', policy); doc.removeEventListener('pointerup', outside, true); },
   };
 }
