@@ -3,21 +3,18 @@ import { audiobookshelfSettings } from './audiobookshelf-ui.js';
 
 export function deviceSettings() {
   const audiobookshelf = audiobookshelfSettings();
-  let loading = false, epoch = 0;
+  let loading = false, loaded = false, epoch = 0;
   async function load() {
     void audiobookshelf.load();
-    if (loading) return;
+    if (loading || loaded) return;
     const current = epoch;
     loading = true;
     $('#opds-connection').hidden = true;
     $('#sync-connection').hidden = true;
     message('#opds-result', 'Loading device connection…');
     message('#sync-result', 'Loading progress sync…');
-    const results = await Promise.allSettled([api('/api/settings/opds'), api('/api/settings/sync')]);
-    if (current !== epoch) return;
-    const [opds, sync] = results;
-    if (opds.status === 'fulfilled') {
-      const settings = opds.value;
+    await Promise.allSettled([api('/api/settings/opds').then((settings) => {
+      if (current !== epoch) return;
       $('#opds-demo-note').hidden = settings.available;
       $('#opds-connection').hidden = !settings.available;
       if (settings.available) {
@@ -27,9 +24,9 @@ export function deviceSettings() {
           : 'No login is configured. Devices that can reach this address can browse and download your books. Set READER_USER and READER_PASSWORD in your server’s .env file to require a login.';
       }
       message('#opds-result');
-    } else message('#opds-result', opds.reason.message);
-    if (sync.status === 'fulfilled') {
-      const settings = sync.value;
+    }).catch((error) => { if (current === epoch) message('#opds-result', error.message); }),
+    api('/api/settings/sync').then((settings) => {
+      if (current !== epoch) return;
       $('#sync-demo-note').hidden = settings.available;
       $('#sync-connection').hidden = !settings.available;
       if (settings.available) {
@@ -39,13 +36,13 @@ export function deviceSettings() {
           : 'Browser sync is ready. To connect an e-reader, first set READER_PASSWORD or READER_SYNC_PASSWORD in your server’s .env file and restart the reader service.';
       }
       message('#sync-result');
-    } else message('#sync-result', sync.reason.message);
-    loading = false;
+    }).catch((error) => { if (current === epoch) message('#sync-result', error.message); })]);
+    if (current === epoch) { loading = false; loaded = true; }
   }
   for (const kind of ['opds', 'sync']) $('#copy-' + kind + '-url').addEventListener('click', async () => {
     const input = $('#' + kind + '-url');
     try { await navigator.clipboard.writeText(input.value); toast('Device address copied'); }
     catch { input.focus(); input.select(); message('#' + kind + '-result', 'Select and copy the address.'); }
   });
-  return { load, save: audiobookshelf.save, reset() { epoch++; loading = false; audiobookshelf.reset(); $('#opds-url').value = ''; $('#sync-url').value = ''; } };
+  return { load, save: audiobookshelf.save, reset() { epoch++; loading = loaded = false; audiobookshelf.reset(); $('#opds-url').value = ''; $('#sync-url').value = ''; } };
 }
