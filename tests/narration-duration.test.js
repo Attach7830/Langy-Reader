@@ -59,6 +59,7 @@ test('manual page turns cannot be pulled back by old audio timeupdates before th
   const f = await fixture(t);
   f.tick(900); await delay(5); const before = f.navigations.length;
   const navigation = f.player.beginNavigation(); f.page('epub:1');
+  assert.equal(f.player.playbackPosition(), null, 'a page turn cannot persist an audio clock from the old page');
   f.tick(950); await delay(5);
   assert.equal(f.navigations.length, before, 'old audio must not navigate back to the previous source section');
   await f.player.endNavigation(navigation);
@@ -77,6 +78,7 @@ test('audio waits for a resumed reader before seeking or following its saved cha
 
 test('a resumed audio source keeps its saved chapter after delayed metadata resets the media clock', async (t) => {
   const f = await fixture(t, { initialKey: 'epub:1', delayMetadata: true });
+  assert.equal(f.player.playbackPosition(), null);
   assert.equal(f.audio.currentTime, 0, 'a stale finite duration cannot make a new source ready for seeking');
   f.metadata(); await f.player.refresh(); await delay(20);
   assert.equal(f.audio.currentTime, 1800); assert.deepEqual(f.navigations, []);

@@ -12,7 +12,7 @@ test('ABS listening resumes by explicit choice, syncs closed offline recordings,
   globalThis.setInterval = (...args) => { const timer = previousInterval(...args); intervals.push(timer); return timer; };
   t.after(() => { intervals.forEach(clearInterval); globalThis.setInterval = previousInterval; dom.window.close(); for (const [name, value] of original) if (value) Object.defineProperty(globalThis, name, value); else delete globalThis[name]; });
   localStorage.setItem('langy-offline-owner', 'owner');
-  let state = { book: 'book', recording: 'recording', duration: 100, time: 0, absConnected: true }, remote = { linked: true, recording: 'recording', currentTime: 40, version: 'v1', duration: 100 }, online = true, writes = 0;
+  let state = { book: 'book', recording: 'recording', duration: 100, time: 0, absConnected: true, readingTarget: 'saved-page' }, remote = { linked: true, recording: 'recording', currentTime: 40, version: 'v1', duration: 100 }, online = true, writes = 0;
   const audio = { playbackPosition: () => state, async resumeAt(time) { state.time = time; } };
   const sync = audiobookshelfProgress({ audio, request: async (_path, options = {}) => {
     if (!online) throw new Error('offline');
@@ -30,8 +30,12 @@ test('ABS listening resumes by explicit choice, syncs closed offline recordings,
   const saved = JSON.parse(localStorage.getItem(key)); localStorage.setItem(key, JSON.stringify({ ...saved, time: 55, dirty: true }));
   remote = { ...remote, version: 'another-device', currentTime: 75 }; await sync.syncSaved();
   assert.equal(remote.currentTime, 75); assert.equal(writes, 1); assert.equal(JSON.parse(localStorage.getItem(key)).dirty, true);
-  state = { book: 'book', recording: 'recording', duration: 100, time: 0, absConnected: true };
+  state = { book: 'book', recording: 'recording', duration: 100, time: 0, absConnected: true, readingTarget: 'saved-page' };
   window.dispatchEvent(new dom.window.Event('langy-recording-ready')); await settle(); assert.equal(state.time, 55); assert.equal(document.querySelector('#abs-sync-notice').hidden, false);
   document.querySelector('#abs-sync-keep').click(); await settle(); assert.equal(remote.currentTime, 55); assert.equal(writes, 2);
+  sync.stop();
+  state = { ...state, time: 80, readingTarget: 'newer-reading-page' };
+  window.dispatchEvent(new dom.window.Event('langy-recording-ready')); await settle();
+  assert.equal(state.time, 80, 'an old listening position cannot override a newer page chosen in the reader');
   sync.stop();
 });
