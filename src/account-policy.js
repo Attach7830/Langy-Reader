@@ -6,13 +6,13 @@ export function accountPolicyFields(value = {}, { current = false } = {}) {
   function field(key, title, type, initial, options = {}) {
     const label = element('label', type === 'checkbox' ? 'checkbox-row' : 'field'), input = document.createElement('input');
     input.type = type; input.dataset.accountPolicy = key; input.setAttribute('aria-label', title); Object.assign(input, options);
-    if (type === 'checkbox') { input.checked = initial; label.append(input, document.createTextNode(title)); }
-    else { input.value = initial; label.append(document.createTextNode(title), input); }
+    if (type === 'checkbox') { input.defaultChecked = input.checked = initial; label.append(input, document.createTextNode(title)); }
+    else { input.defaultValue = input.value = initial; label.append(document.createTextNode(title), input); }
     root.append(label); controls[key] = input; return input;
   }
   field('sharedArchive', 'Allow use of the administrator’s Anna’s Archive membership key', 'checkbox', Boolean(value.sharedArchive));
   root.append(element('p','field-note','Readers need this permission or their own private membership key. Administrators manage the shared connection.'));
-  field('storageLimit', 'Saved library limit (GiB, blank for unlimited)', 'number', value.storageLimit == null ? '' : value.storageLimit / 1024 ** 3, { min: '0', max: '1048576', step: '0.01' });
+  field('storageLimit', 'Saved library limit (GiB, blank for unlimited)', 'number', value.storageLimit == null ? '' : value.storageLimit / 1024 ** 3, { min: '0', max: '1048576', step: 'any' });
   root.append(element('p', 'field-note', `${value.storage ? (value.storage.usedBytes / 1024 ** 3).toFixed(2) + ' GiB currently saved. ' : ''}Counts owned books, covers, audio, transcripts and imported fonts. Shared service models and temporary processing space are separate. Lowering a limit keeps existing files.`));
   const date = value.expiresAt == null ? '' : new Date(value.expiresAt - new Date(value.expiresAt).getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   field('expiresAt', 'Account expires (local time, blank for no expiry)', 'datetime-local', date, { disabled: current });
