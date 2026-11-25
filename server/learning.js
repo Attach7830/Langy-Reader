@@ -552,7 +552,11 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       const text=textJobs.get(book.id); if (text) {text.state='cancelled';text.controller.abort(new DOMException('Cancelled','AbortError'));}
     } else throw new RequestError(422,'This process cannot be cancelled.');
     const types={analysis:'analysis',indexing:'analysis',narration:'book','audio-section':'audio',recording:'recording',repair:'rescan'};
-    if (activeExecution?.job.book === book.id && (activeExecution.type === types[kind] || kind === 'narration' && activeExecution.type === 'audio')) activeExecution.controller.abort(new DOMException('Cancelled','AbortError'));
+    if (activeExecution?.job.book === book.id) {
+      const sameJob = ['analysis','indexing'].includes(kind) || activeExecution.job.id === id;
+      const cancelledPart = kind === 'narration' && activeExecution.type === 'audio' && db.prepare("SELECT 1 FROM audio WHERE id=? AND state='cancelled'").get(activeExecution.job.id);
+      if (sameJob && activeExecution.type === types[kind] || cancelledPart) activeExecution.controller.abort(new DOMException('Cancelled','AbortError'));
+    }
     return {cancelled:true};
   }
 
