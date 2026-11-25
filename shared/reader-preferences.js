@@ -4,7 +4,7 @@ export const defaults = {
   touchSize: null,
   audioEnabled: false, audioToolbarHidden: false, podcastMode: false, audioHighlight: true, audioRate: 1, audioRecordings: {},
   readingLanguages: ['es', 'en', 'pt', 'zh'],
-  uiLanguage: 'en', nativeLanguage: '', cacheAI: true,
+  uiLanguage: 'en', nativeLanguage: '', cacheAI: true, cacheCovers: true,
   progressSyncEnabled: true, syncDeviceName: 'Langy browser',
   keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's', playback: 'p', audioToolbar: 'a', pinyin: 'y', returnLocation: 'b', rewindAudio: '[', forwardAudio: ']', bookmarks: 'm' },
   autoHideDocks: false,
