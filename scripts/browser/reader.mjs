@@ -109,7 +109,11 @@ try {
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('langy-settings-v1')).processDismissMinutes === 2.5);
     await page.waitForFunction(() => !Object.keys(JSON.parse(localStorage.getItem('langy-account-settings-v1') || '{}').pending || {}).length);
     await page.reload(); await page.locator('#mobile-navigation [data-open-processes]').click(); assert.equal(await page.locator('#process-dismiss-minutes').inputValue(), '2.5');
-    await page.locator('#process-dismiss-minutes').fill('0'); await page.locator('#process-dismiss-minutes').press('Tab'); await page.locator('#downloads-dialog [data-close]').click();
+    await page.locator('#process-dismiss-minutes').fill('0'); await page.locator('#process-dismiss-minutes').press('Tab');
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('langy-settings-v1')).processDismissMinutes === 0);
+    await page.waitForFunction(() => !Object.keys(JSON.parse(localStorage.getItem('langy-account-settings-v1') || '{}').pending || {}).length);
+    assert.equal((await (await context.request.get(base + '/api/settings/reader')).json()).preferences.processDismissMinutes, 0);
+    await page.locator('#downloads-dialog [data-close]').click();
   });
   await check('Import book offers a per-import audiobook delay and the server retains that schedule', async () => {
     assert.equal(importAudio.scheduled.state, 'waiting'); assert.equal(importAudio.scheduled.minutes, 7);
@@ -454,6 +458,7 @@ try {
     await desktopPage.screenshot({ path: output + '/contextual-phrase-desktop.png' });
     await desktopPage.locator('[data-close-phrase]').click();
     await desktopPage.locator('#open-process-queue').click(); await desktopPage.locator('#downloads-dialog').waitFor({ state: 'visible' });
+    assert.equal(await desktopPage.locator('#process-dismiss-minutes').inputValue(), '0');
     assert.equal(await desktopPage.locator('#downloads-title').textContent(), 'Process queue');
     assert.equal(await desktopPage.locator('#open-offline-downloads').count(), 0);
     await desktopPage.screenshot({ path: output + '/process-queue-desktop.png' });
