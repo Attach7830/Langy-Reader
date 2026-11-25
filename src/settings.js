@@ -1,4 +1,5 @@
 import { defaults } from '../shared/reader-preferences.js';
+import { languageLabel } from './languages.js';
 export { defaults } from '../shared/reader-preferences.js';
 
 export const modes = {
@@ -91,7 +92,7 @@ export function eventKey(event) {
 }
 
 export function languageName(language) {
-  try { return new Intl.DisplayNames('en', { type: 'language' }).of(language); }
+  try { return languageLabel(language); }
   catch { return language; }
 }
 
