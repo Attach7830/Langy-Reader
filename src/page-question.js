@@ -5,7 +5,7 @@ export function pageQuestions({ book, renderer, preferences, request }) {
   const form = $('#summary-question-form'), output = $('#summary-question-answer'), submit = $('#summary-question-submit');
   let epoch = 0, controller;
   form.addEventListener('submit', async (event) => {
-    event.preventDefault(); if (!book() || submit.disabled || !form.reportValidity()) return;
+    event.preventDefault(); if (!book() || book().l1Folder || submit.disabled || !form.reportValidity()) return;
     const version = ++epoch, active = book(); controller?.abort(); controller = new AbortController(); submit.disabled = true;
     message('#summary-question-error'); output.textContent = 'Reading your question…'; output.lang = preferences().summaryLanguage;
     try {

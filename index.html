@@ -341,10 +341,10 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
     <div class="modal-body form-stack">
       <form id="book-search-form" class="form-stack"><label class="field">Find a word or phrase <input name="query" type="search" maxlength="120" required></label><button class="button secondary" type="submit">Search whole book</button></form>
       <div id="book-search-results" class="form-stack" aria-live="polite"></div>
-      <h3>Character guide</h3><p class="field-note">Uses passages up to your current page. No later pages are sent to the model. AI explanations can still be mistaken.</p>
+      <section id="character-guide-tools"><h3>Character guide</h3><p class="field-note">Uses passages up to your current page. No later pages are sent to the model. AI explanations can still be mistaken.</p>
       <label class="field">Person to explain (optional) <input id="character-guide-query" maxlength="100" placeholder="Leave blank for the current characters"></label>
       <button id="generate-character-guide" class="button secondary" type="button">Explain characters and relationships</button>
-      <div id="character-guide-output" class="book-guide-output" dir="auto" aria-live="polite"></div><p id="book-tools-error" class="form-error" role="alert" hidden></p>
+      <div id="character-guide-output" class="book-guide-output" dir="auto" aria-live="polite"></div></section><p id="book-tools-error" class="form-error" role="alert" hidden></p>
     </div>
   </dialog>
   <main class="settings-page" id="settings" aria-labelledby="settings-title" hidden>
@@ -722,6 +722,8 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
       <header class="modal-header"><h2 id="category-dialog-title">New category</h2><button class="icon-button" type="button" aria-label="Close category editor" data-close><i data-lucide="x"></i></button></header>
       <div class="modal-body">
         <label class="field">Name <input name="name" maxlength="70" required></label>
+        <label class="checkbox-row"><input name="l1Folder" type="checkbox" aria-describedby="l1-folder-help"> L1 Folder</label>
+        <p class="field-note" id="l1-folder-help">For books you read without language support. Removes comprehension assistance from this folder’s books: summaries, tap/hover definitions, synonyms, translations, phrase explanations, character guides and pinyin. Reading, search, bookmarks and audio remain available. Turn this off to restore your usual assistance settings.</p>
         <label class="field">Folder language <input name="language" list="languages" maxlength="70" placeholder="None" autocomplete="off"></label>
         <p class="field-note">Optional. Sets the primary language for existing books and books imported or moved here. Explicitly selected additional languages are kept. Clearing this field stops automatic assignment and keeps the books’ current languages.</p>
         <p class="form-error" id="category-error" role="alert" hidden></p>

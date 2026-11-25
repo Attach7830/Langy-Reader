@@ -242,6 +242,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     $('#library-description').textContent = category === 'all'
       ? 'Choose a book to read.'
       : current?.language ? `${languageName(current.language)} folder · Books added here inherit this language.` : current ? 'Books in this category.' : 'Books without a category.';
+    if (current?.l1Folder) $('#library-description').textContent += ' L1 Folder · Comprehension assistance is off.';
     $('#mobile-category').replaceChildren(new Option('All books', 'all'), ...snapshot.categories.map((entry) => new Option(entry.name, entry.id)), ...(uncategorized ? [new Option('Uncategorized', 'uncategorized')] : []));
     $('#mobile-category').value = category; $('#mobile-edit-category').disabled = !current || snapshot.demo && current.id === 'spanish';
     $('#mobile-about-link').hidden = false;
@@ -606,13 +607,14 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   }
 
   function showFolderLanguage() {
-    const language = snapshot.categories.find((entry) => entry.id === bookForm.elements.categoryId.value)?.language;
+    const folder = snapshot.categories.find((entry) => entry.id === bookForm.elements.categoryId.value), language = folder?.language;
     const input = bookForm.elements.language;
     input.readOnly = Boolean(language);
     input.required = false;
     if (language) input.value = language;
-    $('#book-folder-language-note').hidden = !language;
-    $('#book-folder-language-note').textContent = language ? `This folder sets the primary language to ${languageName(language)}. Other explicitly selected book languages are kept.` : '';
+    $('#book-folder-language-note').hidden = !language && !folder?.l1Folder;
+    $('#book-folder-language-note').textContent = [language ? `This folder sets the primary language to ${languageName(language)}. Other explicitly selected book languages are kept.` : '',
+      folder?.l1Folder ? 'L1 Folder · Comprehension assistance is off for books in this folder.' : ''].filter(Boolean).join(' ');
   }
 
   function showCategory(existing) {
@@ -621,6 +623,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     $('#remove-category').hidden = !existing;
     categoryForm.elements.name.value = existing?.name ?? '';
     categoryForm.elements.language.value = existing?.language ?? '';
+    categoryForm.elements.l1Folder.checked = Boolean(existing?.l1Folder);
     message('#category-error');
     categoryDialog.showModal();
     categoryForm.elements.name.focus();
@@ -799,7 +802,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     categoryPending = true;
     try {
       const path = editingCategory ? `/api/categories/${editingCategory.id}` : '/api/categories';
-      const saved = await api(path, { method: editingCategory ? 'PATCH' : 'POST', body: { name: categoryForm.elements.name.value, language } });
+      const saved = await api(path, { method: editingCategory ? 'PATCH' : 'POST', body: { name: categoryForm.elements.name.value, language, l1Folder: categoryForm.elements.l1Folder.checked } });
       categoryDialog.close();
       category = saved.id;
       search.value = '';

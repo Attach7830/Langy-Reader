@@ -91,6 +91,9 @@ test('the reader pinyin button follows Mandarin language variants and saves the 
     change(showPinyin) { settings = { ...settings, showPinyin }; } });
   assert.equal(button.hidden, false); button.click(); assert.equal(settings.showPinyin, true);
   assert.equal(settings.mode, 'translation'); assert.equal(button.getAttribute('aria-pressed'), 'true');
+  currentBook = { language: 'zh', l1Folder: true }; toolbar.refresh();
+  assert.equal(button.hidden, true); button.click(); assert.equal(settings.showPinyin, true, 'L1 folders do not change the saved preference');
+  currentBook = { language: 'zh', l1Folder: false }; toolbar.refresh(); assert.equal(button.hidden, false);
   settings.showPinyin = false; toolbar.refresh(); assert.equal(button.getAttribute('aria-pressed'), 'false');
   for (const language of ['zh-Hant', 'cmn', 'cmn-Hans-CN']) { currentBook = { language }; toolbar.refresh(); assert.equal(button.hidden, false); }
   currentBook = { language: 'en', languages: ['en', 'zh'] }; toolbar.refresh(); assert.equal(button.hidden, false);

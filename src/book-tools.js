@@ -22,7 +22,7 @@ export function readingBookTools({ book, renderer, preferences, request, go }) {
     } catch (error) { if (version === epoch && error.name !== 'AbortError') { results.replaceChildren(); message('#book-tools-error', error.message); } }
   });
   $('#generate-character-guide').addEventListener('click', async () => {
-    if (!book()) return;
+    if (!book() || book().l1Folder) return;
     const version = ++epoch; controller?.abort(); controller = new AbortController(); message('#book-tools-error'); guide.textContent = 'Building a guide from passages you have reached…';
     try {
       const page = renderer()?.audioUnit?.(), track = page?.track();
