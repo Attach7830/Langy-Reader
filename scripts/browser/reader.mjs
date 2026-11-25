@@ -135,7 +135,7 @@ try {
     await page.locator('#book-form [name=coverUrl]').fill('https://images.example.org/cover.png'); await page.locator('#book-import-cover').click();
     await page.locator('#book-cover-error').filter({ hasText: 'Cover imported.' }).waitFor(); assert.equal(importedURL, 'https://images.example.org/cover.png');
     assert.equal(await page.locator('#book-form [name=coverUrl]').inputValue(), '');
-    await page.locator('#book-dialog [data-close]').click(); await page.unroute('**/api/books/' + book.id + '/cover');
+    await page.getByRole('button', { name: 'Close book details', exact: true }).click(); await page.unroute('**/api/books/' + book.id + '/cover');
   });
   await check('imported fonts render in EPUB pages, reload from the device cache and can be removed', async () => {
     await page.locator('#mobile-navigation [data-settings]').click(); await page.locator('[data-settings-tab=reading]').click();
