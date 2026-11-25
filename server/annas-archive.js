@@ -61,6 +61,8 @@ export async function openArchive(dir, { library, demo = false, request = public
   function save(body) {
     if (demo) throw new RequestError(403, 'Anna’s Archive connections are available on self-hosted installations.');
     const operation = writes.then(async () => {
+      // Resolve key-only changes inside the serialized write, preserving newer settings.
+      if (typeof body === 'function') body = body();
       const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.replace(/\/+$/u, '') : current.baseUrl;
       if (!mirrors.includes(baseUrl)) throw new RequestError(422, 'Choose one of the listed Anna’s Archive mirrors.');
       const input = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
@@ -256,7 +258,7 @@ export async function openArchive(dir, { library, demo = false, request = public
   timer?.unref();
   if (autoStart && !demo) void pump();
   return {
-    settings, save, queue, queueBatch, latest, list: () => [...jobs.values()].map(publicJob), pump,
+    settings, save, removeKey: () => save(() => ({ ...settings(), clearKey: true })), queue, queueBatch, latest, list: () => [...jobs.values()].map(publicJob), pump,
     continue(id, body) { const job = resumable(id), url = downloadURL(body?.url); updateDetails(job, body?.details);
       running = true; controllers.set(id, new AbortController());
       void downloadFile(job, url).finally(() => { controllers.delete(id); running = false; if (autoStart) void pump(); }); return publicJob(job); },
