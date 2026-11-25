@@ -14,7 +14,7 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
   const db = new DatabaseSync(join(dir, 'pdf-ocr.sqlite'));
   db.exec(`PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,json TEXT NOT NULL) STRICT`);
   const jobs = new Map(db.prepare('SELECT * FROM jobs ORDER BY rowid').all().map((row) => [row.id, JSON.parse(row.json)]));
-  let running = false, closed = false;
+  let running = false, closed = false; const controllers = new Map();
   const connection = await ocrSettings(dir, { demo, request, workerURL, busy: () => running });
   const persist = (job) => db.prepare('INSERT INTO jobs VALUES(?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(job.id, JSON.stringify(job));
   for (const job of jobs.values()) if (['running', 'importing'].includes(job.state)) { job.state = 'queued'; persist(job); }
@@ -29,6 +29,7 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
       for (const job of jobs.values()) {
         if (closed || job.state !== 'queued') continue;
         const temporary = join(library.uploads, `ocr-${job.id}.pdf`);
+        const controller = new AbortController(); controllers.set(job.id, controller);
         try {
           job.state = 'running'; job.error = null; persist(job);
           const book = library.getBook(job.source);
@@ -37,7 +38,7 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
           const selected = connection.connection(job.provider || 'builtin');
           const url = new URL(selected.baseUrl.replace(/\/+$/u, '') + '/ocr'); url.search = new URLSearchParams({ languages: job.languages.join('+'), rotate: job.rotate ? '1' : '0', mode: job.mode || 'redo' });
           const response = await request(url, { method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/pdf', ...(selected.apiKey ? { Authorization: `Bearer ${selected.apiKey}` } : {}) },
-            body: createReadStream(library.filePath(book)), duplex: 'half', signal: AbortSignal.timeout(3_660_000) });
+            body: createReadStream(library.filePath(book)), duplex: 'half', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(3_660_000)]) });
           if (!response.ok) {
             let body; try { body = await response.json(); } catch {}
             throw new RequestError(502, [401, 403].includes(response.status) ? 'The OCR service rejected the API key.' : typeof body?.detail === 'string' ? body.detail.slice(0, 300) : 'The OCR service could not scan this PDF.');
@@ -46,7 +47,8 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
           const meter = new Transform({ transform(chunk, _encoding, callback) { size += chunk.length;
             callback(size > maxUpload ? new RequestError(413, 'The searchable PDF exceeds 120 MiB.') : null, chunk); } });
           await rm(temporary, { force: true });
-          await pipeline(response.body, meter, createWriteStream(temporary, { flags: 'wx', mode: 0o600 }));
+          await pipeline(response.body, meter, createWriteStream(temporary, { flags: 'wx', mode: 0o600 }), {signal:controller.signal});
+          controller.signal.throwIfAborted();
           library.getBook(book.id);
           job.pages = Number(response.headers.get('X-Langy-OCR-Pages')) || null;
           job.textPages = Number(response.headers.get('X-Langy-OCR-Text-Pages')) || null;
@@ -56,8 +58,8 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
             revision: job.id, expectedRevision: book.contentRevision, ...ocrBookLanguages(current, job.languages),
           }, { id: book.owner || '' });
           job.state = 'ready'; persist(job); try { onImport(job.result); } catch {}
-        } catch (error) { job.state = 'error'; job.error = error instanceof RequestError ? error.message : 'OCR could not finish. Check the language service and retry.'; persist(job); }
-        finally { await rm(temporary, { force: true }); }
+        } catch (error) { if (job.state !== 'cancelled') { job.state = 'error'; job.error = error instanceof RequestError ? error.message : 'OCR could not finish. Check the language service and retry.'; } persist(job); }
+        finally { controllers.delete(job.id); await rm(temporary, { force: true }); }
       }
     } finally { running = false; }
   }
@@ -73,5 +75,9 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
     jobs.set(job.id, job); persist(job); void pump(); return publicJob(job);
   }
   if (!demo) void pump();
-  return { status, languages, queue, pump, settings: connection.settings, save: connection.save, removeKey: connection.removeKey, close() { closed = true; } };
+  return { status, languages, queue, pump, settings: connection.settings, save: connection.save, removeKey: connection.removeKey,
+    cancel(book, id) { const job=jobs.get(id); if (!job || job.source !== book.id) throw new RequestError(404,'Scan not found.');
+      if (job.state === 'importing') throw new RequestError(409,'The completed scan is being saved. Wait for it to finish.');
+      if (['queued','running'].includes(job.state)) {job.state='cancelled';job.error=null;persist(job);controllers.get(id)?.abort();} return publicJob(job); },
+    close() { closed = true; for (const controller of controllers.values()) controller.abort(); } };
 }

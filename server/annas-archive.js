@@ -45,20 +45,34 @@ function filename(headers, md5, format) {
   return (basename(clean, extname(clean)) || md5) + '.' + format;
 }
 
-export async function openArchive(dir, { library, demo = false, request = publicDownload, onImport = () => {}, now = Date.now, autoStart = true }) {
+export async function openArchive(dir, { library, demo = false, request = publicDownload, onImport = () => {}, now = Date.now, autoStart = true,
+  canUseShared = () => true, visitorForOwner = (id) => id ? { id } : undefined, activeOwner = () => true }) {
   const path = join(dir, 'archive-settings.json');
+  const profilesPath = join(dir, 'archive-users.json'); let profiles = {};
   let current = { baseUrl: mirrors[0], apiKey: '', slowFallback: true, retryUnavailable: true };
   if (!demo) {
     try { current = { ...current, ...JSON.parse(await readFile(path, 'utf8')) }; }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    try { profiles = JSON.parse(await readFile(profilesPath, 'utf8')); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
   for (const name of await readdir(library.uploads)) {
     if (/^aa-[a-f0-9-]{36}\.part$/u.test(name)) await rm(join(library.uploads, name), { force: true });
   }
-  const settings = () => demo ? { configurable: false, hasKey: false }
-    : { configurable: true, baseUrl: current.baseUrl, hasKey: Boolean(current.apiKey), slowFallback: current.slowFallback, retryUnavailable: current.retryUnavailable, retryHours: 6, bulkLimit: archiveBulkLimit, mirrors };
+  const personal = (visitor) => Boolean(visitor?.authenticated && visitor.role !== 'admin');
+  function effective(visitor) {
+    if (!activeOwner(visitor?.id || '')) throw new RequestError(403, 'This account is no longer active.');
+    if (!personal(visitor)) return { ...current, apiKey: canUseShared(visitor) ? current.apiKey : '' };
+    const profile = profiles[visitor.id] || {}, shared = profile.useShared ?? !profile.apiKey;
+    return { ...current, apiKey: shared ? canUseShared(visitor) ? current.apiKey : '' : profile.apiKey || '' };
+  }
+  const settings = (visitor) => demo ? { configurable: false, hasKey: false }
+    : { configurable: true, baseUrl: current.baseUrl, hasKey: Boolean(effective(visitor).apiKey),
+      ...(personal(visitor) ? { personal: true, hasPersonalKey: Boolean(profiles[visitor.id]?.apiKey), sharedAllowed: Boolean(canUseShared(visitor)),
+        sharedAvailable: Boolean(canUseShared(visitor) && current.apiKey), useShared: profiles[visitor.id]?.useShared ?? !profiles[visitor.id]?.apiKey } : {}),
+      slowFallback: current.slowFallback, retryUnavailable: current.retryUnavailable, retryHours: 6, bulkLimit: archiveBulkLimit, mirrors };
   let writes = Promise.resolve();
-  function save(body) {
+  function save(body, visitor) {
     if (demo) throw new RequestError(403, 'Anna’s Archive connections are available on self-hosted installations.');
     const operation = writes.then(async () => {
       // Resolve key-only changes inside the serialized write, preserving newer settings.
@@ -67,6 +81,15 @@ export async function openArchive(dir, { library, demo = false, request = public
       if (!mirrors.includes(baseUrl)) throw new RequestError(422, 'Choose one of the listed Anna’s Archive mirrors.');
       const input = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
       if (input.length > 4096 || /[^\x21-\x7e]/u.test(input)) throw new RequestError(422, 'Enter a valid membership key without spaces.');
+      if (personal(visitor)) {
+        if (body.useShared !== undefined && typeof body.useShared !== 'boolean') throw new RequestError(422, 'Choose which membership key to use.');
+        if (body.useShared === true && !canUseShared(visitor)) throw new RequestError(403, 'Your administrator has not granted access to the shared membership key. Save your own key instead.');
+        const old = profiles[visitor.id] || {}, profile = { apiKey: body.clearKey === true ? '' : input || old.apiKey || '', useShared: body.useShared ?? (input ? false : old.useShared ?? !old.apiKey) };
+        const next = { ...profiles, [visitor.id]: profile }, temporary = `${profilesPath}.${randomUUID()}.tmp`;
+        try { await writeFile(temporary, JSON.stringify(next), { flag: 'wx', mode: 0o600 }); await rename(temporary, profilesPath); profiles = next; }
+        finally { await rm(temporary, { force: true }); }
+        return settings(visitor);
+      }
       if (body.slowFallback !== undefined && typeof body.slowFallback !== 'boolean') throw new RequestError(422, 'Choose whether slow-download fallback is enabled.');
       if (body.retryUnavailable !== undefined && typeof body.retryUnavailable !== 'boolean') throw new RequestError(422, 'Choose whether unavailable downloads should retry.');
       const next = { baseUrl, apiKey: body.clearKey === true ? '' : input || current.apiKey,
@@ -80,7 +103,7 @@ export async function openArchive(dir, { library, demo = false, request = public
           job.nextAttempt = null; if (job.state === 'retry_wait') job.state = 'error'; persist(job);
         }
       } finally { await rm(temporary, { force: true }); }
-      return settings();
+      return settings(visitor);
     });
     writes = operation.catch(() => {});
     return operation;
@@ -194,7 +217,8 @@ export async function openArchive(dir, { library, demo = false, request = public
     const mode = body.downloadMode || 'auto';
     if (body.queueUnavailable !== undefined && typeof body.queueUnavailable !== 'boolean') throw new RequestError(422, 'Choose whether an unavailable download stays queued.');
     if (!['auto', 'fast', 'slow'].includes(mode)) throw new RequestError(422, 'Choose automatic, fast, or slow download.');
-    if (!current.apiKey && mode !== 'slow' && (mode === 'fast' || !current.slowFallback)) throw new RequestError(422, 'Add your membership key in Settings → Book sources first, or choose a free slow download.');
+    const connection = effective(visitor);
+    if (!connection.apiKey && mode !== 'slow' && (mode === 'fast' || !connection.slowFallback)) throw new RequestError(422, 'Add your membership key in Settings → Book sources first, or choose a free slow download.');
     const md5 = archiveMD5(body.reference);
     const language = typeof body.language === 'string' ? body.language.trim() : '';
     if (language && !normalizeLanguage(language)) throw new RequestError(422, 'Enter a valid book language code.');
@@ -234,8 +258,13 @@ export async function openArchive(dir, { library, demo = false, request = public
         const job = [...jobs.values()].find((job) => job.state === 'queued' || current.retryUnavailable && job.queueUnavailable !== false && ['retry_wait', 'needs_action'].includes(job.state) && job.nextAttempt && job.nextAttempt <= now());
         if (!job || closed) break;
         controllers.set(job.id, new AbortController()); job.state = 'queued'; job.source = 'fast'; job.error = null; job.nextAttempt = null; job.attempts++; persist(job);
-        if (job.mode === 'slow' || !current.apiKey && current.slowFallback) { slow(job, current); controllers.delete(job.id); continue; }
-        await run(job, { ...current }, job.md5, { downloadMode: job.mode }); controllers.delete(job.id);
+        try {
+          const connection = effective(visitorForOwner(job.owner || ''));
+          if (job.mode === 'slow' || !connection.apiKey && connection.slowFallback && job.mode !== 'fast') slow(job, connection);
+          else if (!connection.apiKey) throw new RequestError(403, 'Membership key unavailable. Save your own key or ask the administrator for shared access.');
+          else await run(job, connection, job.md5, { downloadMode: job.mode });
+        } catch (error) { fail(job, error); }
+        finally { controllers.delete(job.id); }
       }
     } finally { running = false; }
   }
@@ -260,7 +289,7 @@ export async function openArchive(dir, { library, demo = false, request = public
   timer?.unref();
   if (autoStart && !demo) void pump();
   return {
-    settings, save, removeKey: () => save(() => ({ ...settings(), clearKey: true })), queue, queueBatch, latest, list: (visitor) => [...jobs.values()].filter((job) => owned(job, visitor)).map(publicJob), pump,
+    settings, save, removeKey: (visitor) => save(() => ({ clearKey: true, ...(personal(visitor) && !canUseShared(visitor) ? { useShared: false } : {}) }), visitor), queue, queueBatch, latest, list: (visitor) => [...jobs.values()].filter((job) => owned(job, visitor)).map(publicJob), pump,
     continue(id, body, visitor) { const job = resumable(id, visitor), url = downloadURL(body?.url); updateDetails(job, body?.details);
       running = true; controllers.set(id, new AbortController());
       void downloadFile(job, url).finally(() => { controllers.delete(id); running = false; if (autoStart) void pump(); }); return publicJob(job); },

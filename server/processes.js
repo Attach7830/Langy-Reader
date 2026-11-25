@@ -7,7 +7,7 @@ const state = (value) => ['error', 'failed', 'needs_review'].includes(value) ? '
 
 // A small read-only projection: no NLP, filesystem scans, remote connections or
 // provider calls belong on this polling endpoint.
-export function openProcesses(dir, { library, archive, discovery, learning, demo = false, account }) {
+export function openProcesses(dir, { library, archive, webImports, discovery, learning, demo = false, account }) {
   const databases = new Map();
   function rows(file, sql) {
     let db = databases.get(file);
@@ -25,6 +25,8 @@ export function openProcesses(dir, { library, archive, discovery, learning, demo
       jobs.push({ id: `${kind}:${row.id || book}`, kind, label, state: status, phase: row.state, bookId: owned?.id,
         title: owned?.title || row.details?.title || row.title || '', created, progress: Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : null,
         detail: row.error || detail, nextAttempt: row.nextAttempt || null,
+        cancellable: pending.has(row.state) && owned?.canEdit !== false && !(['ocr','web-import'].includes(kind) && row.state === 'importing'),
+        ...(kind === 'web-import' && row.state === 'error' ? {retry:row.id} : {}),
         ...(kind === 'audiobookshelf' && row.state === 'awaiting_confirmation' ? { decision: row.id } : {}) });
     }
     function read(file, sql, visit) { try { for (const row of rows(file, sql)) visit(row); } catch { unavailable = true; } }
@@ -51,6 +53,7 @@ export function openProcesses(dir, { library, archive, discovery, learning, demo
       read('pdf-ocr.sqlite', 'SELECT json FROM jobs ORDER BY rowid DESC LIMIT 100', (value) => { const row = JSON.parse(value.json); add('ocr', row, 'Scan PDF with OCR', { book: row.source }); });
       if (!visitor?.authenticated || visitor.id === '') read('audiobookshelf.sqlite', 'SELECT json FROM jobs ORDER BY rowid DESC LIMIT 100', (value) => { const row = JSON.parse(value.json); add('audiobookshelf', row, row.kind === 'export' ? 'Export to Audiobookshelf' : 'Import from Audiobookshelf', { detail: row.notice || '' }); });
     }
+    for (const row of webImports?.list(visitor) || []) add('web-import',row,'Download book from web',{book:row.book,progress:row.total ? row.bytes/row.total*100 : null,detail:row.bytes ? `${(row.bytes/1024**2).toFixed(1)} MiB downloaded` : ''});
     const found = discovery.status(visitor);
     if (found.id && (found.busy || found.error)) add('discovery', { id: found.id, state: found.state, error: found.error }, 'Discover similar books');
     jobs.sort((a, b) => Number(['completed', 'cancelled'].includes(a.state)) - Number(['completed', 'cancelled'].includes(b.state)) || b.created - a.created);

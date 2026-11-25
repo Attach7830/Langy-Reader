@@ -113,7 +113,9 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
       if (Number.isFinite(job.progress?.percent)) meter.value = job.progress.percent;
       const actions = element('div', 'download-actions');
       function action(label, callback) {
-        const button = element('button', 'button quiet small', label); button.type = 'button';
+        const cancel = label === 'Cancel download';
+        const button = element('button', cancel ? 'icon-button small process-cancel' : 'button quiet small', cancel ? '×' : label); button.type = 'button';
+        if (cancel) {button.setAttribute('aria-label',label);button.title=label;}
         button.addEventListener('click', () => { void Promise.resolve().then(callback).catch((error) => message('#offline-download-error', error.message)); }); actions.append(button);
       }
       if (pending(job)) action('Cancel download', () => queue.cancel(job.id));

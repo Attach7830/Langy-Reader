@@ -137,6 +137,25 @@ try {
     assert.equal(await page.locator('#book-form [name=coverUrl]').inputValue(), '');
     await page.getByRole('button', { name: 'Close book details', exact: true }).click(); await page.unroute('**/api/books/' + book.id + '/cover');
   });
+  await check('automatic cover search uses the current title and author and selects a stored Google cover', async () => {
+    let searched;
+    await page.route('**/api/covers/search', async(route)=>{searched=route.request().postDataJSON();await route.fulfill({json:{covers:[{id:'browser-cover',provider:'google',title:'Matching edition',author:'A Writer',source:'https://books.google.com/books?id=browser',url:'https://books.google.com/books/content?id=browser',preview:'/api/books/'+book.id+'/cover'}]}});});
+    await page.locator(`[data-book="${book.id}"] .book-mobile-menu`).click();await page.locator('#book-actions-body button').filter({hasText:/^Edit book details$/}).click();
+    const title=await page.locator('#book-form [name=title]').inputValue();await page.locator('#find-book-covers').click();await page.getByRole('button',{name:'Use this cover',exact:true}).click();
+    assert.equal(searched.title,title);assert.equal(searched.provider,'google');assert.equal(await page.locator('#book-form [name=coverUrl]').inputValue(),'https://books.google.com/books/content?id=browser');
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    await page.getByRole('button',{name:'Close book details',exact:true}).click();await page.unroute('**/api/covers/search');
+  });
+  await check('web imports select a Gutenberg edition and retain its folder and scheduled audiobook options',async()=>{
+    let queued;
+    await page.route('**/api/book-catalogue/gutenberg?*',route=>route.fulfill({json:{more:false,books:[{id:123,title:'A free classic',author:'A Writer',language:'en',url:'https://www.gutenberg.org/ebooks/123.epub3.images'}]}}));
+    await page.route('**/api/imports/web',async(route)=>{queued=route.request().postDataJSON();await route.fulfill({status:202,json:{id:'browser-web',state:'queued'}});});
+    await page.locator('#import-book').click();await page.locator('#book-source').selectOption('web');await page.locator('#web-book-fields summary').click();await page.locator('#gutenberg-query').fill('A free classic');await page.locator('#gutenberg-search').click();await page.getByRole('button',{name:'Use this EPUB',exact:true}).click();
+    assert.equal(await page.locator('#book-form [name=title]').inputValue(),'A free classic');await page.locator('[name=autoAudiobook]').check();await page.locator('[name=audiobookDelayMinutes]').fill('9');
+    const folder=await page.locator('#book-categories').inputValue();await page.locator('#book-submit').click();await page.locator('#book-dialog').waitFor({state:'hidden'});
+    assert.equal(queued.url,'https://www.gutenberg.org/ebooks/123.epub3.images');assert.equal(queued.categoryId,folder);assert.equal(queued.autoAudiobook,'true');assert.equal(queued.audiobookDelayMinutes,'9');
+    await page.unroute('**/api/imports/web');await page.unroute('**/api/book-catalogue/gutenberg?*');
+  });
   await check('imported fonts render in EPUB pages, reload from the device cache and can be removed', async () => {
     await page.locator('#mobile-navigation [data-settings]').click(); await page.locator('[data-settings-tab=reading]').click();
     await page.locator('#font-file').setInputFiles({ name: 'reading.woff2', mimeType: 'font/woff2', buffer: await readFile('node_modules/@fontsource/spectral/files/spectral-latin-400-normal.woff2') });

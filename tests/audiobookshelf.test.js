@@ -15,7 +15,7 @@ async function fixture(t, options = {}) {
   let progress = null, state = 'uploaded', clock = 1000000, catalogFails = false, uploadFails = false, catalogLag = false, catalogHook;
   const ready = [], localBooks = new Map([[book.id, book]]), remoteBooks = new Map(), removed = [], uploads = [];
   const recordings = new Map([['recording', { id: 'recording', state: 'ready', duration: 100, markers: [{ time: 0, title: 'One' }] }]]);
-  const item = { id: 'remote-item', mediaType: 'book', media: { duration: 100, metadata: { title: 'A Book' }, tracks: [{ index: 1, title: 'part.mp3', contentUrl: '/abs/s/item/remote-item/part.mp3', duration: 100 }] } };
+  const item = { id: 'remote-item', libraryId: 'lib', folderId: 'spanish-folder', mediaType: 'book', media: { duration: 100, metadata: { title: 'A Book' }, tracks: [{ index: 1, title: 'part.mp3', contentUrl: '/abs/s/item/remote-item/part.mp3', duration: 100 }] } };
   const library = { uploads: dir, getBook: (id) => { if (!localBooks.has(id)) throw new RequestError(404, 'Book not found'); return localBooks.get(id); }, filePath: () => join(dir, 'book.epub') };
   const learning = { ensure() {}, info: () => ({ state: 'ready' }), narration: (_book, selected = 'recording') => ({ audio: recordings.get(selected) || { state: 'missing' } }),
     readyAudiobooks: () => ready.filter((candidate) => recordings.get(candidate.recording)?.state === 'ready'),
@@ -62,7 +62,7 @@ async function fixture(t, options = {}) {
     connect: (updates = {}) => service.save({ baseUrl: 'http://192.168.1.20:13378/abs', apiKey: 'synthetic-test-token', libraryId: 'lib', folderId: 'folder', ...updates }) };
 }
 test('Audiobookshelf uses the configured remote host/subpath, stores credentials privately and exports book/audio metadata', async (t) => {
-  const f = await fixture(t); await f.connect();
+  const f = await fixture(t); await f.connectMapped();
   assert.equal(f.service.settings().hasKey, true); assert.equal(JSON.stringify(f.service.settings()).includes('synthetic-test-token'), false);
   assert.equal((await stat(join(f.dir, 'audiobookshelf-settings.json'))).mode & 0o777, 0o600);
   const job = f.service.queue(f.book, 'export', { recording: 'recording' }); assert.equal(job.state, 'queued'); await f.service.pump();
@@ -92,29 +92,33 @@ test('ABS downloads never forward credentials to a different origin and demo con
   await assert.rejects(demo.libraries(), { status: 403 });
 });
 
-test('category exports use their mapped library and folder while unmapped books use the default', async (t) => {
+test('mapped exports use the book folder and unmapped manual exports cannot use the global default', async (t) => {
   const f = await fixture(t);
   await f.connect({ categoryDestinations: { spanish: { libraryId: 'lib', folderId: 'spanish-folder' }, chinese: { libraryId: 'other-lib', folderId: 'other-folder' } } });
-  const destinations = [];
-  for (const categoryId of ['spanish', 'chinese', 'portuguese', null]) {
-    f.book.categoryId = categoryId; f.book.title = `Folder test ${destinations.length}`; f.service.queue(f.book, 'export', { recording: 'recording' }); await f.service.pump();
-    const body = f.calls.filter((call) => call.path === '/abs/api/upload').at(-1).options.body;
-    destinations.push([body.get('library'), body.get('folder')]);
+  for (const categoryId of ['spanish', 'chinese']) {
+    f.book.categoryId = categoryId; f.book.title = categoryId;
+    f.service.queue(f.book, 'export', { recording: 'recording' }); await f.service.pump();
   }
-  assert.deepEqual(destinations, [['lib', 'spanish-folder'], ['other-lib', 'other-folder'], ['lib', 'folder'], ['lib', 'folder']]);
+  assert.deepEqual(f.uploads.map((item) => [item.libraryId, item.folderId]), [['lib', 'spanish-folder'], ['other-lib', 'other-folder']]);
+  for (const categoryId of ['portuguese', null]) {
+    f.book.categoryId = categoryId;
+    assert.throws(() => f.service.queue(f.book, 'export', { recording: 'recording' }), { status: 422 });
+  }
+  assert.equal(f.uploads.length, 2);
 });
 
-test('queued export destinations survive category changes, mapping changes and a restart', async (t) => {
-  const f = await fixture(t);
-  await f.connect({ categoryDestinations: { spanish: { libraryId: 'lib', folderId: 'spanish-folder' } } });
+test('queued manual exports recheck the current book folder and mapping after restart', async (t) => {
+  const f = await fixture(t); await f.connectMapped();
   const queued = f.service.queue(f.book, 'export', { recording: 'recording' });
-  assert.deepEqual(queued.destination, { libraryId: 'lib', folderId: 'spanish-folder' });
-  f.book.categoryId = null;
-  await f.connect({ categoryDestinations: { spanish: { libraryId: 'other-lib', folderId: 'other-folder' } } });
+  assert.equal(queued.destination.folderId, 'spanish-folder');
+  f.book.categoryId = 'chinese';
+  await f.connect({ categoryDestinations: { chinese: { libraryId: 'other-lib', folderId: 'other-folder' } } });
   await f.restart(); await f.service.pump();
-  assert.deepEqual(f.service.settings().categoryDestinations.spanish, { libraryId: 'other-lib', folderId: 'other-folder' });
-  const body = f.calls.find((call) => call.path === '/abs/api/upload').options.body;
-  assert.equal(body.get('library'), 'lib'); assert.equal(body.get('folder'), 'spanish-folder');
+  assert.equal(f.uploads[0].folderId, 'other-folder');
+  f.book.categoryId = 'unmapped'; f.book.title = 'An unmapped book';
+  f.service.queue(f.book, 'export', { recording: 'recording', destination: { libraryId: 'lib', folderId: 'folder' } });
+  f.book.categoryId = 'another-unmapped'; await f.restart(); await f.service.pump();
+  assert.equal(f.uploads.length, 1, 'a queued choice cannot follow a book into a different unmapped folder');
 });
 
 test('category mappings validate folder membership, support uncategorized books, and survive legacy saves', async (t) => {
@@ -148,11 +152,11 @@ test('matching titles on later pages propose import without linking or deleting 
   const f = await fixture(t); f.book.title = 'A Book: A Story'; f.addReady(); await f.connectMapped();
   const entries = Array.from({ length: 500 }, (_, index) => ({ id: `other-${index}`, media: { metadata: { title: `Another title ${index}` } } }));
   entries.push({ id: 'different-edition', media: { metadata: { title: '  A BOOK — A STORY  ', authorName: 'A different author' } } });
-  f.remoteBooks.set('other-lib', entries);
+  entries.at(-1).folderId = 'spanish-folder'; f.remoteBooks.set('lib', entries);
   await f.service.pump();
   const job = f.service.status(f.book).jobs[0]; assert.equal(job.state, 'skipped'); assert.equal(job.item, 'different-edition');
   assert.equal(f.calls.some((call) => call.path === '/abs/api/upload'), false);
-  assert.ok(f.calls.some((call) => call.path === '/abs/api/libraries/other-lib/items' && call.search.get('page') === '1'));
+  assert.ok(f.calls.some((call) => call.path === '/abs/api/libraries/lib/items' && call.search.get('page') === '1'));
   assert.equal((await f.service.remote(f.book, 'recording')).linked, false);
   await f.restart(); await f.service.pump(); assert.equal(f.service.status(f.book).jobs.length, 1);
 });
@@ -193,7 +197,7 @@ test('linked Audiobookshelf imports never loop back into exports and a manual ex
   await f.service.attach(f.book, { recording: 'recording', item: 'remote-item', sameRecording: true }); f.addReady();
   await f.service.pump(); assert.equal(f.service.status(f.book).jobs.length, 0);
   f.remoteBooks.set('lib', [f.item]); f.service.queue(f.book, 'export', { recording: 'recording' }); await f.service.pump();
-  assert.equal(f.service.status(f.book).jobs[0].state, 'awaiting_confirmation'); assert.equal(f.calls.some((call) => call.path === '/abs/api/upload'), false);
+  assert.equal(f.service.status(f.book).jobs[0].state, 'exported'); assert.equal(f.calls.some((call) => call.path === '/abs/api/upload'), false);
 });
 
 test('ambiguous upload failures are held for review across restart and cannot cause automatic duplicate uploads', async (t) => {
@@ -217,13 +221,11 @@ test('a manual export honors a different library/folder and invalid destinations
   assert.throws(() => f.service.queue(f.book, 'export', { recording: 'recording', destination: {} }), { status: 422 });
 });
 
-test('a changed manual destination replaces a waiting automatic export instead of using its old default folder', async (t) => {
+test('manual exports cannot override a mapped book folder with a stale default destination', async (t) => {
   const f = await fixture(t); f.addReady(); await f.connectMapped(); f.failCatalog(true); await f.service.pump();
-  f.failCatalog(false);
-  f.service.queue(f.book, 'export', { recording: 'recording', destination: { libraryId: 'other-lib', folderId: 'other-folder' } }); await f.service.pump();
-  assert.equal(f.service.status(f.book).jobs[0].state, 'cancelled');
-  const body = f.calls.find((call) => call.path === '/abs/api/upload').options.body;
-  assert.equal(body.get('library'), 'other-lib'); assert.equal(body.get('folder'), 'other-folder');
+  assert.throws(() => f.service.queue(f.book, 'export', { recording: 'recording', destination: { libraryId: 'lib', folderId: 'folder' } }), { status: 422 });
+  f.failCatalog(false); f.clock(1015000); await f.service.pump();
+  assert.equal(f.uploads[0].folderId, 'spanish-folder');
 });
 
 test('disabling automatic export cancels pending work and re-enabling discovers it again', async (t) => {
@@ -336,4 +338,39 @@ test('folder editor changes one ABS mapping atomically, preserving the token, de
   await f.service.linkCategory('spanish', null); assert.equal(f.service.settings().categoryDestinations.spanish, undefined);
   assert.equal(f.service.settings().libraryId, 'lib'); assert.equal(f.service.settings().hasKey, true); await f.restart();
   assert.equal(f.service.settings().categoryDestinations.chinese.folderId, 'other-folder');
+});
+
+
+test('linking an existing folder copies previously exported audio into its new destination once without changing ABS files', async (t) => {
+  const f = await fixture(t); f.addReady(); await f.connectMapped(); await f.service.pump();
+  assert.equal(f.uploads.length, 1); const first = structuredClone(f.uploads[0]);
+  await f.service.linkCategory('spanish', { libraryId: 'other-lib', folderId: 'other-folder' });
+  await f.service.pump();
+  assert.equal(f.uploads.length, 2); assert.equal(f.uploads[1].folderId, 'other-folder');
+  assert.deepEqual(f.uploads[0], first);
+  assert.equal((await f.service.remote(f.book, 'recording')).item, f.uploads[1].id);
+  await f.restart(); await f.service.pump(); assert.equal(f.uploads.length, 2);
+  assert.equal(f.calls.some((call) => ['DELETE', 'PATCH', 'PUT'].includes(call.options.method)), false);
+});
+
+test('a matching title in an unrelated English folder does not redirect the export or trigger an import', async (t) => {
+  const f = await fixture(t); f.addReady(); await f.connectMapped();
+  f.item.folderId = 'folder'; f.remoteBooks.set('lib', [f.item]); await f.service.pump();
+  assert.equal(f.uploads.length, 1); assert.equal(f.uploads[0].folderId, 'spanish-folder');
+  assert.equal(f.imported.length, 0); assert.equal(f.removed.length, 0);
+});
+
+test('the process X cancels queued and active duplicate checks without deleting audio or requeuing automatically',async(t)=>{
+  const f=await fixture(t);f.addReady();await f.connectMapped();
+  const first=f.service.queue(f.book,'export',{recording:'recording'},true);f.service.cancel(f.book,first.id);await f.service.pump();
+  assert.equal(f.uploads.length,0);assert.equal(f.service.status(f.book).jobs.length,1);
+  const second=f.service.queue(f.book,'export',{recording:'recording'});f.duringCatalog(()=>f.service.cancel(f.book,second.id));await f.service.pump();
+  assert.equal(f.uploads.length,0);assert.equal(f.service.status(f.book).jobs.at(-1).state,'cancelled');assert.deepEqual(f.removed,[]);
+  await f.restart();await f.service.pump();assert.equal(f.uploads.length,0);
+});
+
+test('moving a book cancels an old folder’s replacement proposal before it can redirect the next export',async(t)=>{
+  const f=await fixture(t);f.addReady();await f.connectMapped({categoryDestinations:{spanish:{libraryId:'lib',folderId:'spanish-folder'},chinese:{libraryId:'other-lib',folderId:'other-folder'}}});
+  f.remoteBooks.set('lib',[f.item]);await f.service.pump();assert.equal(f.service.status(f.book).jobs.at(-1).state,'awaiting_confirmation');
+  f.book.categoryId='chinese';await f.service.pump();assert.equal(f.service.status(f.book).jobs[0].state,'cancelled');assert.equal(f.uploads[0].folderId,'other-folder');assert.deepEqual(f.removed,[]);assert.equal(f.imported.length,0);
 });

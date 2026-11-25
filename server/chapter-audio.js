@@ -9,7 +9,7 @@ const formats = 'mp3,mov,ogg,wav,flac,aac';
 const escapeMetadata = (text) => String(text).replace(/[\r\n]/gu, ' ').replace(/[\\=;#]/gu, '\\$&');
 export const chapterFileLimit = 200;
 export const chapterByteLimit = 1024 ** 3;
-export function chapterAudio({ db, folder, library, wake }) {
+export function chapterAudio({ db, folder, library, wake, reserveStorage = async () => () => {} }) {
   if (!db.prepare('PRAGMA table_info(recordings)').all().some((item) => item.name === 'sourceChapters')) db.exec("ALTER TABLE recordings ADD COLUMN sourceChapters TEXT NOT NULL DEFAULT '[]'");
   const originals = (id) => join(folder, `${id}.chapters`);
   const temporary = (id) => join(folder, `${id}.assembly`);
@@ -17,10 +17,10 @@ export function chapterAudio({ db, folder, library, wake }) {
     if (!Array.isArray(files) || !files.length || files.length > chapterFileLimit) throw new RequestError(422, `Choose 1–${chapterFileLimit} chapter files.`);
     const bytes = files.reduce((sum, file) => sum + file.size, 0);
     const id = randomUUID();
-    let saved = false;
+    let saved = false, release = () => {};
     try {
       if (bytes > chapterByteLimit) throw new RequestError(413, 'Chapter files must total 1 GiB or less per recording.');
-      library.getBook(book.id);
+      release = await reserveStorage(library.getBook(book.id).owner || '', bytes);
       await mkdir(originals(id));
       const chapters = [];
       for (const [index, file] of files.entries()) {
@@ -35,6 +35,7 @@ export function chapterAudio({ db, folder, library, wake }) {
       saved = true; wake(); return id;
     } finally {
       if (!saved) { await rm(originals(id), { recursive: true, force: true }); await Promise.allSettled(files.map((file) => rm(file.path, { force: true }))); }
+      release();
     }
   }
   async function assemble(job) {
@@ -83,8 +84,12 @@ export function chapterAudio({ db, folder, library, wake }) {
       '-c:a', 'libmp3lame', '-b:a', '96k', '-id3v2_version', '3', output], { timeout: 1800000 });
     if ((await stat(output)).size > chapterByteLimit) throw new RequestError(413, 'The combined MP3 exceeds the 1 GiB recording limit.');
     if (!valid()) { await rm(stage, { recursive: true, force: true }); return; }
-    await rename(output, join(folder, `${job.id}.source`));
-    db.prepare("UPDATE recordings SET state='uploaded',duration=?,progress=0,error=NULL WHERE id=?").run(chapters.at(-1).end, job.id);
+    const release = await reserveStorage(library.getBook(job.book).owner || '', (await stat(output)).size);
+    try {
+      if (!valid()) return;
+      await rename(output, join(folder, `${job.id}.source`));
+      db.prepare("UPDATE recordings SET state='uploaded',duration=?,progress=0,error=NULL WHERE id=?").run(chapters.at(-1).end, job.id);
+    } finally { release(); }
     await rm(stage, { recursive: true, force: true });
   }
   function original(book, id, index) {

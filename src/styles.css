@@ -869,3 +869,12 @@ body[data-auth="loading"]::before { content:'Opening Langy…'; position:fixed; 
 .account-menu { position: relative; }
 .account-menu > .library-menu-panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: 40; min-width: 170px; display: grid; gap: 4px; padding: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
 .account-menu > .library-menu-panel > button { justify-content: flex-start; }
+
+.download-card:has(.process-cancel) { position:relative; padding-right:48px; }
+.download-card .process-cancel { position:absolute; top:6px; right:6px; font-size:22px; line-height:1; width:30px; height:30px; }
+
+.cover-search-results { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:12px; }
+.cover-search-card { display:flex; flex-direction:column; align-items:stretch; gap:8px; border:1px solid var(--border); border-radius:8px; padding:10px; min-width:0; }
+.cover-search-card img { width:100%; height:150px; object-fit:contain; }
+.cover-search-card strong { font-size:13px; overflow-wrap:anywhere; }
+.cover-search-card .button, #find-book-covers { min-width:0; white-space:normal; overflow-wrap:anywhere; }

@@ -126,7 +126,7 @@ async function readMetadata(file, format) {
   }
 }
 
-export async function openLibrary(dir, limits = null, { coverDownload = downloadCover } = {}) {
+export async function openLibrary(dir, limits = null, { coverDownload = downloadCover, reserveStorage = async () => () => {} } = {}) {
   const folder = join(dir, 'books');
   const uploads = join(dir, 'uploads');
   await mkdir(folder, { recursive: true });
@@ -287,6 +287,8 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
 
   return {
     uploads, getBook, filePath, coverPath, instanceId,
+    ownedBooks: (owner) => db.prepare('SELECT * FROM books WHERE owner=?').all(owner),
+    storageFiles(owner) { return db.prepare('SELECT * FROM books WHERE owner=?').all(owner).flatMap((book) => [filePath(book), filePath({ ...book, contentRevision: '' }), coverPath(book), coverPath({ ...book, coverRevision: '' })]); },
     bookmarks(id, visitor) {
       getBook(id, visitor);
       db.prepare('DELETE FROM bookmarks WHERE expires IS NOT NULL AND expires<=?').run(Date.now());
@@ -398,7 +400,7 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
       }
       const book = { id, format };
       const owner = editable(visitor);
-      let saved = false;
+      let saved = false, release = () => {};
       try {
         const sharedBook = sharing(body.shared);
         const coverStyle = body.coverStyle ?? 'auto';
@@ -415,6 +417,7 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
         const title = asText(body.title, 250) || asText(metadata.title, 250)
           || filenameTitle(basename(file.originalname)) || 'Untitled';
         const author = asText(body.author, 200) || asText(metadata.author, 200);
+        release = await reserveStorage(owner, (await stat(file.path)).size + (metadata.thumbnail?.length || 0));
         if (metadata.thumbnail) await writeFile(coverPath(book), metadata.thumbnail, { flag: 'wx' });
         await rename(file.path, filePath(book));
         // Validate the category after asynchronous file operations, so a concurrent delete is safe.
@@ -439,6 +442,7 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
         if (!saved) {
           await Promise.allSettled([file.path, filePath(book), coverPath(book)].map((path) => rm(path, { force: true })));
         }
+        release();
       }
     },
     async replacePDF(id, file, options, visitor) {
@@ -450,11 +454,12 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
       if (options.expectedRevision !== undefined && original.contentRevision !== options.expectedRevision) throw new RequestError(409, 'This PDF changed during OCR. Scan the current version again.');
       const replacement = { ...original, contentRevision: revision }, destination = filePath(replacement), staging = destination + '.pending';
       if (!file?.path || file.path === filePath(original) || file.path === destination) throw new RequestError(422, 'Choose a separate OCR output file.');
-      let published = false;
+      let published = false, release = () => {};
       try {
         const { size } = await stat(file.path);
         if (!size || size > maxUpload) throw new RequestError(413, 'The searchable PDF must be between 1 byte and 120 MiB.');
         await readMetadata(file.path, 'pdf');
+        release = await reserveStorage(original.owner, size);
         await copyFile(file.path, staging); await rename(staging, destination);
         const current = getBook(id, visitor);
         if (current.contentRevision !== original.contentRevision || current.owner !== original.owner) throw new RequestError(409, 'This PDF changed during OCR. Scan the current version again.');
@@ -475,6 +480,7 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
         return publicBook(getBook(id, visitor), visitor);
       } finally {
         await Promise.allSettled([staging, file.path, ...(!published ? [destination] : [])].map((path) => rm(path, { force: true })));
+        release();
       }
     },
     async resolveBookDetails(id, body, visitor) {
@@ -494,8 +500,9 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
     async importCover(id, url, visitor) {
       const original = getBook(id, visitor);
       if (original.owner !== editable(visitor)) throw new RequestError(403, 'Only the book owner can replace its cover.');
-      const cover = await coverDownload(url), revision = randomUUID(), target = coverPath({ id, coverRevision: revision }); let saved = false;
+      const cover = await coverDownload(url), revision = randomUUID(), target = coverPath({ id, coverRevision: revision }); let saved = false, release = () => {};
       try {
+        release = await reserveStorage(original.owner, cover.thumbnail.length);
         await writeFile(target, cover.thumbnail, { flag: 'wx', mode: 0o600 });
         const current = getBook(id, visitor);
         if (current.owner !== original.owner || current.coverRevision !== original.coverRevision) throw new RequestError(409, 'This cover changed during the download. Try again.');
@@ -504,7 +511,7 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
         touch(); saved = true;
         if (current.coverRevision) await rm(coverPath(current), { force: true }).catch(() => {});
         return publicBook(getBook(id, visitor), visitor);
-      } finally { if (!saved) await rm(target, { force: true }); }
+      } finally { if (!saved) await rm(target, { force: true }); release(); }
     },
     editBook(id, body, visitor) {
       const book = getBook(id, visitor);

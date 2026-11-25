@@ -29,12 +29,20 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
       list.replaceChildren(...entries.map((job) => {
         const card = element('article', 'download-card process-card'); card.dataset.process = job.id;
         card.append(element('h3', '', job.label));
+        if (active(job) && job.cancellable) {
+          const cancel=element('button','icon-button small process-cancel','×');cancel.type='button';cancel.setAttribute('aria-label','Cancel '+job.label);cancel.title='Cancel process';
+          cancel.addEventListener('click',async () => {cancel.disabled=true;
+            try { if (job.id.startsWith('request:')) processTasks.cancel(job.id); else await api('/api/processes/'+encodeURIComponent(job.id),{method:'DELETE'}); await refresh(); }
+            catch(error){message('#process-error',error.message);cancel.disabled=false;}
+          });card.append(cancel);
+        }
         if (job.title) { const title = element('p', 'process-book-title', job.title); title.setAttribute('data-user-content', ''); card.append(title); }
         const state = ({ queued: 'Queued', running: 'In progress', waiting: 'Waiting', failed: 'Needs attention', completed: 'Finished', cancelled: 'Cancelled' })[job.state] || job.state;
         const detail = job.detail || (job.nextAttempt ? `Retry at ${new Date(job.nextAttempt).toLocaleTimeString()}` : '');
         card.append(element('p', 'field-note', [state, detail].filter(Boolean).join(' · ')));
         if (active(job)) { const bar = document.createElement('progress'); bar.max = 100; if (Number.isFinite(job.progress)) bar.value = job.progress; bar.setAttribute('aria-label', job.label); card.append(bar); }
         const actions = element('div', 'download-actions');
+        if (job.retry) { const retry=element('button','button secondary small','Retry');retry.type='button';retry.addEventListener('click',async()=>{retry.disabled=true;try{await api('/api/imports/web/'+encodeURIComponent(job.retry)+'/retry',{method:'POST'});await refresh();}catch(error){message('#process-error',error.message);retry.disabled=false;}});actions.append(retry);}
         if (job.decision) for (const [label, replace] of [['Import and replace Langy audio', true], ['Keep current audio', false]]) {
           const decide = element('button', `button ${replace ? '' : 'quiet'} small`, label); decide.type = 'button';
           decide.addEventListener('click', async () => {

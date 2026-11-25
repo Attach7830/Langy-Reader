@@ -171,6 +171,23 @@ test('self-hosted users have private libraries, owner-controlled sharing and iso
     await f.api('/api/imports/anna/' + one.id, third, { method: 'DELETE', status: 404 });
     const queue = await f.api('/api/processes', admin); assert.equal(JSON.stringify(queue).includes('Private queued title'), false); assert.equal((await f.api('/api/imports/anna', admin)).jobs[0].id, two.id);
   });
+  await t.test('per-user quotas and source-key permissions are private and enforced on existing libraries', async () => {
+    const users = (await f.api('/api/admin/users', admin)).users, user = users.find((item) => item.username === 'member');
+    assert.ok(user.storage.usedBytes > 0);
+    await f.api('/api/admin/users/' + user.id, admin, {method:'PATCH', body:{storageLimit:0, sharedArchive:false, maxSessions:2, rememberDays:7}});
+    const usage = await f.api('/api/storage', member); assert.equal(usage.scope,'account'); assert.equal(usage.totalBytes,0); assert.equal(usage.overLimit,true);
+    assert.ok((await f.api('/api/library', member)).books.some((book) => book.id === privateBook.id));
+    const data = new FormData(); data.set('file',new Blob([await sampleBook()]),'limited.epub');
+    await f.api('/api/books',member,{body:data,status:507});
+    const settings = await f.api('/api/settings/archive',member); assert.equal(settings.configurable,true); assert.equal(settings.sharedAllowed,false);
+    await f.api('/api/settings/archive',member,{method:'PUT',body:{useShared:true},status:403});
+    await f.api('/api/settings/archive',member,{method:'PUT',body:{apiKey:'member-private-example-key',useShared:false}});
+    assert.equal((await f.api('/api/settings/archive',member)).hasPersonalKey,true);
+    assert.equal((await f.api('/api/settings/archive',third)).hasPersonalKey,false);
+    assert.equal(JSON.stringify(await f.api('/api/settings/archive',member)).includes('member-private-example-key'),false);
+    await f.api('/api/admin/users/' + user.id,admin,{method:'PATCH',body:{storageLimit:null}});
+    assert.equal((await f.api('/api/storage',member)).unlimited,true);
+  });
   await t.test('disabling or resetting an account revokes sessions and device credentials without losing its books', async () => {
     const users = (await f.api('/api/admin/users', admin)).users, user = users.find((item) => item.username === 'member');
     await f.api('/api/admin/users/' + user.id, admin, { method: 'PATCH', body: { disabled: true } });

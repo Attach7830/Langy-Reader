@@ -6,6 +6,10 @@ import express from 'express';
 import multer from 'multer';
 import { maxUpload, openLibrary, RequestError } from './books.js';
 import { openAccounts } from './accounts.js';
+import { userStorage } from './user-storage.js';
+import { fontDownloads } from './font-downloads.js';
+import { openBookImports } from './book-imports.js';
+import { openCoverSearch } from './cover-search.js';
 import { openFonts, fontUploadLimit } from './fonts.js';
 import { openAIProfiles } from './ai-profiles.js';
 import { openAISettings } from './ai.js';
@@ -39,7 +43,9 @@ const demo = process.env.READER_DEMO === '1';
 const dir = resolve(process.env.READER_DATA || join(root, 'data'));
 await verifyStorage(dir);
 const limits = demo ? { upload: demoUploadLimit, books: demoBookLimit, storage: demoStorageLimit } : null;
-const library = await openLibrary(dir, limits);
+let accountStorage;
+const reserveStorage = (owner, bytes) => accountStorage ? accountStorage.reserve(owner, bytes) : Promise.resolve(() => {});
+const library = await openLibrary(dir, limits, { reserveStorage });
 const password = process.env.READER_PASSWORD || '';
 const accounts = await openAccounts(dir, { demo, username: process.env.READER_USER || 'reader', password, reservedUsernames: [process.env.READER_SYNC_USER] });
 const readerSettings = openReaderSettings(dir, { demo, username: process.env.READER_USER || 'reader', ownerFor: accounts.preferenceOwner });
@@ -51,7 +57,7 @@ const progressSync = openProgressSync(dir, { library, demo,
   password: syncPassword || password,
   authenticate: accounts.enabled ? async (name, key, req) => {
     const rootName = process.env.READER_USER || 'reader';
-    if (syncExpected && name === syncUsername) return timingSafeEqual(syncExpected, createHash('sha256').update(`${name}:${key}`).digest()) ? accounts.visitorForOwner('') : null;
+    if (syncExpected && name === syncUsername) { const policy = accounts.policyForOwner(''); if (!policy.active || !policy.allowDevices) return null; return timingSafeEqual(syncExpected, createHash('sha256').update(`${name}:${key}`).digest()) ? accounts.visitorForOwner('') : null; }
     if ((syncPassword || syncUsername !== rootName) && name.toLowerCase() === rootName.toLowerCase()) return null;
     const loginName = name === syncUsername && !syncPassword ? rootName : name;
     return accounts.authenticate(loginName, key, { sync: true, source: `sync:${req.ip}` });
@@ -72,17 +78,26 @@ const lookupSynonyms = openThesaurus();
 const mandarin = openMandarin();
 const bookPinyin = openBookPinyin(dir, mandarin, { demo });
 const nativeLanguage = (visitor) => readerSettings.get(visitor).preferences.nativeLanguage || '';
-const learning = await openLearning(dir, library, demo, ai, { nativeLanguage, withAI });
+const learning = await openLearning(dir, library, demo, ai, { nativeLanguage, withAI, reserveStorage });
 const readingTime = openReadingTime(dir, { section: (book, key) => learning.vocabulary.section(book, key) });
 const toolsForBook = bookTools({ learning, ai });
 const offlinePack = offlinePacks({ learning, mandarin, lookupSynonyms });
-const readingAccount = (visitor) => ({ id: readerSettings.get(visitor).accountId, expires: visitor?.expires ?? null });
-const userFonts = await openFonts(dir);
+const readingAccount = (visitor) => ({ id: readerSettings.get(visitor).accountId, owner: visitor?.id || '', expires: visitor?.expires ?? null });
+const userFonts = await openFonts(dir, { reserveStorage });
+accountStorage = userStorage(dir, {
+  policy: (owner) => demo ? { active: true, storageLimit: null } : accounts.policyForOwner(owner),
+  paths: (owner) => [...library.storageFiles(owner), ...library.ownedBooks(owner).flatMap((book) => learning.storageFiles(book.id)),
+    ...userFonts.storageFiles(readingAccount(accounts.visitorForOwner(owner)).id)],
+});
+const storageFor = (visitor) => demo ? library.storage(visitor) : accountStorage.summary(visitor?.id || '');
+const covers = await openCoverSearch(dir,{demo});
+const freeFonts = fontDownloads({fonts:userFonts,uploads:library.uploads});
 const vocabularyMeaning = vocabularyMeanings({ vocabulary: learning.vocabulary, ai, lookupSynonyms });
-const archive = await openArchive(dir, { library, demo, onImport: (book, details) => learning.scheduleAudiobook(library.getBook(book.id), details) });
+const archive = await openArchive(dir, { library, demo, canUseShared: accounts.canUseArchiveKey, visitorForOwner: accounts.visitorForOwner, activeOwner: (owner) => accounts.policyForOwner(owner).active, onImport: (book, details) => learning.scheduleAudiobook(library.getBook(book.id), details) });
 const ocr = await openPDFOCR(dir, { library, demo, onImport: (book) => learning.ensure(library.getBook(book.id)) });
 const audiobookshelf = await openAudiobookshelf(dir, { library, learning, demo });
-const processes = openProcesses(dir, { library, archive, discovery, learning, demo, account: readingAccount });
+const webImports = await openBookImports(dir,{library,demo,visitorForOwner:accounts.visitorForOwner,activeOwner:(owner)=>accounts.policyForOwner(owner).active,onImport:(book,details)=>{learning.ensure(library.getBook(book.id));learning.scheduleAudiobook(library.getBook(book.id),details);}});
+const processes = openProcesses(dir, { library, webImports, archive, discovery, learning, demo, account: readingAccount });
 const uploadLimit = limits?.upload ?? maxUpload;
 const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 10, fieldSize: 4096 } });
 const audioUpload = multer({ dest: library.uploads, limits: { fileSize: maxAudioUpload, files: 1, fields: 1, fieldSize: 1024 } });
@@ -151,17 +166,18 @@ app.post('/api/account/password', async (req, res) => {
   await accounts.resetPassword(req.visitor.userId, req.body?.newPassword);
   accounts.issue(req, res, req.visitor, { rememberMe }); res.json({ saved: true });
 });
-app.get('/api/admin/users', (req, res) => { accounts.requireAdmin(req.visitor); res.json({ users: accounts.list() }); });
+app.get('/api/admin/users', async (req, res) => { accounts.requireAdmin(req.visitor); res.json({ users: await Promise.all(accounts.list().map(async (user) => ({ ...user, storage: await accountStorage.summary(accounts.ownerForUser(user.id)) }))) }); });
 app.post('/api/admin/users', async (req, res) => {
   accounts.requireAdmin(req.visitor); const user = await accounts.create(req.body ?? {}); await aiProfiles.prepare(user); res.status(201).json(user);
 });
 app.patch('/api/admin/users/:id', (req, res) => { accounts.requireAdmin(req.visitor); res.json(accounts.update(req.params.id, req.body ?? {})); });
+app.post('/api/admin/users/:id/sessions/revoke', (req, res) => { accounts.requireAdmin(req.visitor); res.json(accounts.revokeSessions(req.params.id)); });
 app.post('/api/admin/users/:id/password', async (req, res) => { accounts.requireAdmin(req.visitor); res.json(await accounts.resetPassword(req.params.id, req.body?.password)); });
 app.use('/opds', opdsRouter({ library, demo, onDownload: demo ? undefined : progressSync.bookDocument }));
 app.use((req, _res, next) => {
   if (accounts.enabled && !usesOwnerAudiobookshelf(req) && /^\/api\/(?:audiobookshelf(?:\/|$)|settings\/audiobookshelf(?:\/|$))/u.test(req.path) && (req.method !== 'GET' || req.path.startsWith('/api/audiobookshelf/'))) throw new RequestError(403, 'Audiobookshelf is managed by the instance owner.');
   if (accounts.enabled && !isAdministrator(req)) {
-    const service = /^\/api\/(?:settings\/(?:learning|archive|audiobookshelf|ocr)(?:\/|$)|audiobookshelf(?:\/|$))/u.test(req.path);
+    const service = /^\/api\/(?:settings\/(?:learning|audiobookshelf|ocr|covers)(?:\/|$)|audiobookshelf(?:\/|$))/u.test(req.path);
     if (service && (req.method !== 'GET' || req.path.startsWith('/api/audiobookshelf/'))) throw new RequestError(403, 'Server connections are managed by the administrator.');
   }
   next();
@@ -193,8 +209,8 @@ if (demo) {
   app.put('/api/settings/learning', (req, res) => res.json(learning.save(req.body ?? {})));
   app.delete('/api/settings/learning/key', (_req, res) => res.json(learning.save({ ...learning.settings(), clearKey: true })));
   app.post('/api/settings/learning/voices', async (req, res) => res.json(await learning.voices()));
-  app.put('/api/settings/archive', async (req, res) => res.json(await archive.save(req.body ?? {})));
-  app.delete('/api/settings/archive/key', async (_req, res) => res.json(await archive.removeKey()));
+  app.put('/api/settings/archive', async (req, res) => res.json(await archive.save(req.body ?? {}, req.visitor)));
+  app.delete('/api/settings/archive/key', async (req, res) => res.json(await archive.removeKey(req.visitor)));
   app.post('/api/imports/anna', (req, res) => res.status(202).json(archive.queue(req.body ?? {}, req.visitor)));
   app.get('/api/imports/anna', (req, res) => res.json({ jobs: archive.list(req.visitor) }));
   app.post('/api/imports/anna/batch', (req, res) => res.status(202).json(archive.queueBatch(req.body ?? {}, req.visitor)));
@@ -213,9 +229,20 @@ app.patch('/api/settings/reader', (req, res) => {
   if (!result.conflict && result.preferences.cacheAI === false) aiCache.clear(req.visitor);
   res.status(result.conflict ? 409 : 200).json(result);
 });
+app.get('/api/settings/covers',(req,res)=>{const config=covers.settings();res.json(accounts.enabled&&!isAdministrator(req)?{configurable:false,hasGoogleKey:config.hasGoogleKey,amazonConnected:config.amazonConnected}:config);});
+app.put('/api/settings/covers',async(req,res)=>res.json(await covers.save(req.body ?? {})));
+app.post('/api/covers/search',async(req,res)=>res.json(await covers.search(req.body ?? {},req.visitor?.id||'')));
+app.get('/api/covers/previews/:id',async(req,res)=>{const image=await covers.preview(req.params.id,req.visitor?.id||'');res.set('Cache-Control','private, no-store').type(image.thumbnailType).send(image.thumbnail);});
 app.get('/api/fonts', async (req, res) => res.json({ accountId: readingAccount(req.visitor).id, fonts: await userFonts.list(readingAccount(req.visitor).id) }));
 const fontUpload = multer({ dest: library.uploads, limits: { fileSize: fontUploadLimit, files: 1, fields: 1, fieldSize: 400 } }).single('file');
 app.post('/api/fonts', ...demoUploads, (req, res, next) => { req.fontUpload = true; fontUpload(req, res, next); }, async (req, res) => res.status(201).json(await userFonts.add(req.file, readingAccount(req.visitor), req.body?.name)));
+app.get('/api/fonts/catalogue', async (req,res) => res.json(await freeFonts.search(req.query.q)));
+app.get('/api/fonts/catalogue/:id', async (req,res) => res.json(await freeFonts.variants(req.params.id)));
+app.post('/api/fonts/download', ...demoUploads, async (req,res) => {
+  const controller=new AbortController();res.on('close',()=>controller.abort());if(res.destroyed)controller.abort();
+  const font=await freeFonts.download(req.body ?? {},readingAccount(req.visitor),controller.signal);
+  if(!controller.signal.aborted)res.status(201).json(font);
+});
 app.get('/api/fonts/:id/file', (req, res) => { const font = userFonts.file(req.params.id, readingAccount(req.visitor).id); res.set('Cache-Control', 'private, no-store').set('X-Content-Type-Options', 'nosniff').type(font.type).sendFile(font.path, { dotfiles: 'allow', cacheControl: false }); });
 app.delete('/api/fonts/:id', async (req, res) => { await userFonts.remove(req.params.id, readingAccount(req.visitor).id); res.json({ fonts: await userFonts.list(readingAccount(req.visitor).id) }); });
 app.get('/api/settings/learning', (req, res) => res.json({ ...learning.settings(), ...(accounts.enabled && !isAdministrator(req) ? { configurable: false, managed: true } : {}) }));
@@ -267,7 +294,7 @@ app.post('/api/books/:id/question', ...demoGenerations, async (req, res) => {
 app.post('/api/books/:id/bookmarks', (req, res) => res.json(library.saveBookmark(req.params.id, req.body ?? {}, req.visitor)));
 app.delete('/api/books/:id/bookmarks/:bookmark', (req, res) => res.json(library.removeBookmark(req.params.id, req.params.bookmark, req.visitor)));
 app.post('/api/books/:id/ocr', (req, res) => res.status(202).json(ocr.queue(library.getBook(req.params.id, req.visitor), req.body ?? {})));
-app.get('/api/settings/archive', (req, res) => res.json({ ...archive.settings(), ...(accounts.enabled && !isAdministrator(req) ? { configurable: false, managed: true } : {}) }));
+app.get('/api/settings/archive', (req, res) => res.json(archive.settings(req.visitor)));
 app.get('/api/settings/sync', (req, res) => res.json(progressSync.settings(req.visitor)));
 if (!demo) {
   app.get('/api/books/:id/progress', async (req, res) => res.json(await progressSync.get(library.getBook(req.params.id, req.visitor), req.visitor)));
@@ -280,7 +307,7 @@ app.get('/api/settings/opds', (req, res) => res.json({
   available: !demo, path: '/opds', username: !demo && accounts.enabled ? req.visitor?.username || process.env.READER_USER || 'reader' : '',
   authenticated: !demo && accounts.enabled, pageSize: opdsPageSize,
 }));
-app.get('/api/storage', async (req, res) => res.json(await library.storage(req.visitor)));
+app.get('/api/storage', async (req, res) => res.json(await storageFor(req.visitor)));
 app.get('/api/reading-time', (req, res) => res.json(readingTime.summary(readingAccount(req.visitor))));
 app.post('/api/books/:id/reading-time', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor), account = readingAccount(req.visitor);
@@ -288,7 +315,25 @@ app.post('/api/books/:id/reading-time', (req, res) => {
   catch (error) { if (error.accountChanged) return res.status(409).json({ error: error.message, accountChanged: true }); throw error; }
 });
 app.get('/api/discovery', (req, res) => res.json(discovery.status(req.visitor)));
+app.get('/api/book-catalogue/gutenberg',async(req,res)=>res.json(await webImports.catalogue(req.query.q,Number(req.query.page||1))));
+app.post('/api/imports/web', (req,res)=>res.status(202).json(webImports.queue(req.body ?? {},req.visitor)));
+app.get('/api/imports/web', (req,res)=>res.json({jobs:webImports.list(req.visitor)}));
+app.post('/api/imports/web/:id/retry',(req,res)=>res.status(202).json(webImports.retry(req.params.id,req.visitor)));
 app.get('/api/processes', (req, res) => res.json(processes.list(req.visitor)));
+app.delete('/api/processes/:id', async (req,res) => {
+  const job=processes.list(req.visitor).jobs.find((item) => item.id === req.params.id);
+  if (!job) throw new RequestError(404,'Process not found.');
+  if (!job.cancellable) throw new RequestError(403,'Only the book owner can cancel this process, and completed files cannot be cancelled.');
+  const id=job.id.slice(job.id.indexOf(':')+1), book=job.bookId ? library.getBook(job.bookId,req.visitor) : null;
+  if (job.kind === 'web-import') webImports.cancel(id,req.visitor);
+  else if (job.kind === 'archive') archive.cancel(id,req.visitor);
+  else if (job.kind === 'discovery') discovery.cancel(req.visitor);
+  else if (job.kind === 'ocr') ocr.cancel(book,id);
+  else if (job.kind === 'audiobookshelf') { if (!usesOwnerAudiobookshelf(req)) throw new RequestError(403,'This Audiobookshelf connection belongs to the instance owner.'); audiobookshelf.cancel(book,id); }
+  else if (job.kind === 'ivoox') learning.ivoox.cancel(book);
+  else learning.cancelProcess(job.kind,book,id);
+  res.json({cancelled:true});
+});
 app.post('/api/discovery', ...(demo ? [limitJobs({ perMinute: 6, perVisitor: 2 })] : []), (req, res) => res.status(202).json(discovery.queue(req.body ?? {}, req.visitor)));
 app.delete('/api/discovery', (req, res) => res.json(discovery.cancel(req.visitor)));
 app.get('/api/library', async (req, res) => {
@@ -298,8 +343,9 @@ app.get('/api/library', async (req, res) => {
   res.json({
     ...snapshot,
     progress: demo ? null : progressSync.snapshot(req.visitor),
-    storage: await library.storage(req.visitor),
-    archive: { available: !demo, hasKey: archive.settings().hasKey, job: demo ? null : archive.latest(req.visitor), jobs: demo ? [] : archive.list(req.visitor) },
+    storage: await storageFor(req.visitor),
+    imports: webImports.list(req.visitor),
+    archive: { available: !demo, hasKey: archive.settings(req.visitor).hasKey, job: demo ? null : archive.latest(req.visitor), jobs: demo ? [] : archive.list(req.visitor) },
     vocabulary: { byLanguage: reader.byLanguage, likelyKnown: reader.knownByLanguage, threshold: reader.threshold, reading: reader.reading },
     readingTime: readingTime.summary(readingAccount(req.visitor)),
     books: books.map((book) => ({ ...book, familiarity: learning.vocabulary.familiarity(book, reader) })),

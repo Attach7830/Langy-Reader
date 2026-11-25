@@ -63,5 +63,8 @@ export function readingEstimates({ db, ai, timeoutMs = 100000, withAI = (_visito
       if (active === job) active = null;
     }
   }
-  return { queue, status, invalidate, pump };
+  return { queue, status, invalidate, pump, cancel(book) {
+    db.prepare("UPDATE estimates SET state='cancelled',error=NULL WHERE book=? AND state IN ('queued','running')").run(book);
+    if (active?.book === book) active.controller.abort(new DOMException('Cancelled', 'AbortError'));
+  } };
 }

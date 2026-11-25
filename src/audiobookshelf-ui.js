@@ -18,7 +18,7 @@ export function audiobookshelfSettings() {
   }
   function folders(select, libraryId, selected, isMapping = false) {
     const available = libraries.find((item) => item.id === libraryId)?.folders || [];
-    select.replaceChildren(new Option(isMapping && !libraryId ? 'Use default folder' : 'Choose a folder', ''),
+    select.replaceChildren(new Option(isMapping && !libraryId ? 'Not linked' : 'Choose a folder', ''),
       ...available.map((item) => new Option(item.fullPath || item.path || item.id, item.id)));
     if (selected && !available.some((item) => item.id === selected)) select.append(new Option('Unavailable saved folder', selected));
     select.value = selected || ''; select.disabled = !libraryId;
@@ -105,7 +105,7 @@ export function audiobookshelfBook({ book, changed }) {
   let epoch = 0, timer, current, page = 0;
   const library = $('#abs-book-library'), items = $('#abs-book-item'), recording = $('#abs-book-recording');
   const exportLibrary = $('#abs-export-library'), exportFolder = $('#abs-export-folder');
-  let exportChoices = [];
+  let exportChoices = [], mappedExport = false;
   function updateExport() {
     const lib = exportChoices.find((item) => item.id === exportLibrary.value), folder = lib?.folders?.find((item) => item.id === exportFolder.value);
     $('#abs-export').disabled = !recording.options.length || !folder;
@@ -116,7 +116,7 @@ export function audiobookshelfBook({ book, changed }) {
     const folders = exportChoices.find((item) => item.id === exportLibrary.value)?.folders || [];
     exportFolder.replaceChildren(new Option('Choose an export folder', ''), ...folders.map((item) => new Option(item.fullPath || item.path || item.id, item.id)));
     exportFolder.value = folders.some((item) => item.id === selected) ? selected : chooseSingle && folders.length === 1 ? folders[0].id : '';
-    exportFolder.disabled = !exportLibrary.value; updateExport();
+    exportFolder.disabled = mappedExport || !exportLibrary.value; updateExport();
   }
   exportLibrary.addEventListener('change', () => exportFolders('', true));
   exportFolder.addEventListener('change', updateExport);
@@ -155,12 +155,14 @@ export function audiobookshelfBook({ book, changed }) {
       library.disabled = recording.disabled = exportLibrary.disabled = false; $('#abs-import').disabled = false;
       library.replaceChildren(...choices.libraries.map((item) => new Option(item.name, item.id)));
       const mappings = config.categoryDestinations || {}, category = book().categoryId || 'uncategorized';
-      const destination = state.destination || (Object.hasOwn(mappings, category) ? mappings[category] : config);
+      const destination = state.destination || mappings[category] || {};
+      mappedExport = Boolean(destination.libraryId && destination.folderId);
       const targetLibrary = choices.libraries.find((item) => item.id === destination.libraryId);
       if (targetLibrary) library.value = targetLibrary.id;
       exportChoices = choices.libraries;
       exportLibrary.replaceChildren(new Option('Choose an export library', ''), ...exportChoices.map((item) => new Option(item.name, item.id)));
       exportLibrary.value = targetLibrary?.id || '';
+      exportLibrary.disabled = mappedExport;
       const recordings = [...(audio.audio.state === 'ready' ? [{ id: audio.audio.id, name: audio.audio.name || 'Generated narration' }] : []), ...(audio.recordings || [])];
       recording.replaceChildren(...recordings.filter((item, index) => recordings.findIndex((other) => other.id === item.id) === index).map((item) => new Option(item.name, item.id)));
       $('#abs-link').disabled = !recordings.length;

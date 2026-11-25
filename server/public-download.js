@@ -40,9 +40,10 @@ export async function resolveDownloadHost(host, resolve = lookup) {
   return addresses;
 }
 
-export async function publicDownload(value, { signal, redirects = 5 } = {}) {
+export async function publicDownload(value, { signal, redirects = 5, validate = () => {} } = {}) {
   let url = downloadURL(value);
   for (let hop = 0; ; hop++) {
+    validate(url);
     const addresses = await resolveDownloadHost(url.hostname.replace(/^\[|\]$/gu, ''));
     const response = await new Promise((resolve, reject) => {
       const req = request(url, {
