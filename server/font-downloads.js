@@ -47,7 +47,7 @@ export function fontDownloads({ fonts, uploads, request = publicDownload, now = 
     }
     return {id, family:value.family || id, source:'https://fontsource.org/fonts/'+id, choices};
   }
-  async function download(body, account) {
+  async function download(body, account, signal) {
     let url, label=body.name, source;
     if (body.id) {
       const font=await variants(body.id), choice=font.choices.find((item) => item.weight === String(body.weight) && item.style === body.style && item.subset === body.subset);
@@ -55,13 +55,16 @@ export function fontDownloads({ fonts, uploads, request = publicDownload, now = 
       url=choice.url; label=font.family+' · '+choice.subset+' '+choice.weight+' '+choice.style; source=font.source;
     } else { url=trustedFontURL(body.url).href; source=url; }
     const path=join(uploads,'font-'+randomUUID()+'.part'); let response;
+    const stop=AbortSignal.any([AbortSignal.timeout(60000),...[signal].filter(Boolean)]);
     try {
-      response=await request(url,{signal:AbortSignal.timeout(60000),validate:trustedFontURL});
+      stop.throwIfAborted();
+      response=await request(url,{signal:stop,validate:trustedFontURL});
       if (response.statusCode !== 200) throw new RequestError(502,'The font website did not return a downloadable file.');
       if (Number(response.headers['content-length'])>fontUploadLimit) throw new RequestError(413,'Font files must be at most 32 MiB.');
       let size=0; const meter=new Transform({transform(chunk,_encoding,done){size+=chunk.length;done(size>fontUploadLimit?new RequestError(413,'Font files must be at most 32 MiB.'):null,chunk);}});
-      await pipeline(response,meter,createWriteStream(path,{flags:'wx',mode:0o600}));
-      return await fonts.add({path,originalname:basename(new URL(url).pathname)},account,label,source);
+      await pipeline(response,meter,createWriteStream(path,{flags:'wx',mode:0o600}),{signal:stop});
+      stop.throwIfAborted();
+      return await fonts.add({path,originalname:basename(new URL(url).pathname)},account,label,source,stop);
     } finally {response?.destroy();await rm(path,{force:true});}
   }
   return {search,variants,download};

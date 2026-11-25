@@ -238,7 +238,11 @@ const fontUpload = multer({ dest: library.uploads, limits: { fileSize: fontUploa
 app.post('/api/fonts', ...demoUploads, (req, res, next) => { req.fontUpload = true; fontUpload(req, res, next); }, async (req, res) => res.status(201).json(await userFonts.add(req.file, readingAccount(req.visitor), req.body?.name)));
 app.get('/api/fonts/catalogue', async (req,res) => res.json(await freeFonts.search(req.query.q)));
 app.get('/api/fonts/catalogue/:id', async (req,res) => res.json(await freeFonts.variants(req.params.id)));
-app.post('/api/fonts/download', ...demoUploads, async (req,res) => res.status(201).json(await freeFonts.download(req.body ?? {},readingAccount(req.visitor))));
+app.post('/api/fonts/download', ...demoUploads, async (req,res) => {
+  const controller=new AbortController();res.on('close',()=>controller.abort());if(res.destroyed)controller.abort();
+  const font=await freeFonts.download(req.body ?? {},readingAccount(req.visitor),controller.signal);
+  if(!controller.signal.aborted)res.status(201).json(font);
+});
 app.get('/api/fonts/:id/file', (req, res) => { const font = userFonts.file(req.params.id, readingAccount(req.visitor).id); res.set('Cache-Control', 'private, no-store').set('X-Content-Type-Options', 'nosniff').type(font.type).sendFile(font.path, { dotfiles: 'allow', cacheControl: false }); });
 app.delete('/api/fonts/:id', async (req, res) => { await userFonts.remove(req.params.id, readingAccount(req.visitor).id); res.json({ fonts: await userFonts.list(readingAccount(req.visitor).id) }); });
 app.get('/api/settings/learning', (req, res) => res.json({ ...learning.settings(), ...(accounts.enabled && !isAdministrator(req) ? { configurable: false, managed: true } : {}) }));

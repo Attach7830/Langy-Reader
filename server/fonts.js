@@ -43,7 +43,7 @@ export async function openFonts(dir, { reserveStorage = async () => () => {} } =
     storageFiles: (owner) => db.prepare('SELECT * FROM fonts WHERE owner=?').all(owner).map(path),
     async list(owner) { await prune(); return db.prepare('SELECT * FROM fonts WHERE owner=? ORDER BY created,name').all(owner).map(publicFont); },
     file(id, owner) { const font = row(id, owner); return { path: path(font), type: 'font/' + font.format }; },
-    async add(file, account, name, source = null) {
+    async add(file, account, name, source = null, signal) {
       if (!file?.path) throw new RequestError(422, 'Choose one font file.');
       let target, saved = false, release = () => {};
       try {
@@ -53,8 +53,10 @@ export async function openFonts(dir, { reserveStorage = async () => () => {} } =
         const old = db.prepare('SELECT * FROM fonts WHERE owner=? AND digest=?').get(account.id, digest); if (old) return publicFont(old);
         quota(account.id, size);
         release = await reserveStorage(account.owner ?? account.id, size);
+        signal?.throwIfAborted();
         if (account.expires && db.prepare('SELECT coalesce(sum(bytes),0) AS bytes FROM fonts WHERE expires IS NOT NULL').get().bytes + size > 256 * 1024 ** 2) throw new RequestError(507, 'The demo font storage is full. Try later or use your own instance.');
         const font = { id: randomUUID(), format }; target = path(font); await rename(file.path, target);
+        signal?.throwIfAborted();
         const concurrent = db.prepare('SELECT * FROM fonts WHERE owner=? AND digest=?').get(account.id, digest); if (concurrent) return publicFont(concurrent);
         quota(account.id, size); if (account.expires && account.expires <= Date.now()) throw new RequestError(410, 'Your demo session expired. Reload before importing a font.');
         const label = (typeof name === 'string' && name.trim() || basename(file.originalname || 'Imported font', extname(file.originalname || ''))).replace(/[\x00-\x1f]/gu, '').slice(0, 100) || 'Imported font';
