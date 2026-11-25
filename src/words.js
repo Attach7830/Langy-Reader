@@ -271,9 +271,12 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
     if (!current) return false;
     event.preventDefault(); current.cycle(event.key === 'ArrowDown' ? 1 : -1); return true;
   }
-  return { clear, bind, keydown, hitTest(event) {
+  function at(event) {
     const doc = event.target?.ownerDocument;
-    for (const [root, segmenter] of boundRoots.get(doc) || []) if (root.contains(event.target) && wordAt(root, event, segmenter)) return true;
-    return false;
-  }, reset: () => { clear(); cache.clear(); } };
+    for (const [root, segmenter] of boundRoots.get(doc) || []) if (root.contains(event.target)) {
+      const item = wordAt(root, event, segmenter); if (item) return item;
+    }
+    return null;
+  }
+  return { clear, bind, keydown, at, hitTest: (event) => Boolean(at(event)), reset: () => { clear(); cache.clear(); } };
 }

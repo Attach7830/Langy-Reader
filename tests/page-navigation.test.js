@@ -116,9 +116,9 @@ test('EPUB iframe coordinates account for scaled offscreen columns, and bindings
   f.gesture(520, 440, { root: doc.body, startY: 100, endY: 100 }); click(doc.body, 440, 100);
   assert.deepEqual(f.turns, [1, 1]); f.nav.reset(); doubleTap(f, 520, doc.body); assert.equal(f.turns.length, 2);
 });
-test('a center word tap opens a definition without fullscreen or seeking audio; the second tap controls playback', async (t) => {
+test('a word tap opens a definition and a double tap seeks from that word instead of toggling center playback', async (t) => {
   let help, playback = 0, fullscreens = 0;
-  const f = fixture(t, { canCenterTap: () => true, centerTap: () => fullscreens++, centerDoubleTap: () => { help.clear(); playback++; }, wordAt: (event) => help.hitTest(event) });
+  const f = fixture(t, { canCenterTap: () => true, centerTap: () => fullscreens++, centerDoubleTap: () => playback++, wordAt: (event) => help.at(event), wordDoubleTap: (item) => { assert.equal(item.node, f.target.firstChild); assert.equal(item.index, 0); help.clear(); seeks++; } });
   const doc = f.dom.window.document, names = ['window','document','Node','AbortController','AbortSignal'];
   const saved = new Map(names.map((name) => [name,Object.getOwnPropertyDescriptor(globalThis,name)]));
   for (const name of names) Object.defineProperty(globalThis,name,{configurable:true,value:f.dom.window[name]});
@@ -130,5 +130,15 @@ test('a center word tap opens a definition without fullscreen or seeking audio; 
   const unbind=help.bind(f.target,'en',()=>f.target.textContent);t.after(()=>{help.clear();unbind();});
   f.gesture(300,300);click(f.target,300);await delay(20);
   assert.equal(requests,1);assert.equal(seeks,0);assert.equal(fullscreens,0);assert.equal(doc.querySelector('#word-help').hidden,false);
-  f.tick(80);f.gesture(300,300);click(f.target,300);await delay(20);assert.equal(playback,1);assert.equal(doc.querySelector('#word-help').hidden,true);
+  f.tick(80);f.gesture(300,300);click(f.target,300);await delay(20);assert.equal(playback,0);assert.equal(seeks,1);assert.equal(doc.querySelector('#word-help').hidden,true);
+});
+
+test('word double taps take priority at both edges, work with page double taps disabled, and require the same word', (t) => {
+  const seeks = [], node = {}, other = {}; let playback = 0, current = node;
+  const f = fixture(t, { canDoubleTap: () => false, centerDoubleTap: () => playback++,
+    wordAt: () => ({ node: current, index: 4 }), wordDoubleTap: (word) => seeks.push(word) });
+  for (const x of [105, 300, 495]) { f.tick(400); doubleTap(f, x); }
+  assert.equal(seeks.length, 3); assert.equal(playback, 0); assert.deepEqual(f.turns, []);
+  f.tick(400); f.gesture(300,300); f.tick(80); current = other; f.gesture(300,300);
+  assert.equal(seeks.length, 3, 'adjacent word taps must not play from either word'); assert.equal(playback, 0);
 });

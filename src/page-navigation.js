@@ -2,7 +2,7 @@ const interactive = 'a,button,input,select,textarea,label,summary,[contenteditab
 const doubleTapDelay = 320;
 
 export function pageNavigation({ host, turn, enabled = () => true, canSwipe = () => true, canDoubleTap = () => true,
-  canCenterTap = () => false, centerTap = () => {}, centerDoubleTap, wordAt = () => false, swipeUp, swipeDown,
+  canCenterTap = () => false, centerTap = () => {}, centerDoubleTap, wordAt = () => false, wordDoubleTap, swipeUp, swipeDown,
   pinch: onPinch, canPan = () => false, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout }) {
   const bindings = new Map(), pointers = new Map(), doc = host.ownerDocument, viewport = doc.defaultView.visualViewport;
   const originalTouch = host.style.touchAction;
@@ -13,6 +13,7 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
   const inside = (p, rect) => p && p.x >= rect.left && p.x <= rect.right && p.y >= rect.top && p.y <= rect.bottom;
   const consume = (event) => { if (event.cancelable) event.preventDefault(); event.stopImmediatePropagation(); };
   const clearTap = () => { clearTimer(tapTimer); tapTimer = undefined; lastTap = undefined; };
+  const sameWord = (a, b) => a?.node && a.node === b?.node && a.index === b.index;
   function point(event, source) {
     let x = event.clientX, y = event.clientY, win = source.defaultView;
     if (!win) return null;
@@ -69,15 +70,19 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
     if (previous.moved || distance > 10 || elapsed > 550 || ignored(event.target)) { clearTap(); suppressUntil = now() + 700; if (previous.type === 'touch') consume(event); return; }
     if (previous.type !== 'touch' || zoomed()) return;
     const side = zone(current); if (side == null || side !== zone(previous.start)) return;
-    const doubled = lastTap && lastTap.doc === source && lastTap.side === side && now() - lastTap.time <= doubleTapDelay
+    const word = wordAt(event);
+    const doubled = lastTap && lastTap.doc === source && now() - lastTap.time <= doubleTapDelay
       && Math.hypot(current.x - lastTap.point.x, current.y - lastTap.point.y) <= 30;
-    if (doubled && (side === 0 ? centerDoubleTap : canDoubleTap())) {
+    if (doubled && wordDoubleTap && sameWord(word, lastTap.word)) {
+      clearTap(); consume(event); suppressUntil = now() + 700; wordDoubleTap(word); return;
+    }
+    if (doubled && lastTap.side === side && !(wordDoubleTap && (word || lastTap.word)) && (side === 0 ? centerDoubleTap : canDoubleTap())) {
       clearTap(); consume(event); suppressUntil = now() + 700;
       if (side === 0) centerDoubleTap(); else turn(side);
       return;
     }
-    clearTap(); lastTap = { doc: source, side, point: current, time: now() };
-    if (side === 0 && canCenterTap() && !wordAt(event)) tapTimer = setTimer(() => {
+    clearTap(); lastTap = { doc: source, side, point: current, time: now(), word };
+    if (side === 0 && canCenterTap() && !word) tapTimer = setTimer(() => {
       const pending = lastTap; clearTap();
       if (pending && enabled() && !selection(source)) centerTap();
     }, doubleTapDelay);
@@ -104,10 +109,10 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
         return;
       }
       if (ignored(event.target) || event.defaultPrevented || selection(source)) { clearTap(); return; }
-      const side = zone(start);
-      if (event.pointerType === 'touch' && lastTap?.doc === source && lastTap.side === side
+      const side = zone(start), word = wordAt(event);
+      if (event.pointerType === 'touch' && lastTap?.doc === source
         && now() - lastTap.time <= doubleTapDelay && Math.hypot(start.x - lastTap.point.x, start.y - lastTap.point.y) <= 30
-        && (side === 0 ? centerDoubleTap : canDoubleTap()) && event.cancelable) {
+        && (wordDoubleTap && sameWord(word, lastTap.word) || lastTap.side === side && !(wordDoubleTap && (word || lastTap.word)) && (side === 0 ? centerDoubleTap : canDoubleTap())) && event.cancelable) {
         // Native multi-tap selection starts on pointerdown, before our
         // pointerup action. Keep it from swallowing consecutive double taps.
         event.preventDefault();

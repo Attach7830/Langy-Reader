@@ -42,6 +42,7 @@ test('the actual book form uploads one EPUB/PDF with its language field, while i
   const dom = new JSDOM(await readFile(join(root, 'index.html'), 'utf8')); t.after(() => dom.window.close());
   const form = dom.window.document.querySelector('#book-form');
   form.elements.title.value = 'Upload regression'; form.elements.author.value = 'Test author'; form.elements.language.value = 'es';
+  form.elements.autoAudiobook.checked = true; form.elements.audiobookDelayMinutes.disabled = false; form.elements.audiobookDelayMinutes.value = '7';
   const epub = await sampleBook();
   function requestData({ languages = [], format = 'epub', field = 'file' } = {}) {
     const browser = new dom.window.FormData(form);
@@ -63,6 +64,10 @@ test('the actual book form uploads one EPUB/PDF with its language field, while i
     const book = await response.json(); assert.equal(response.status, 201, JSON.stringify(book));
     assert.equal(book.title, 'Upload regression'); assert.equal(book.format, options.format);
     assert.deepEqual(book.languages, options.languages);
+    const narration = await (await fetch(base + `/api/books/${book.id}/narration`)).json();
+    assert.equal(narration.scheduled.state, 'waiting'); assert.equal(narration.scheduled.due, book.addedAt + 7 * 60000);
+    await fetch(base + `/api/books/${book.id}/narration`, { method: 'DELETE' });
+    assert.equal((await (await fetch(base + `/api/books/${book.id}/narration`)).json()).scheduled.state, 'cancelled');
     const download = await fetch(base + `/api/books/${book.id}/file`);
     assert.equal(download.status, 200); assert.deepEqual(Buffer.from(await download.arrayBuffer()), bytes);
   }
@@ -78,6 +83,9 @@ test('the actual book form uploads one EPUB/PDF with its language field, while i
   const { data } = requestData({ field: 'unexpected-file' });
   const response = await fetch(base + '/api/books', { method: 'POST', body: data });
   assert.equal(response.status, 400); assert.match((await response.json()).error, /unexpected file field/i);
+  const invalidDelay = requestData(); invalidDelay.data.set('audiobookDelayMinutes', '0');
+  const rejected = await fetch(base + '/api/books', { method: 'POST', body: invalidDelay.data });
+  assert.equal(rejected.status, 422); assert.match((await rejected.json()).error, /audiobook delay/i);
   assert.equal((await (await fetch(base + '/api/library')).json()).books.length, initial + 2);
   assert.deepEqual(await readdir(join(folder, 'uploads')), []);
 });

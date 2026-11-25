@@ -66,6 +66,8 @@ test('real library import waits for metadata, submits manual overrides once, and
   const library = libraryScreen({ progress: {}, onRemove() {}, detectMetadata() { return jobs[detections++].promise; } }); await library.refresh();
   document.querySelector('#import-book').click();
   const form = document.querySelector('#book-form'), input = document.querySelector('#book-file');
+  form.elements.autoAudiobook.checked = true; form.elements.autoAudiobook.dispatchEvent(new dom.window.Event('change'));
+  form.elements.audiobookDelayMinutes.value = '7';
   let file = new dom.window.File(['EPUB'], 'Book_file.epub');
   const choose = () => { Object.defineProperty(input, 'files', { value: [file], configurable: true }); input.dispatchEvent(new dom.window.Event('change')); };
   const submit = () => form.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
@@ -81,7 +83,8 @@ test('real library import waits for metadata, submits manual overrides once, and
   assert.equal(imports.length, 1); assert.equal(imports[0].get('title'), 'Detected book'); assert.equal(imports[0].get('author'), 'My author');
   assert.equal(imports[0].get('language'), 'pt'); assert.equal(imports[0].get('languages'), '[]'); assert.equal(imports[0].get('file').name, file.name);
   assert.equal(imports[0].get('coverStyle'), 'auto');
-  assert.equal([...imports[0].keys()].filter((name) => name !== 'file').length, 6, 'metadata and cover choice stay within the multipart field limit');
+  assert.equal(imports[0].get('autoAudiobook'), 'true'); assert.equal(imports[0].get('audiobookDelayMinutes'), '7');
+  assert.equal([...imports[0].keys()].filter((name) => name !== 'file').length, 8, 'metadata, cover and narration options stay within the multipart field limit');
   document.querySelector('[aria-label="Edit Detected book"]').click();
   assert.equal(form.elements.title.required, false); assert.equal(form.elements.language.required, false);
   assert.equal(document.querySelector('#book-language-note').hidden, false);

@@ -15,6 +15,7 @@ import { bookCountSignature } from './reading-counts.js';
 import { readerVocabulary } from './reader-vocabulary.js';
 import { readingEstimates } from './reading-estimates.js';
 import { bookNarration } from './book-audio.js';
+import { importNarration } from './import-narration.js';
 import { hasUsableTimings, synchronizeChunk } from './audio-timing.js';
 import { uploadedAudio } from './uploaded-audio.js';
 import { audioRescans } from './audio-rescan.js';
@@ -25,7 +26,7 @@ const run = promisify(execFile);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const asText = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 
-export async function openLearning(dir, library, demo, ai, { autoRepair = true, nativeLanguage = () => '', withAI = (_visitor, task) => task() } = {}) {
+export async function openLearning(dir, library, demo, ai, { autoRepair = true, nativeLanguage = () => '', withAI = (_visitor, task) => task(), now = Date.now } = {}) {
   const folder = join(dir, 'narration');
   await mkdir(folder, { recursive: true });
   const db = new DatabaseSync(join(dir, 'learning.sqlite'));
@@ -94,6 +95,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     db, folder, library, demo, previewAudio, configuration: audioConfig,
     queuePart: (book, key, replace) => queue(book, key, replace, false), wake: () => void work(),
   });
+  const scheduledAudio = importNarration({ db, library, demo, configuration: audioConfig, queue: completeAudio.queue, now });
   if (previewAudio) {
     for (const { book } of db.prepare('SELECT book FROM analyses').all()) completeAudio.cancel({ id: book });
     db.exec("UPDATE audio SET state='cancelled' WHERE state IN ('queued','generating','aligning')");
@@ -439,6 +441,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     let job;
     let type;
     try {
+      scheduledAudio.pump();
       job = db.prepare("SELECT * FROM analyses WHERE state='queued' ORDER BY rowid LIMIT 1").get();
       type = 'analysis';
       if (job) await analyze(job);
@@ -519,6 +522,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     return join(folder, `${options.source === 'uploaded' ? options.recording : row.id}.mp3`);
   }
   function cancel(book) {
+    scheduledAudio.cancel(book);
     const cancelled = completeAudio.cancel(book);
     db.prepare("UPDATE audio SET state='cancelled' WHERE book=? AND state='queued'").run(book.id);
     return cancelled;
@@ -533,7 +537,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
   function narration(book, selected) {
     const result = completeAudio.status(book, selected);
     result.audio.rescan = result.audio.id ? rescans.status(book, result.audio.id) : null;
-    return { ...result, recordings: demo ? [] : recordings.list(book).filter((item) => item.state === 'ready').map(({ id, name }) => ({ id, name })) };
+    return { ...result, scheduled: scheduledAudio.status(book), recordings: demo ? [] : recordings.list(book).filter((item) => item.state === 'ready').map(({ id, name }) => ({ id, name })) };
   }
   return {
     settings, save, voices, info, ensure, unit, chapters, remove, audioFile, prune, cancel,
@@ -543,6 +547,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       return rows.map((row) => ({ ...row, tokens: JSON.parse(row.tokens || '[]'), languages: JSON.parse(row.languages || '[]') }));
     },
     narration, queueBook: completeAudio.queue,
+    scheduleAudiobook(book, options) { ensure(book); return scheduledAudio.schedule(book, options); },
     readyAudiobooks: () => db.prepare("SELECT book,id AS recording FROM book_audio WHERE state='ready' ORDER BY created DESC,rowid DESC").all(),
     recordings, rescans, ivoox, vocabulary, estimates,
   };

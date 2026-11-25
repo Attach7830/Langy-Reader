@@ -117,7 +117,7 @@ test('free slow downloads need no key, retain the pending edition through browse
   const folder = await mkdtemp(join(tmpdir(), 'langy-slow-upload-')); t.after(() => rm(folder, { recursive: true, force: true }));
   const library = await openLibrary(folder), epub = await sampleBook(), md5 = createHash('md5').update(epub).digest('hex'); let calls = 0;
   const archive = await openArchive(folder, { library, request: async () => { calls++; return response('<html>Complete a browser check</html>', 200, { 'content-type': 'text/html' }); } });
-  const job = archive.queue({ reference: `https://annas-archive.gl/slow_download/${md5}/0/2`, downloadMode: 'slow', author: 'Selected author' });
+  const job = archive.queue({ reference: `https://annas-archive.gl/slow_download/${md5}/0/2`, downloadMode: 'slow', author: 'Selected author', autoAudiobook: true, audiobookDelayMinutes: 7 });
   assert.equal(job.state, 'needs_action'); assert.equal(calls, 0);
   archive.continue(job.id, { url: 'https://files.example.test/check' }); const challenge = await finished(archive, job.id);
   assert.equal(challenge.state, 'needs_action'); assert.match(challenge.error, /browser check/u);
@@ -127,6 +127,7 @@ test('free slow downloads need no key, retain the pending edition through browse
   const good = join(library.uploads, 'downloaded.epub'); await writeFile(good, epub);
   const complete = await archive.accept(job.id, { path: good, size: epub.length, originalname: 'downloaded.epub' });
   assert.equal(complete.state, 'ready'); assert.equal(complete.book.author, 'Selected author'); assert.equal(calls, 1);
+  assert.equal(complete.details.autoAudiobook, true); assert.equal(complete.details.audiobookDelayMinutes, 7);
   await assert.rejects(archive.accept(job.id, null), /finish/u);
 });
 

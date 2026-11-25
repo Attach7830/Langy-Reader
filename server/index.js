@@ -1,6 +1,7 @@
 import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolve, join } from 'node:path';
+import { rm } from 'node:fs/promises';
 import express from 'express';
 import multer from 'multer';
 import { maxUpload, openLibrary, RequestError } from './books.js';
@@ -10,6 +11,7 @@ import { openThesaurus } from './thesaurus.js';
 import { vocabularyMeanings } from './vocabulary-meanings.js';
 import { openLearning } from './learning.js';
 import { openArchive } from './annas-archive.js';
+import { importNarrationOptions } from './import-narration.js';
 import { maxAudioUpload } from './uploaded-audio.js';
 import { opdsPageSize, opdsRouter } from './opds.js';
 import { openProgressSync } from './progress-sync.js';
@@ -58,11 +60,11 @@ const toolsForBook = bookTools({ learning, ai });
 const offlinePack = offlinePacks({ learning, mandarin, lookupSynonyms });
 const readingAccount = (visitor) => ({ id: readerSettings.get(visitor).accountId, expires: visitor?.expires ?? null });
 const vocabularyMeaning = vocabularyMeanings({ vocabulary: learning.vocabulary, ai, lookupSynonyms });
-const archive = await openArchive(dir, { library, demo, onImport: (book) => learning.ensure(library.getBook(book.id)) });
+const archive = await openArchive(dir, { library, demo, onImport: (book, details) => learning.scheduleAudiobook(library.getBook(book.id), details) });
 const ocr = await openPDFOCR(dir, { library, demo, onImport: (book) => learning.ensure(library.getBook(book.id)) });
 const audiobookshelf = await openAudiobookshelf(dir, { library, learning, demo });
 const uploadLimit = limits?.upload ?? maxUpload;
-const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 6, fieldSize: 1024 } });
+const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 8, fieldSize: 1024 } });
 const audioUpload = multer({ dest: library.uploads, limits: { fileSize: maxAudioUpload, files: 1, fields: 1, fieldSize: 1024 } });
 const chapterUpload = multer({ storage: chapterStorage(library.uploads), limits: { fileSize: maxAudioUpload, files: chapterFileLimit, fields: 1, fieldSize: 1024 } });
 const demoUploads = demo ? [limitJobs({ perMinute: 32, perVisitor: 8 })] : [];
@@ -271,8 +273,13 @@ app.post('/api/books', ...demoUploads, (req, _res, next) => {
   }
   next();
 }, upload.single('file'), async (req, res) => {
+  let narrationOptions;
+  try {
+    narrationOptions = importNarrationOptions(req.body ?? {});
+    if (demo && narrationOptions) throw new RequestError(403, 'Scheduled audiobook generation is available on self-hosted installations.');
+  } catch (error) { if (req.file?.path) await rm(req.file.path, { force: true }); throw error; }
   const imported = await library.importBook(randomUUID(), req.file, req.body ?? {}, req.visitor);
-  learning.ensure(library.getBook(imported.id, req.visitor));
+  learning.scheduleAudiobook(library.getBook(imported.id, req.visitor), narrationOptions ?? {});
   res.status(201).json(imported);
 });
 app.patch('/api/books/:id', async (req, res) => {

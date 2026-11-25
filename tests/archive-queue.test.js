@@ -22,8 +22,8 @@ async function fixture(t) {
 }
 
 test('bulk downloads validate atomically, retain shared language settings and optionally use one author, with one file at a time', async (t) => {
-  const f = await fixture(t); let active = 0, peak = 0;
-  const service = await f.open({ request: async (value) => {
+  const f = await fixture(t); let active = 0, peak = 0; const planned = [];
+  const service = await f.open({ onImport: (book, details) => planned.push({ id: book.id, details }), request: async (value) => {
     const url = new URL(value);
     if (url.pathname === '/dyn/api/fast_download.json') return response({ download_url: 'https://files.example.test/' + url.searchParams.get('md5') });
     const bytes = f.files.get(url.pathname.slice(1));
@@ -33,9 +33,10 @@ test('bulk downloads validate atomically, retain shared language settings and op
   const books = [...f.files.keys()].map((reference, index) => ({ reference, title: 'Book ' + index, author: 'Individual ' + index }));
   assert.throws(() => service.queueBatch({ books: [books[0], { reference: 'invalid' }] }), { status: 422 }); assert.equal(service.list().length, 0);
   assert.throws(() => service.queueBatch({ books: Array(51).fill(books[0]) }), { status: 422 });
-  const batch = service.queueBatch({ books, sameAuthor: true, author: 'One author', language: 'pt', languages: ['pt', 'zh'], coverStyle: 'forest' });
+  const batch = service.queueBatch({ books, sameAuthor: true, author: 'One author', language: 'pt', languages: ['pt', 'zh'], coverStyle: 'forest', autoAudiobook: 'true', audiobookDelayMinutes: '7' });
   assert.equal(batch.jobs.length, 3); assert.ok(batch.jobs.every((job) => job.batchId === batch.batchId));
   await service.pump(); assert.equal(peak, 1);
+  assert.equal(planned.length, 3); assert.ok(planned.every(({ details }) => details.autoAudiobook === true && details.audiobookDelayMinutes === 7));
   for (const job of service.list()) { assert.equal(job.state, 'ready', job.error); assert.equal(job.book.author, 'One author'); assert.equal(job.book.language, 'pt'); assert.deepEqual(job.book.languages, ['pt', 'zh']); assert.equal(job.book.coverStyle, 'forest'); }
   const separate = service.queueBatch({ books: [books[0], books[1]], sameAuthor: false, author: 'Ignored common author', language: 'es' });
   await service.pump(); assert.deepEqual(separate.jobs.map((job) => service.job(job.id).book.author), ['Individual 0', 'Individual 1']);

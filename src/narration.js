@@ -32,6 +32,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   let wantPlaying = false, enabled = false, initialSeek = true, highlighted, highlightedWindow;
   let waitingForMetadata = true;
   let manualNavigation = false, navigationVersion = 0, manualPage;
+  let pendingWordTime, wordPlayback = 0;
   const cache = new Map();
   const ready = () => recording?.state === 'ready';
   const playbackSpeed = () => Number.isFinite(audio.playbackRate) && audio.playbackRate > 0 ? audio.playbackRate : 1;
@@ -136,7 +137,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     if (!initialSeek || waitingForMetadata || !ready() || !current || descriptor?.root !== current.root || unit?.key !== current.key
       || !descriptor?.root.isConnected || unit?.recordingId !== recording.id || !Number.isFinite(audio.duration)) return;
     initialSeek = false;
-    audio.currentTime = firstVisibleTime();
+    audio.currentTime = pendingWordTime ?? firstVisibleTime(); pendingWordTime = undefined;
     controls();
   }
   // Page changes run serially; another scrub replaces the pending target.
@@ -178,7 +179,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   }
   function seekTo(time, { page = false } = {}) {
     if (!enabled || !ready() || waitingForMetadata || !Number.isFinite(audio.duration)) return;
-    if (!page) manualPage = undefined;
+    if (!page) { manualPage = undefined; pendingWordTime = undefined; }
     initialSeek = false;
     audio.currentTime = Math.max(0, Math.min(recording.duration, time));
     controls(); drawHighlight(); void follow(true);
@@ -300,7 +301,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     recording = unit = descriptor = local = recordingBook = bookRequest = undefined;
     timed = []; timingMap.clear(); cache.clear();
     following = followAgain = forceFollow = wantPlaying = false;
-    manualNavigation = false; manualPage = undefined; navigationVersion++;
+    manualNavigation = false; manualPage = pendingWordTime = undefined; navigationVersion++; wordPlayback++;
     initialSeek = true; waitingForMetadata = true;
     previewAudio = false;
     recordingCount = 0;
@@ -381,7 +382,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   return {
     refresh, apply, stop, toggle, skipBy,
     get ready() { return ready(); },
-    beginNavigation() { manualNavigation = true; return ++navigationVersion; },
+    beginNavigation() { manualNavigation = true; pendingWordTime = undefined; wordPlayback++; return ++navigationVersion; },
     async endNavigation(version, { seekToPage = true } = {}) {
       if (version !== navigationVersion) return;
       // Audio metadata must never keep the reader's navigation lock held. A
@@ -402,6 +403,20 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
       const stamp = timed.find((item) => item.index === index); if (stamp) seekTo(stamp.start);
     },
     lemmaAt(node, offset) { return unit?.method === 'word forms' ? null : local?.at(node, offset)?.token; },
+    async playWord(node, offset) {
+      const request = ++wordPlayback, epoch = lifecycle, navigation = navigationVersion;
+      if (!enabled) return false;
+      await refresh();
+      if (request !== wordPlayback || epoch !== lifecycle || navigation !== navigationVersion || !enabled || !ready() || !node.isConnected) return false;
+      const word = local?.at(node, offset)?.word;
+      if (!word) return false;
+      const position = visibleAudioPosition({ ...local, visible: (candidate) => candidate === word }, timed, timingMap, segmentFor(unit?.key));
+      if (!position) return false;
+      wantPlaying = true;
+      if (waitingForMetadata) pendingWordTime = position.time;
+      else { seekTo(position.time); await startPlayback(); }
+      return true;
+    },
     seekWord(node, offset) {
       if (!enabled || !ready()) return;
       const word = local?.at(node, offset)?.word;

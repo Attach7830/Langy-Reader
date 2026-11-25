@@ -12,7 +12,7 @@ async function fixture(t, options = {}) {
   const book = { id: 'book', title: 'A Book', author: 'An Author', language: 'es', format: 'epub', categoryId: 'spanish' }, calls = [], imported = [];
   const remoteLibraries = [{ id: 'lib', mediaType: 'book', folders: [{ id: 'folder', path: '/books' }, { id: 'spanish-folder', path: '/books/es' }] },
     { id: 'other-lib', mediaType: 'book', folders: [{ id: 'other-folder', path: '/books/zh' }] }];
-  let progress = null, state = 'uploaded', clock = 1000000, catalogFails = false, uploadFails = false, catalogLag = false;
+  let progress = null, state = 'uploaded', clock = 1000000, catalogFails = false, uploadFails = false, catalogLag = false, catalogHook;
   const ready = [], localBooks = new Map([[book.id, book]]), remoteBooks = new Map();
   const recordings = new Map([['recording', { id: 'recording', state: 'ready', duration: 100, markers: [{ time: 0, title: 'One' }] }]]);
   const item = { id: 'remote-item', mediaType: 'book', media: { duration: 100, metadata: { title: 'A Book' }, tracks: [{ index: 1, title: 'part.mp3', contentUrl: '/abs/s/item/remote-item/part.mp3', duration: 100 }] } };
@@ -29,7 +29,7 @@ async function fixture(t, options = {}) {
     if (catalogFails && opts.method !== 'POST') throw new Error('Offline');
     if (url.pathname === '/abs/api/libraries') return Response.json({ libraries: remoteLibraries });
     const catalog = /^\/abs\/api\/libraries\/([^/]+)\/items$/u.exec(url.pathname);
-    if (catalog) { const all = remoteBooks.get(catalog[1]) || [], page = Number(url.searchParams.get('page')), limit = Number(url.searchParams.get('limit')); return Response.json({ total: all.length, results: all.slice(page * limit, (page + 1) * limit) }); }
+    if (catalog) { const hook = catalogHook; catalogHook = null; hook?.(); const all = remoteBooks.get(catalog[1]) || [], page = Number(url.searchParams.get('page')), limit = Number(url.searchParams.get('limit')); return Response.json({ total: all.length, results: all.slice(page * limit, (page + 1) * limit) }); }
     if (url.pathname === '/abs/api/items/remote-item') return Response.json(item);
     if (url.pathname === '/abs/api/me/progress/remote-item') {
       if (opts.method === 'PATCH') { progress = { ...JSON.parse(opts.body), lastUpdate: (progress?.lastUpdate || 1000) + 1 }; return new Response('OK'); }
@@ -41,10 +41,11 @@ async function fixture(t, options = {}) {
   };
   let service = await openAudiobookshelf(dir, { library, learning, autoStart: false, request, now: () => clock, ...options }); t.after(() => service.close());
   return { dir, get service() { return service; }, book, calls, imported, item, remoteLibraries, remoteBooks, ready, recordings,
-    clock(value) { clock = value; }, failCatalog(value) { catalogFails = value; }, failUpload(value) { uploadFails = value; }, lagCatalog(value) { catalogLag = value; },
+    clock(value) { clock = value; }, duringCatalog(callback) { catalogHook = callback; }, failCatalog(value) { catalogFails = value; }, failUpload(value) { uploadFails = value; }, lagCatalog(value) { catalogLag = value; },
     addReady(id = 'recording', target = book) { localBooks.set(target.id, target); if (!recordings.has(id)) recordings.set(id, { ...recordings.get('recording'), id }); ready.push({ book: target.id, recording: id }); },
     setProgress(value) { progress = value; },
     async restart() { service.close(); service = await openAudiobookshelf(dir, { library, learning, autoStart: false, request, now: () => clock, ...options }); },
+    connectMapped: (updates = {}) => service.save({ baseUrl: 'http://192.168.1.20:13378/abs', apiKey: 'synthetic-test-token', libraryId: 'lib', folderId: 'folder', categoryDestinations: { spanish: { libraryId: 'lib', folderId: 'spanish-folder' } }, ...updates }),
     connect: (updates = {}) => service.save({ baseUrl: 'http://192.168.1.20:13378/abs', apiKey: 'synthetic-test-token', libraryId: 'lib', folderId: 'folder', ...updates }) };
 }
 test('Audiobookshelf uses the configured remote host/subpath, stores credentials privately and exports book/audio metadata', async (t) => {
@@ -130,7 +131,7 @@ test('ready generated and uploaded audiobooks export automatically to category f
 });
 
 test('matching titles on later pages of another library skip automatic export without linking a different recording', async (t) => {
-  const f = await fixture(t); f.book.title = 'A Book: A Story'; f.addReady(); await f.connect();
+  const f = await fixture(t); f.book.title = 'A Book: A Story'; f.addReady(); await f.connectMapped();
   const entries = Array.from({ length: 500 }, (_, index) => ({ id: `other-${index}`, media: { metadata: { title: `Another title ${index}` } } }));
   entries.push({ id: 'different-edition', media: { metadata: { title: '  A BOOK — A STORY  ', authorName: 'A different author' } } });
   f.remoteBooks.set('other-lib', entries);
@@ -144,7 +145,7 @@ test('matching titles on later pages of another library skip automatic export wi
 
 test('successful upload receipts prevent duplicates from another book or regenerated recording while ABS is still indexing', async (t) => {
   const f = await fixture(t); f.lagCatalog(true); f.addReady(); f.addReady('replacement', { ...f.book, id: 'duplicate' });
-  await f.connect(); await Promise.all([f.service.pump(), f.service.pump()]);
+  await f.connectMapped(); await Promise.all([f.service.pump(), f.service.pump()]);
   assert.equal(f.calls.filter((call) => call.path === '/abs/api/upload').length, 1);
   await f.restart(); f.addReady('regenerated'); await f.service.pump();
   assert.equal(f.calls.filter((call) => call.path === '/abs/api/upload').length, 1);
@@ -156,7 +157,7 @@ test('offline duplicate checks retry after a persisted delay without uploading o
   f.failCatalog(true); await f.service.pump();
   const waiting = f.service.status(f.book).jobs[0]; assert.equal(waiting.state, 'queued'); assert.equal(waiting.retryAt, 1015000);
   assert.equal(f.calls.some((call) => call.path === '/abs/api/upload'), false);
-  await f.restart(); f.failCatalog(false); f.book.categoryId = null;
+  await f.restart(); f.failCatalog(false);
   await f.service.pump(); assert.equal(f.service.status(f.book).jobs[0].state, 'queued');
   f.clock(1015000); await f.service.pump();
   assert.equal(f.service.status(f.book).jobs[0].state, 'exported');
@@ -168,13 +169,13 @@ test('automatic export can be disabled, preserves legacy saves, and waits for va
   await f.connect({ autoExport: false }); await f.connect(); assert.equal(f.service.settings().autoExport, false);
   await f.service.pump(); assert.equal(f.service.status(f.book).jobs.length, 0);
   await f.connect({ autoExport: true, libraryId: '', folderId: '' }); await f.service.pump(); assert.equal(f.service.status(f.book).jobs.length, 0);
-  f.recordings.get('recording').state = 'syncing'; await f.connect(); await f.service.pump(); assert.equal(f.service.status(f.book).jobs.length, 0);
+  f.recordings.get('recording').state = 'syncing'; await f.connectMapped(); await f.service.pump(); assert.equal(f.service.status(f.book).jobs.length, 0);
   f.recordings.get('recording').state = 'ready'; await f.service.pump(); assert.equal(f.service.status(f.book).jobs[0].state, 'exported');
   await assert.rejects(f.connect({ autoExport: 'true' }), { status: 422 });
 });
 
 test('linked Audiobookshelf imports never loop back into exports and a manual export also checks matching titles', async (t) => {
-  const f = await fixture(t); await f.connect();
+  const f = await fixture(t); await f.connectMapped();
   await f.service.attach(f.book, { recording: 'recording', item: 'remote-item', sameRecording: true }); f.addReady();
   await f.service.pump(); assert.equal(f.service.status(f.book).jobs.length, 0);
   f.remoteBooks.set('lib', [f.item]); f.service.queue(f.book, 'export', { recording: 'recording' }); await f.service.pump();
@@ -182,7 +183,7 @@ test('linked Audiobookshelf imports never loop back into exports and a manual ex
 });
 
 test('ambiguous upload failures are held for review across restart and cannot cause automatic duplicate uploads', async (t) => {
-  const f = await fixture(t); f.addReady(); await f.connect(); f.failUpload(true);
+  const f = await fixture(t); f.addReady(); await f.connectMapped(); f.failUpload(true);
   await f.service.pump(); assert.equal(f.service.status(f.book).jobs[0].state, 'needs_review');
   f.failUpload(false); await f.restart(); await f.service.pump();
   assert.equal(f.calls.filter((call) => call.path === '/abs/api/upload').length, 1);
@@ -203,7 +204,7 @@ test('a manual export honors a different library/folder and invalid destinations
 });
 
 test('a changed manual destination replaces a waiting automatic export instead of using its old default folder', async (t) => {
-  const f = await fixture(t); f.addReady(); await f.connect(); f.failCatalog(true); await f.service.pump();
+  const f = await fixture(t); f.addReady(); await f.connectMapped(); f.failCatalog(true); await f.service.pump();
   f.failCatalog(false);
   f.service.queue(f.book, 'export', { recording: 'recording', destination: { libraryId: 'other-lib', folderId: 'other-folder' } }); await f.service.pump();
   assert.equal(f.service.status(f.book).jobs[0].state, 'cancelled');
@@ -212,7 +213,7 @@ test('a changed manual destination replaces a waiting automatic export instead o
 });
 
 test('disabling automatic export cancels pending work and re-enabling discovers it again', async (t) => {
-  const f = await fixture(t); f.addReady(); await f.connect(); f.failCatalog(true); await f.service.pump(); f.failCatalog(false);
+  const f = await fixture(t); f.addReady(); await f.connectMapped(); f.failCatalog(true); await f.service.pump(); f.failCatalog(false);
   await f.connect({ autoExport: false }); assert.equal(f.service.status(f.book).jobs[0].state, 'cancelled');
   await f.service.pump(); assert.equal(f.calls.some((call) => call.path === '/abs/api/upload'), false);
   await f.connect({ autoExport: true }); await f.service.pump();
@@ -220,13 +221,13 @@ test('disabling automatic export cancels pending work and re-enabling discovers 
 });
 
 test('the background worker exports ready audio after connecting without an open book or manual pump', async (t) => {
-  const f = await fixture(t, { autoStart: true }); f.addReady(); await f.connect();
+  const f = await fixture(t, { autoStart: true }); f.addReady(); await f.connectMapped();
   for (let n = 0; n < 100 && f.service.status(f.book).jobs.at(-1)?.state !== 'exported'; n++) await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(f.calls.filter((call) => call.path === '/abs/api/upload').length, 1);
 });
 
-test('saving a new category destination replaces waiting automatic exports that used the old default', async (t) => {
-  const f = await fixture(t); f.addReady(); await f.connect(); f.failCatalog(true); await f.service.pump(); f.failCatalog(false);
+test('saving a new category destination replaces waiting automatic exports that used the old category folder', async (t) => {
+  const f = await fixture(t); f.addReady(); await f.connectMapped(); f.failCatalog(true); await f.service.pump(); f.failCatalog(false);
   await f.connect({ categoryDestinations: { spanish: { libraryId: 'other-lib', folderId: 'other-folder' } } });
   assert.equal(f.service.status(f.book).jobs[0].state, 'cancelled'); await f.service.pump();
   const sent = f.calls.find((call) => call.path === '/abs/api/upload').options.body;
@@ -241,4 +242,32 @@ test('an unavailable mapped folder blocks export and correcting its mapping retr
   await f.connect({ categoryDestinations: { spanish: { libraryId: 'other-lib', folderId: 'other-folder' } } }); await f.service.pump();
   const body = f.calls.find((call) => call.path === '/abs/api/upload').options.body;
   assert.equal(body.get('library'), 'other-lib'); assert.equal(body.get('folder'), 'other-folder');
+});
+
+test('unmapped automatic exports wait instead of using an unrelated default folder', async (t) => {
+  const f = await fixture(t); f.addReady(); await f.connect(); await f.service.pump();
+  assert.equal(f.calls.some((call) => call.path === '/abs/api/upload'), false);
+  assert.match(f.service.status(f.book).automaticExportNotice, /map this book’s category/);
+  f.book.categoryId = null; await f.service.pump(); assert.equal(f.service.status(f.book).jobs.length, 0);
+  await f.connect({ categoryDestinations: { uncategorized: { libraryId: 'other-lib', folderId: 'other-folder' } } });
+  await f.service.pump(); assert.equal(f.calls.find((call) => call.path === '/abs/api/upload').options.body.get('library'), 'other-lib');
+});
+
+test('a queued automatic export rechecks the current category after editing and restarting', async (t) => {
+  const f = await fixture(t); f.addReady(); await f.connectMapped({ categoryDestinations: { spanish: { libraryId: 'lib', folderId: 'spanish-folder' }, chinese: { libraryId: 'other-lib', folderId: 'other-folder' } } });
+  f.failCatalog(true); await f.service.pump();
+  f.book.categoryId = 'chinese'; f.book.language = 'zh'; await f.restart(); f.failCatalog(false);
+  await f.service.pump();
+  const body = f.calls.find((call) => call.path === '/abs/api/upload').options.body;
+  assert.equal(body.get('library'), 'other-lib'); assert.equal(body.get('folder'), 'other-folder');
+});
+
+test('category changes during duplicate checking cancel the old upload and never fall back when unmapped', async (t) => {
+  const f = await fixture(t); f.addReady(); await f.connectMapped();
+  f.duringCatalog(() => { f.book.categoryId = 'unmapped'; }); await f.service.pump();
+  assert.equal(f.calls.some((call) => call.path === '/abs/api/upload'), false);
+  assert.equal(f.service.status(f.book).jobs[0].state, 'cancelled');
+  await f.restart(); await f.service.pump(); assert.equal(f.calls.some((call) => call.path === '/abs/api/upload'), false);
+  await f.connect({ categoryDestinations: { unmapped: { libraryId: 'other-lib', folderId: 'other-folder' } } });
+  await f.service.pump(); assert.equal(f.calls.find((call) => call.path === '/abs/api/upload').options.body.get('folder'), 'other-folder');
 });

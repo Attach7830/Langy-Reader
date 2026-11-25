@@ -26,7 +26,7 @@ export function audiobookshelfSettings() {
       const lib = document.createElement('select'), target = document.createElement('select');
       lib.setAttribute('aria-label', `${category.name} export library`); target.setAttribute('aria-label', `${category.name} export folder`);
       lib.dataset.absLibrary = ''; target.dataset.absFolder = '';
-      libraryOptions(lib, selected?.libraryId, 'Use default destination'); folders(target, lib.value, selected?.folderId, true);
+      libraryOptions(lib, selected?.libraryId, 'Not mapped · automatic exports wait'); folders(target, lib.value, selected?.folderId, true);
       lib.addEventListener('change', () => folders(target, lib.value, '', true));
       libLabel.append(lib); folderLabel.append(target); group.append(libLabel, folderLabel);
       row.append(element('legend', '', category.name), group); mappingRows.append(row);
@@ -127,7 +127,8 @@ export function audiobookshelfBook({ book, changed }) {
     try {
       const result = await api(`/api/books/${book().id}/audiobookshelf`); if (version !== epoch) return;
       const job = result.jobs.at(-1);
-      if (job) error(job.error || job.notice || ({ queued: 'Transfer queued…', running: 'Transferring files between your servers…', syncing: 'Preparing and aligning the imported audio…' })[job.state] || job.state);
+      if (result.automaticExportNotice && (!job || !['queued', 'running', 'syncing'].includes(job.state))) error(result.automaticExportNotice);
+      else if (job) error(job.error || job.notice || ({ queued: 'Transfer queued…', running: 'Transferring files between your servers…', syncing: 'Preparing and aligning the imported audio…' })[job.state] || job.state);
       if (job && ['queued', 'running', 'syncing'].includes(job.state)) timer = setTimeout(() => void status(version), 2500);
       if (job?.state === 'ready' && current !== job.id) { current = job.id; await changed(); window.dispatchEvent(new CustomEvent('langy-audio-updated', { detail: { book: book().id } })); }
     } catch (cause) { if (version === epoch) error(cause.message); }

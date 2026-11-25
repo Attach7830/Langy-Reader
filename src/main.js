@@ -81,11 +81,12 @@ const pageGestures = pageNavigation({ host: $('.reading-main'),
   canSwipe: () => settings.swipeToTurn !== false && !viewer.classList.contains('pdf-panning'),
   canDoubleTap: () => settings.doubleTapToTurn !== false,
   canCenterTap: () => settings.tapCenterFullscreen !== false,
-  wordAt: (event) => words.hitTest(event),
+  wordAt: (event) => words.at(event),
+  wordDoubleTap: (word) => void playWordFromGesture(word),
   canPan: () => viewer.classList.contains('pdf-panning'),
   centerTap: () => { words.clear(); void toggleFullscreen(); },
   centerDoubleTap: () => void togglePlaybackFromGesture(),
-  swipeUp: swipeReaderPanels, swipeDown: swipeReaderPanels,
+  swipeUp: toggleAudioToolbar, swipeDown: swipeDownReaderPanels,
   pinch: pinchText,
   turn: (direction) => { viewer.focus({ preventScroll: true }); void move(direction); },
 });
@@ -120,7 +121,7 @@ const audioPeek = temporaryControls({ changed(visible) { temporaryAudioVisible =
 const audioToolbarGestures = pageNavigation({ host: $('#narration-player'),
   enabled: () => Boolean(activeBook && renderer && !$('#narration-player').hidden && !document.querySelector('dialog[open]')),
   canSwipe: () => false, canDoubleTap: () => false, turn() {},
-  swipeUp: closeAudioToolbar, swipeDown: closeAudioToolbar,
+  swipeUp: toggleAudioToolbar, swipeDown: closeAudioToolbar,
 });
 for (const type of ['input', 'change', 'click', 'wheel', 'focusin']) $('#narration-player').addEventListener(type, audioPeek.activity, { passive: true });
 $('#narration-player').addEventListener('pointerdown', audioPeek.hold, { passive: true });
@@ -747,7 +748,7 @@ function toggleAudioToolbar() {
   viewer.focus({ preventScroll: true });
   toast(visible ? 'Audio toolbar hidden' : 'Audio toolbar shown');
 }
-function swipeReaderPanels() {
+function swipeDownReaderPanels() {
   if ($('#narration-player').hidden) contents(); else closeAudioToolbar();
 }
 function closeAudioToolbar() {
@@ -768,6 +769,13 @@ async function togglePlaybackFromGesture() {
   if (!settings.audioEnabled) { showTemporaryAudio(); await audio.refresh(); }
   if (book !== activeBook) return;
   if (!audio.ready) showTemporaryAudio(); else audio.toggle();
+}
+async function playWordFromGesture(word) {
+  words.clear();
+  const book = activeBook;
+  if (!settings.audioEnabled) settings = saveSettings({ ...settings, audioEnabled: true, audioToolbarHidden: true });
+  audio.apply();
+  if (!await audio.playWord(word.node, word.index) && activeBook === book) toast('No synchronized audio is available for this word.');
 }
 function pinchText({ phase, factor = 1 }) {
   const feedback = $('#text-size-feedback');
