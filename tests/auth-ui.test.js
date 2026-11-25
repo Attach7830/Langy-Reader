@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import { setTimeout as delay } from 'node:timers/promises';
 import { authenticationGate, clearAccountData } from '../src/auth.js';
+import { accountPanel } from '../src/ui-accounts.js';
 async function fixture(t) {
   const dom = new JSDOM(await readFile(new URL('../index.html', import.meta.url), 'utf8'), { url: 'https://langy.test' });
   dom.window.HTMLMediaElement.prototype.pause = () => {};
@@ -44,10 +45,20 @@ test('a first member sign-in cannot inherit pre-account browser data', async (t)
   await authenticationGate(); assert.equal(localStorage.getItem('langy-settings-v1'), null); assert.equal(localStorage.getItem('langy-progress-v1'), null);
 });
 
-test('clearing an account removes cover and offline caches while retaining the app shell', async (t) => {
+test('switching accounts retains downloads by default and optional removal only deletes the current account packs', async (t) => {
   await fixture(t); const prior = globalThis.caches, removed = [];
-  globalThis.caches = { keys: async () => ['langy-covers-reader-one', 'langy-covers-reader-two', 'langy-pack-private', 'langy-offline-control', 'langy-shell-v1'], delete: async (name) => { removed.push(name); return true; } };
+  globalThis.caches = { keys: async () => ['langy-covers-reader-one', 'langy-covers-reader-two', 'langy-pack-first-book', 'langy-pack-second-book', 'langy-offline-control', 'langy-shell-v1'], delete: async (name) => { removed.push(name); return true; } };
   t.after(() => { if (prior) globalThis.caches = prior; else delete globalThis.caches; });
   await clearAccountData();
-  assert.deepEqual(removed, ['langy-covers-reader-one', 'langy-covers-reader-two', 'langy-pack-private', 'langy-offline-control']);
+  assert.deepEqual(removed, ['langy-covers-reader-one', 'langy-covers-reader-two', 'langy-offline-control']);
+  removed.length = 0; localStorage.setItem('langy-offline-owner', 'first'); await clearAccountData({ removeDownloads: true });
+  assert.equal(removed.includes('langy-pack-first-book'), true); assert.equal(removed.includes('langy-pack-second-book'), false);
+});
+
+test('Switch user offers download removal as an unchecked choice on every opening', async (t) => {
+  await fixture(t); const dialog = document.querySelector('#sign-out-dialog'); dialog.showModal = () => { dialog.open = true; };
+  accountPanel({ user: { username: 'member', role: 'user' } });
+  document.querySelector('[data-switch-user]').click(); assert.equal(dialog.open, true); assert.equal(document.querySelector('#sign-out-remove-downloads').checked, false);
+  document.querySelector('#sign-out-remove-downloads').checked = true; dialog.open = false;
+  document.querySelector('[data-switch-user]').click(); assert.equal(document.querySelector('#sign-out-remove-downloads').checked, false);
 });
