@@ -1,4 +1,4 @@
-import { $, api, element, message } from './ui.js';
+import { $, api, element, message, toast } from './ui.js';
 import { signOut } from './auth.js';
 
 export function accountPanel(session) {
@@ -73,9 +73,10 @@ export function accountPanel(session) {
     finally { button.disabled = false; }
   });
   for (const button of document.querySelectorAll('[data-sign-out]')) button.addEventListener('click', async () => {
-    if (!window.confirm('Sign out and remove this account’s downloaded books from this device? Your server library will stay saved.')) return;
+    const action = button.hasAttribute('data-switch-user') ? 'Switch user' : 'Log out';
+    if (!window.confirm(`${action} and remove this account’s downloaded books from this device? Your server library will stay saved.`)) return;
     button.disabled = true;
-    try { await signOut(); } catch { error('Reconnect to your server to sign out. Your offline books have been kept.'); button.disabled = false; }
+    try { await signOut(); } catch { const text = 'Reconnect to your server to log out or switch users. Your offline books have been kept.'; error(text); toast(text); button.disabled = false; }
   });
   function route() { if (location.hash === '#settings/account') void loadUsers(); }
   window.addEventListener('hashchange', route);

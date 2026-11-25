@@ -133,7 +133,7 @@ $('#narration-player').addEventListener('pointerdown', audioPeek.hold, { passive
 document.addEventListener('pointerup', audioPeek.release, { passive: true });
 document.addEventListener('pointercancel', audioPeek.release, { passive: true });
 const absProgress = audiobookshelfProgress({ audio, request: api });
-const processes = processQueue();
+const processes = processQueue({ changePreferences: (values) => applySettings({ ...settings, ...values }) });
 const library = libraryScreen({
   preferences: () => settings, changePreferences: (updated) => { applySettings({ ...settings, ...updated }); },
   progress, readingLanguages: () => settings.readingLanguages, onSnapshot: (snapshot) => { processes.setAccount(snapshot.readingTime?.accountId); readingTime.setAccount(snapshot.readingTime?.accountId); void setOfflineAccount(snapshot.readingTime?.accountId).catch(() => {}); updateActiveBook(snapshot); },
@@ -223,7 +223,8 @@ function applySettings(updated, aiChanged, notify = true) {
   if (JSON.stringify(settings) === JSON.stringify(updated) && !aiChanged) return;
   const relayout = ['size', 'touchSize', 'font', 'line', 'width', 'summaryLanguage', 'showPinyin'].some((key) => settings[key] !== updated[key]);
   const syncChanged = settings.progressSyncEnabled !== updated.progressSyncEnabled;
-  const libraryChanged = settings.nativeLanguage !== updated.nativeLanguage || settings.quietLibrary !== updated.quietLibrary || settings.showSharedBooks !== updated.showSharedBooks;
+  const libraryChanged = settings.nativeLanguage !== updated.nativeLanguage || settings.quietLibrary !== updated.quietLibrary || settings.showSharedBooks !== updated.showSharedBooks
+    || settings.libraryLayout !== updated.libraryLayout || settings.coversOnly !== updated.coversOnly;
   const cacheChanged = settings.cacheAI !== updated.cacheAI;
   settings = saveSettings(updated, { notify });
   document.documentElement.dataset.immersion = String(settings.immersionMode);
@@ -260,6 +261,7 @@ function updateComprehension() {
 }
 function updateActiveBook(snapshot) {
   const current = activeBook && snapshot.books.find((book) => book.id === activeBook.id);
+  if (current && (current.contentRevision || '') !== (activeBook.contentRevision || '') && !readerScreen.hidden) { void openBook(current); return; }
   if (!current || Boolean(current.l1Folder) === Boolean(activeBook.l1Folder)) return;
   activeBook = { ...activeBook, l1Folder: current.l1Folder };
   updateComprehension(); pinyinButton.refresh(); pinyin.refresh();
@@ -583,7 +585,7 @@ async function openBook(book) {
     const open = book.format === 'pdf' ? (await import('./pdf.js')).openPdf : (await import('./epub.js')).openEpub;
     signal.throwIfAborted();
     const opened = await open({
-      host: viewer, url: `/api/books/${book.id}/file`, position: progress[book.id]?.target,
+      host: viewer, url: `/api/books/${book.id}/file${book.contentRevision ? '?revision=' + encodeURIComponent(book.contentRevision) : ''}`, position: progress[book.id]?.target,
       language: book.language, settings: readingPreferences(comprehensionPreferences()), signal,
       hooks: {
         keydown, bindWords: (...args) => { const wordCleanup = words.bind(...args), phraseCleanup = phrases.bind(args[0]); return () => { wordCleanup?.(); phraseCleanup(); }; }, bindPageNavigation: pageGestures.bind,
@@ -676,7 +678,7 @@ async function route() {
     showScreen('library');
     return message('#library-error', 'This book could not be found. Demo uploads expire after 24 hours.');
   }
-  if (activeBook?.id !== book.id) await openBook(book);
+  if (activeBook?.id !== book.id || activeBook?.contentRevision !== book.contentRevision) await openBook(book);
 }
 
 function move(direction, target, context) { return pageTurns.request(direction, target, context); }

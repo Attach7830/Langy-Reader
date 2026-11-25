@@ -134,9 +134,9 @@ export function audiobookshelfBook({ book, changed }) {
     try {
       const result = await api(`/api/books/${book().id}/audiobookshelf`); if (version !== epoch) return;
       const job = result.jobs.at(-1);
-      if (result.automaticExportNotice && (!job || !['queued', 'running', 'syncing'].includes(job.state))) error(result.automaticExportNotice);
-      else if (job) error(job.error || job.notice || ({ queued: 'Transfer queued…', running: 'Transferring files between your servers…', syncing: 'Preparing and aligning the imported audio…' })[job.state] || job.state);
-      if (job && ['queued', 'running', 'syncing'].includes(job.state)) timer = setTimeout(() => void status(version), 2500);
+      if (result.automaticExportNotice && (!job || !['queued', 'running', 'syncing', 'linking', 'awaiting_confirmation'].includes(job.state))) error(result.automaticExportNotice);
+      else if (job) error(job.error || job.notice || ({ queued: 'Transfer queued…', running: 'Transferring files between your servers…', syncing: 'Preparing and aligning the imported audio…', linking: 'Waiting for Audiobookshelf to index and link the export…', awaiting_confirmation: 'Open Processes to approve replacing the current Langy audio.' })[job.state] || job.state);
+      if (job && ['queued', 'running', 'syncing', 'linking'].includes(job.state)) timer = setTimeout(() => void status(version), 2500);
       if (job?.state === 'ready' && current !== job.id) { current = job.id; await changed(); window.dispatchEvent(new CustomEvent('langy-audio-updated', { detail: { book: book().id } })); }
     } catch (cause) { if (version === epoch) error(cause.message); }
   }

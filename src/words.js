@@ -52,7 +52,7 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
   const lemmaLabel = bubble.querySelector('[data-word-lemma]');
   const cache = new Map();
   const boundRoots = new WeakMap();
-  let active, controller, timer, interacting = false;
+  let active, controller, timer, interacting = false, touch;
   const selections = new Map();
   let choosers = [], activeChooser;
   function choose(values, label, key = 'word', render) {
@@ -61,15 +61,34 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
       activate: () => { activeChooser = key; }, changed: () => { if (active && !bubble.hidden) place(active.rect); } });
     choosers.push({ key, ...control }); return control.root;
   }
+  function cycle(step) {
+    const current = choosers.find((item) => item.key === activeChooser && item.count > 1) || choosers.find((item) => item.count > 1);
+    if (!current) return false;
+    current.cycle(step); return true;
+  }
+  const isControl = (target) => target?.closest?.('button,a,input,select,textarea,summary,[role="option"],[role="listbox"]');
+  bubble.addEventListener('pointerdown', (event) => {
+    touch = event.pointerType === 'touch' && !isControl(event.target) ? { id: event.pointerId, x: event.clientX, y: event.clientY, time: event.timeStamp, moved: false } : null;
+  });
+  bubble.addEventListener('pointermove', (event) => { if (touch && Math.hypot(event.clientX - touch.x, event.clientY - touch.y) > 12) touch.moved = true; });
+  bubble.addEventListener('pointercancel', () => { touch = null; });
+  bubble.addEventListener('pointerup', (event) => {
+    const tap = touch; touch = null;
+    if (!tap || event.pointerType !== 'touch' || event.pointerId !== tap.id || tap.moved || event.timeStamp - tap.time > 600
+      || Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > 12 || isControl(event.target) || !document.getSelection()?.isCollapsed) return;
+    if (!bubble.hidden) cycle(1);
+  });
   bubble.addEventListener('pointerenter', () => { interacting = true; clearTimeout(timer); });
   bubble.addEventListener('focusin', () => clearTimeout(timer));
-  bubble.addEventListener('pointerleave', () => {
+  bubble.addEventListener('pointerleave', (event) => {
+    if (event.pointerType === 'touch') return;
     interacting = false; clearTimeout(timer);
     if (!bubble.contains(document.activeElement)) timer = setTimeout(clear, 180);
   });
   bubble.addEventListener('focusout', (event) => { if (!interacting && !bubble.contains(event.relatedTarget)) { clearTimeout(timer); timer = setTimeout(clear, 180); } });
 
   function clear() {
+    touch = null;
     clearTimeout(timer);
     controller?.abort();
     controller = undefined;
@@ -267,9 +286,8 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
     if (bubble.hidden || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return false;
     if (event.key === 'Escape') { event.preventDefault(); clear(); return true; }
     if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return false;
-    const current = choosers.find((item) => item.key === activeChooser && item.count > 1) || choosers.find((item) => item.count > 1);
-    if (!current) return false;
-    event.preventDefault(); current.cycle(event.key === 'ArrowDown' ? 1 : -1); return true;
+    if (!cycle(event.key === 'ArrowDown' ? 1 : -1)) return false;
+    event.preventDefault(); return true;
   }
   function at(event) {
     const doc = event.target?.ownerDocument;

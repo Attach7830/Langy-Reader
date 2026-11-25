@@ -5,6 +5,7 @@ import { fetchPackResource, measuredResponse, downloadProgressLabel } from './of
 import { dismissOnBackdrop } from './dialog-backdrop.js';
 import { processTasks } from './process-tasks.js';
 import { notifyDownloadedBooks } from './book-source.js';
+import { getSettings, subscribeSettings } from './settings.js';
 
 let shellUpdate;
 const fetchOK = fetchPackResource;
@@ -88,12 +89,18 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
   dismissOnBackdrop(dialog); dismissOnBackdrop($('#downloads-dialog'));
   const pending = (job) => ['queued', 'downloading', 'waiting'].includes(job?.state);
   const describe = (job) => `${({ queued: 'Queued', downloading: 'Downloading', waiting: 'Waiting for connection', complete: 'Downloaded', failed: 'Download failed', cancelled: 'Cancelled' })[job.state]} · ${job.error || downloadProgressLabel(job.progress)}`;
-  const unsubscribe = queue.subscribe((jobs) => {
+  let expiry; const observedFinished = new Map();
+  function renderJobs(jobs) {
     const active = jobs.find((job) => job.state === 'downloading'), remaining = jobs.filter(pending), waiting = jobs.some((job) => job.state === 'waiting');
-    processTasks.setDownloads(jobs);
     message('#offline-status', active ? `${active.book.title} · ${downloadProgressLabel(active.progress)}${remaining.length > 1 ? ` · ${remaining.length - 1} queued` : ''}`
       : waiting ? 'Book downloads are waiting for a connection. Open Process queue to retry.' : jobs.some((job) => job.state === 'failed') ? 'A book download needs attention. Open Process queue to retry.' : '');
-    const visibleJobs = jobs.filter((job) => pending(job) || job.state === 'failed');
+    const duration = (getSettings().processDismissMinutes || 0) * 60000;
+    for (const job of jobs) if (['complete', 'cancelled'].includes(job.state) && !observedFinished.has(job.id)) observedFinished.set(job.id, job.finished || Date.now());
+    const visibleJobs = jobs.filter((job) => pending(job) || job.state === 'failed' || duration > 0 && Date.now() < observedFinished.get(job.id) + duration);
+    processTasks.setDownloads(visibleJobs, { includeFinished: true });
+    clearTimeout(expiry);
+    const done = visibleJobs.filter((job) => ['complete', 'cancelled'].includes(job.state));
+    if (done.length) { expiry = setTimeout(() => renderJobs(queue.snapshot()), Math.max(1, Math.min(...done.map((job) => observedFinished.get(job.id) + duration - Date.now())))); expiry?.unref?.(); }
     const version = JSON.stringify(visibleJobs.map((job) => [job.id, job.state, job.error, job.book.title]));
     if (version !== listVersion) {
     const cards = visibleJobs.map((job) => {
@@ -109,7 +116,7 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
       }
       if (pending(job)) action('Cancel download', () => queue.cancel(job.id));
       if (['waiting', 'failed'].includes(job.state)) action('Retry download', () => queue.retry(job.id));
-      if (job.state === 'failed') action('Dismiss', () => queue.remove(job.id));
+      if (!pending(job)) action('Dismiss', () => queue.remove(job.id));
       card.append(title, status, meter, actions); return card;
     });
     list.replaceChildren(...(cards.length ? cards : [element('p', 'field-note', 'No book downloads yet. Choose Save offline in a book’s options.')]));
@@ -128,7 +135,8 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
       $('#offline-remove').disabled = pending(job);
       if (job && dialog.open) message('#offline-progress', job.error || downloadProgressLabel(job.progress));
     }
-  });
+  }
+  const unsubscribe = queue.subscribe(renderJobs), unsubscribeSettings = subscribeSettings(() => renderJobs(queue.snapshot()));
   async function resume() { if (!authorized) return; try { await queue.resume(); } catch (error) { message('#offline-download-error', error.message); } }
   const accountReady = () => { authorized = true; void resume(); };
   window.addEventListener('langy-offline-account', accountReady);
@@ -153,7 +161,7 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
       message('#offline-progress', 'Offline copy removed from this device. The server’s copy is unchanged.');
     } catch (error) { message('#offline-error', error.message); }
   });
-  return { dispose() { unsubscribe(); surface.removeEventListener('langy-clear-finished-downloads', clearFinished); queue.close(); surface.removeEventListener('langy-offline-account', accountReady); surface.removeEventListener('online', resume); surface.removeEventListener('focus', resume); }, async open(book) {
+  return { dispose() { unsubscribe(); unsubscribeSettings(); clearTimeout(expiry); surface.removeEventListener('langy-clear-finished-downloads', clearFinished); queue.close(); surface.removeEventListener('langy-offline-account', accountReady); surface.removeEventListener('online', resume); surface.removeEventListener('focus', resume); }, async open(book) {
     selected = book; const version = ++epoch; message('#offline-error'); message('#offline-progress'); $('#offline-book-title').textContent = book.title;
     loading = true; $('#offline-save').disabled = true; $('#offline-remove').disabled = false; $('#offline-audio').checked = false; $('#offline-recording').replaceChildren(); dialog.showModal();
     try { const result = await api(`/api/books/${book.id}/narration`); if (version !== epoch) return;

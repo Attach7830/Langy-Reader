@@ -14,6 +14,7 @@ import { pdfOCR } from './pdf-ocr.js';
 import { bookLanguageSuggestions } from './reading-languages.js';
 import { showReadingTime } from './ui-reading-time.js';
 import { audiobookshelfBook } from './audiobookshelf-ui.js';
+import { folderAudiobookshelf } from './folder-audiobookshelf.js';
 import { offlineDownloads } from './offline-downloads.js';
 import { downloadedBooks } from './book-source.js';
 
@@ -35,6 +36,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   const bookVocabularyUI = bookVocabulary();
   const categoryDialog = $('#category-dialog');
   const categoryForm = $('#category-form');
+  const folderABS = folderAudiobookshelf();
+  $('#category-dialog').addEventListener('close', () => folderABS.cancel());
   const learningDialog = $('#learning-dialog');
   let learningBook, learningTimer, libraryTimer, learningVisit = 0, learningParts = {}, learningPending = {};
   let snapshot = { categories: [], books: [], maxUpload: 120 * 1024 ** 2, demo: false };
@@ -110,7 +113,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     const cover = bookCover(book);
     const info = element('div', 'book-info');
     const meta = [book.author, languageName(book.language)].filter(Boolean).join(' · ');
-    info.append(element('span', 'book-title', book.title), element('span', 'book-meta', meta));
+    info.append(element('span', 'book-format', book.format.toUpperCase()), element('span', 'book-title', book.title), element('span', 'book-meta', meta));
     const actions = element('div', 'book-reading-actions');
     if (book.sharedWithMe) actions.append(element('span', 'book-read-badge shared-book-badge', 'Shared with you'));
     else if (book.shared) actions.append(element('span', 'book-read-badge shared-book-badge', 'Shared'));
@@ -228,6 +231,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     $('#shared-books-control').hidden = !snapshot.sharingAvailable;
     $('#show-shared-books').checked = preferences().showSharedBooks !== false;
     const quiet = preferences().quietLibrary !== false;
+    books.dataset.layout = preferences().libraryLayout || 'auto'; books.dataset.coversOnly = String(Boolean(preferences().coversOnly));
+    $('#library-layout').value = books.dataset.layout; $('#library-covers-only').checked = Boolean(preferences().coversOnly);
     const uncategorized = libraryBooks.filter((book) => !book.categoryId).length;
     if (category === 'uncategorized' && !uncategorized) category = 'all';
     expandedDetails = new Set([...books.querySelectorAll('.book-card details[open]')].map((detail) => detail.closest('.book-card').dataset.book));
@@ -624,6 +629,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     categoryForm.elements.name.value = existing?.name ?? '';
     categoryForm.elements.language.value = existing?.language ?? '';
     categoryForm.elements.l1Folder.checked = Boolean(existing?.l1Folder);
+    void folderABS.load(existing);
     message('#category-error');
     categoryDialog.showModal();
     categoryForm.elements.name.focus();
@@ -635,6 +641,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   $('#open-reading-history').addEventListener('click', () => $('#reading-history-dialog').showModal());
   $('#open-vocabulary').addEventListener('click', () => $('#reading-history-dialog').close(), true);
   $('#library-details-toggle').addEventListener('click', () => { changePreferences({ quietLibrary: preferences().quietLibrary === false }); render(); });
+  $('#library-layout').addEventListener('change', () => { changePreferences({ libraryLayout: $('#library-layout').value }); render(); });
+  $('#library-covers-only').addEventListener('change', () => { changePreferences({ coversOnly: $('#library-covers-only').checked }); render(); });
   $('#mobile-filters-toggle').addEventListener('click', () => {
     const button = $('#mobile-filters-toggle'), open = button.getAttribute('aria-expanded') !== 'true';
     button.setAttribute('aria-expanded', String(open)); $('.library-toolbar').dataset.filtersOpen = String(open);
@@ -801,8 +809,10 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     if (rawLanguage && !language) return message('#category-error', 'Choose a language or enter a valid language code.');
     categoryPending = true;
     try {
+      folderABS.validate();
       const path = editingCategory ? `/api/categories/${editingCategory.id}` : '/api/categories';
       const saved = await api(path, { method: editingCategory ? 'PATCH' : 'POST', body: { name: categoryForm.elements.name.value, language, l1Folder: categoryForm.elements.l1Folder.checked } });
+      editingCategory = saved; await folderABS.save(saved.id);
       categoryDialog.close();
       category = saved.id;
       search.value = '';

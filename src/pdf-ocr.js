@@ -18,8 +18,8 @@ export function pdfOCR({ changed, readingLanguages = () => defaults.readingLangu
     submit.disabled = !loaded || active(job);
     $('#ocr-result').hidden = job?.state !== 'ready';
     if (job?.state === 'ready') $('#ocr-result').href = `#read/${encodeURIComponent(job.book.id)}`;
-    message('#ocr-progress', job?.state === 'ready' ? `Searchable copy created${job.pages ? ` · ${job.textPages}/${job.pages} pages have text` : ''}.`
-      : ({ queued: 'PDF queued for local OCR…', running: 'Scanning PDF pages. You can close this dialog; processing continues on your server.', importing: 'Adding the searchable copy…', error: job?.error })[job?.state]);
+    message('#ocr-progress', job?.state === 'ready' ? `${job.inPlace ? 'PDF updated in this book' : 'Previous searchable copy available'}${job.pages ? ` · ${job.textPages}/${job.pages} pages have text` : ''}. Save the book offline again to update any downloaded copy.`
+      : ({ queued: 'PDF queued for local OCR…', running: 'Scanning PDF pages. You can close this dialog; processing continues on your server.', importing: 'Updating this book’s PDF…', error: job?.error })[job?.state]);
   }
   async function load(version, initial = false) {
     clearTimeout(poll);
