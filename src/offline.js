@@ -44,6 +44,22 @@ async function bookmarkList(path) {
 export async function offlineRequest(path, { body, method = body ? 'POST' : 'GET' } = {}) {
   if (!globalThis.caches || !offlineOwner()) throw new Error('Connect to Langy and download an offline reading pack first.');
   const bookmark = /^\/api\/books\/([^/]+)\/bookmarks(?:\/([^/]+))?$/u.exec(path);
+  const pinyin = /^\/api\/books\/([^/]+)\/pinyin$/u.exec(path);
+  if (pinyin && method === 'POST') {
+    const pack = await savedPack(pinyin[1]);
+    if (pack) {
+      const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body.text));
+      const hash = [...new Uint8Array(bytes)].map((value) => value.toString(16).padStart(2, '0')).join('');
+      let cache;
+      for (const entry of await packCaches()) { const candidate = await caches.open(entry); if (await candidate.match(`/api/books/${pinyin[1]}/offline-data`)) { cache = candidate; break; } }
+      if (!cache) throw new Error('Download this book for offline reading first.');
+      const key = `/__langy_pinyin_v1__/${hash}`;
+      const existing = await cache.match(key); if (existing) return existing.json();
+      const result = offlineLookup(pack, '/api/mandarin/pinyin', body);
+      try { await cache.put(key, Response.json(result)); } catch { /* Reading still works when device storage is full. */ }
+      return result;
+    }
+  }
   if (method === 'GET') {
     if (path === '/api/library') {
       const response = await cachedResponse(path); if (!response) throw new Error('Download a book for offline reading first.');
