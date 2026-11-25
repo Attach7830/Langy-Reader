@@ -95,7 +95,9 @@ export async function openArchive(dir, { library, demo = false, request = public
   const publicJob = (job) => ({ id: job.id, state: job.state, bytes: job.bytes, total: job.total, error: job.error, book: job.book,
     source: job.source, notice: job.notice, reference: job.md5, details: job.details, batchId: job.batchId,
     nextAttempt: job.nextAttempt || null, attempts: job.attempts || 0, ...(job.source === 'slow' ? { bookUrl: job.bookUrl } : {}) });
-  const latest = () => { const all = [...jobs.values()]; const job = all.find((item) => pending.has(item.state)) || all.find((item) => ['needs_action', 'retry_wait'].includes(item.state)) || all.at(-1); return job ? publicJob(job) : null; };
+  const owned = (job, visitor) => !visitor || (job.owner || '') === (visitor.id || '');
+  const findJob = (id, visitor) => { const job = jobs.get(id); if (!job || !owned(job, visitor)) throw new RequestError(404, 'Import not found.'); return job; };
+  const latest = (visitor) => { const all = [...jobs.values()].filter((job) => owned(job, visitor)); const job = all.find((item) => pending.has(item.state)) || all.find((item) => ['needs_action', 'retry_wait'].includes(item.state)) || all.at(-1); return job ? publicJob(job) : null; };
   const signal = (job, timeout) => AbortSignal.any([controllers.get(job.id)?.signal || new AbortController().signal, AbortSignal.timeout(timeout)]);
   function fail(job, error) {
     if (job.state === 'cancelled') return;
@@ -126,7 +128,7 @@ export async function openArchive(dir, { library, demo = false, request = public
     job.state = 'importing';
     job.outputBook ||= randomUUID(); persist(job);
     const book = await library.importBook(job.outputBook, { path: temporary, size: job.bytes,
-      originalname: filename(headers, job.md5, format) }, job.details);
+      originalname: filename(headers, job.md5, format) }, job.details, { id: job.owner || '' });
     job.book = book; job.state = 'ready'; job.error = null; job.nextAttempt = null; persist(job);
     try { onImport(book, job.details); } catch { /* Library refresh can start analysis again. */ }
   }
@@ -187,7 +189,7 @@ export async function openArchive(dir, { library, demo = false, request = public
     }
   }
 
-  function makeJob(body, batchId) {
+  function makeJob(body, batchId, visitor) {
     if (demo) throw new RequestError(403, 'Anna’s Archive imports are available on self-hosted installations.');
     const mode = body.downloadMode || 'auto';
     if (body.queueUnavailable !== undefined && typeof body.queueUnavailable !== 'boolean') throw new RequestError(422, 'Choose whether an unavailable download stays queued.');
@@ -196,13 +198,13 @@ export async function openArchive(dir, { library, demo = false, request = public
     const md5 = archiveMD5(body.reference);
     const language = typeof body.language === 'string' ? body.language.trim() : '';
     if (language && !normalizeLanguage(language)) throw new RequestError(422, 'Enter a valid book language code.');
-    if (body.categoryId && !library.snapshot().categories.some(({ id }) => id === body.categoryId)) throw new RequestError(422, 'Choose a category that exists.');
-    const details = Object.fromEntries(['title', 'author', 'language', 'languages', 'categoryId', 'coverStyle'].filter((key) => body[key] !== undefined).map((key) => [key, body[key]]));
+    if (body.categoryId && !library.snapshot(visitor).categories.some(({ id }) => id === body.categoryId)) throw new RequestError(422, 'Choose a category that exists.');
+    const details = Object.fromEntries(['title', 'author', 'language', 'languages', 'categoryId', 'coverStyle', 'shared'].filter((key) => body[key] !== undefined).map((key) => [key, body[key]]));
     Object.assign(details, importNarrationOptions(body));
-    return { id: randomUUID(), md5, details, mode, batchId, queueUnavailable: body.queueUnavailable ?? true, created: now(), source: 'fast', state: 'queued', bytes: 0, total: null, error: null, nextAttempt: null, attempts: 0 };
+    return { id: randomUUID(), owner: visitor?.id || '', md5, details, mode, batchId, queueUnavailable: body.queueUnavailable ?? true, created: now(), source: 'fast', state: 'queued', bytes: 0, total: null, error: null, nextAttempt: null, attempts: 0 };
   }
   function insert(batch) {
-    if (batch.some((item) => [...jobs.values()].some((job) => job.md5 === item.md5 && ['queued', 'downloading', 'importing', 'needs_action', 'retry_wait'].includes(job.state)))) throw new RequestError(409, 'This edition is already running or queued. Continue, retry, or cancel its current import.');
+    if (batch.some((item) => [...jobs.values()].some((job) => job.md5 === item.md5 && (job.owner || '') === (item.owner || '') && ['queued', 'downloading', 'importing', 'needs_action', 'retry_wait'].includes(job.state)))) throw new RequestError(409, 'This edition is already running or queued. Continue, retry, or cancel its current import.');
     if ([...jobs.values()].filter((job) => ['queued', 'downloading', 'importing', 'needs_action', 'retry_wait'].includes(job.state)).length + batch.length > 100) throw new RequestError(409, 'The import queue has 100 unfinished books. Finish or cancel some before adding more.');
     db.exec('BEGIN');
     try { for (const job of batch) persist(job); db.exec('COMMIT'); } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -210,16 +212,16 @@ export async function openArchive(dir, { library, demo = false, request = public
     for (const job of [...jobs.values()]) if (jobs.size > 150 && ['ready', 'error', 'cancelled'].includes(job.state)) { jobs.delete(job.id); db.prepare('DELETE FROM jobs WHERE id=?').run(job.id); }
     if (autoStart) void pump();
   }
-  function queue(body) { const job = makeJob(body); insert([job]); return publicJob(job); }
-  function queueBatch(body) {
+  function queue(body, visitor) { const job = makeJob(body, undefined, visitor); insert([job]); return publicJob(job); }
+  function queueBatch(body, visitor) {
     if (!Array.isArray(body.books) || !body.books.length || body.books.length > archiveBulkLimit) throw new RequestError(422, `Add between 1 and ${archiveBulkLimit} books.`);
     if (body.sameAuthor !== undefined && typeof body.sameAuthor !== 'boolean') throw new RequestError(422, 'Choose whether all authors are the same.');
     const batchId = randomUUID();
     const batch = body.books.map((book) => {
       if (!book || typeof book !== 'object') throw new RequestError(422, 'Enter a link for each book.');
       return makeJob({ language: body.language, languages: body.languages, categoryId: body.categoryId, coverStyle: body.coverStyle, downloadMode: body.downloadMode, queueUnavailable: body.queueUnavailable,
-        autoAudiobook: body.autoAudiobook, audiobookDelayMinutes: body.audiobookDelayMinutes,
-        reference: book.reference, title: book.title, author: body.sameAuthor ? body.author : book.author }, batchId);
+        autoAudiobook: body.autoAudiobook, audiobookDelayMinutes: body.audiobookDelayMinutes, shared: body.shared,
+        reference: book.reference, title: book.title, author: body.sameAuthor ? body.author : book.author }, batchId, visitor);
     });
     if (new Set(batch.map((job) => job.md5)).size !== batch.length) throw new RequestError(422, 'Each row must refer to a different book edition.');
     insert(batch); return { batchId, jobs: batch.map(publicJob) };
@@ -237,9 +239,9 @@ export async function openArchive(dir, { library, demo = false, request = public
       }
     } finally { running = false; }
   }
-  function resumable(id) {
+  function resumable(id, visitor) {
     if (demo) throw new RequestError(403, 'Anna’s Archive imports are available on self-hosted installations.');
-    const job = jobs.get(id);
+    const job = findJob(id, visitor);
     if (!job || job.source !== 'slow') throw new RequestError(404, 'Slow import not found. Start a new import if the server restarted.');
     if (job.state !== 'needs_action' || running) throw new RequestError(409, 'Wait for the current import to finish.');
     return job;
@@ -249,7 +251,7 @@ export async function openArchive(dir, { library, demo = false, request = public
     if (typeof details === 'string') { try { details = JSON.parse(details); } catch { throw new RequestError(422, 'Invalid book details.'); } }
     if (!details || typeof details !== 'object' || Array.isArray(details)) throw new RequestError(422, 'Invalid book details.');
     const options = importNarrationOptions({ ...job.details, ...details });
-    for (const key of ['title', 'author', 'language', 'languages', 'categoryId', 'coverStyle']) if (Object.hasOwn(details, key)) job.details[key] = details[key];
+    for (const key of ['title', 'author', 'language', 'languages', 'categoryId', 'coverStyle', 'shared']) if (Object.hasOwn(details, key)) job.details[key] = details[key];
     if (Object.hasOwn(details, 'autoAudiobook') || Object.hasOwn(details, 'audiobookDelayMinutes')) {
       job.details.autoAudiobook = Boolean(options); if (options) job.details.audiobookDelayMinutes = options.audiobookDelayMinutes;
     }
@@ -258,14 +260,14 @@ export async function openArchive(dir, { library, demo = false, request = public
   timer?.unref();
   if (autoStart && !demo) void pump();
   return {
-    settings, save, removeKey: () => save(() => ({ ...settings(), clearKey: true })), queue, queueBatch, latest, list: () => [...jobs.values()].map(publicJob), pump,
-    continue(id, body) { const job = resumable(id), url = downloadURL(body?.url); updateDetails(job, body?.details);
+    settings, save, removeKey: () => save(() => ({ ...settings(), clearKey: true })), queue, queueBatch, latest, list: (visitor) => [...jobs.values()].filter((job) => owned(job, visitor)).map(publicJob), pump,
+    continue(id, body, visitor) { const job = resumable(id, visitor), url = downloadURL(body?.url); updateDetails(job, body?.details);
       running = true; controllers.set(id, new AbortController());
       void downloadFile(job, url).finally(() => { controllers.delete(id); running = false; if (autoStart) void pump(); }); return publicJob(job); },
-    async accept(id, file, details) {
+    async accept(id, file, details, visitor) {
       const temporary = file?.path;
       try {
-        const job = resumable(id);
+        const job = resumable(id, visitor);
         if (!file) throw new RequestError(422, 'Choose the downloaded EPUB or PDF.');
         if (file.size > maxUpload) throw new RequestError(413, `Books must be ${maxUpload / 1024 ** 2} MiB or smaller.`);
         updateDetails(job, details);
@@ -277,19 +279,19 @@ export async function openArchive(dir, { library, demo = false, request = public
         return publicJob(job);
       } finally { if (temporary) await rm(temporary, { force: true }); }
     },
-    retry(id) {
-      const job = jobs.get(id); if (!job) throw new RequestError(404, 'Import not found.');
+    retry(id, visitor) {
+      const job = findJob(id, visitor); if (!job) throw new RequestError(404, 'Import not found.');
       if (!['error', 'retry_wait', 'needs_action'].includes(job.state)) throw new RequestError(409, 'This import is already queued or complete.');
       job.state = 'queued'; job.nextAttempt = null; job.error = null; persist(job); if (autoStart) void pump(); return publicJob(job);
     },
-    cancel(id) {
-      const job = jobs.get(id); if (!job) throw new RequestError(404, 'Import not found.');
+    cancel(id, visitor) {
+      const job = findJob(id, visitor); if (!job) throw new RequestError(404, 'Import not found.');
       if (job.state === 'importing' || job.state === 'ready') throw new RequestError(409, 'This book is already being added or complete.');
       job.state = 'cancelled'; job.nextAttempt = null; job.error = null; persist(job); controllers.get(id)?.abort(); return publicJob(job);
     },
     close() { closed = true; clearInterval(timer); for (const controller of controllers.values()) controller.abort(); },
-    job(id) {
-      const job = jobs.get(id);
+    job(id, visitor) {
+      const job = findJob(id, visitor);
       if (!job) throw new RequestError(404, 'Import not found. The server may have restarted; check your library before retrying.');
       return publicJob(job);
     },
