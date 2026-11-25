@@ -1,5 +1,6 @@
 import { $, api, element, message, toast } from './ui.js';
 import { signOut } from './auth.js';
+import { accountPolicyFields } from './account-policy.js';
 
 export function accountPanel(session) {
   const user = session.user;
@@ -10,6 +11,7 @@ export function accountPanel(session) {
   $('#account-offline-note').hidden = !session.offline;
   for (const label of document.querySelectorAll('[data-account-name]')) label.textContent = user.username;
   let loading, resetting;
+  const newPolicy = accountPolicyFields(); $('#account-create').before(newPolicy.root);
   function error(text = '') { message('#account-message', text); }
   async function loadUsers() {
     if (user.role !== 'admin' || loading) return loading;
@@ -39,7 +41,13 @@ export function accountPanel(session) {
             catch (failure) { error(failure.message); }
             finally { await loadUsersAfter(); }
           });
-          actions.append(role, reset, toggle); row.append(name, state, actions); return row;
+          const revoke = element('button', 'button quiet small', 'Revoke browser sessions'); revoke.type = 'button'; revoke.disabled = item.id === user.id;
+          revoke.addEventListener('click', async () => { revoke.disabled = true; error(); try { await api(`/api/admin/users/${item.id}/sessions/revoke`, { method: 'POST' }); error('Browser sessions revoked. Reset the password to revoke saved device credentials too.'); } catch (failure) { error(failure.message); } finally { revoke.disabled = false; } });
+          const details = document.createElement('details'), summary = element('summary', '', 'Permissions and limits'), policy = accountPolicyFields(item, { current: item.id === user.id });
+          const save = element('button', 'button secondary small', 'Save account limits'); save.type = 'button';
+          save.addEventListener('click', async () => { save.disabled = true; error(); try { await api(`/api/admin/users/${item.id}`, { method: 'PATCH', body: policy.read() }); error('Account permissions and limits saved.'); await loadUsersAfter(); } catch (failure) { error(failure.message); } finally { save.disabled = false; } });
+          details.append(summary, policy.root, save);
+          actions.append(role, reset, toggle, revoke); row.append(name, state, actions, details); return row;
         }));
       } catch (failure) { error(failure.message); }
       finally { loading = null; }
@@ -51,8 +59,8 @@ export function accountPanel(session) {
     if (!name.reportValidity() || !password.reportValidity()) return;
     event.target.disabled = true; error();
     try {
-      await api('/api/admin/users', { method: 'POST', body: { username: name.value.trim(), password: password.value, role: $('#account-new-role').value } });
-      name.value = password.value = ''; error('Account created. The new user can sign in with these credentials.'); await loadUsers();
+      await api('/api/admin/users', { method: 'POST', body: { username: name.value.trim(), password: password.value, role: $('#account-new-role').value, ...newPolicy.read() } });
+      name.value = password.value = ''; newPolicy.reset(); error('Account created. The new user can sign in with these credentials.'); await loadUsers();
     } catch (failure) { error(failure.message); }
     finally { event.target.disabled = false; }
   });

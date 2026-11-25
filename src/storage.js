@@ -17,15 +17,16 @@ export function showStorage(storage) {
     meter.hidden = true;
     return;
   }
-  const demo = storage.scope === 'demo';
-  $('#storage-summary').textContent = `${demo ? 'Demo allowance' : 'Library drive'} · ${bytes(storage.availableBytes)} available`;
+  const demo = storage.scope === 'demo', account = storage.scope === 'account';
+  $('#storage-summary').textContent = `${demo ? 'Demo allowance' : account ? 'Your library' : 'Library drive'} · ${bytes(storage.availableBytes)} available`;
   $('#storage-detail').textContent = demo
     ? `${bytes(storage.usedBytes)} of ${bytes(storage.totalBytes)} used · up to 4 books, 20 MiB each`
+    : account ? `${bytes(storage.usedBytes)} saved${storage.unlimited ? ' · no account limit' : ` of ${bytes(storage.totalBytes)}`}${storage.overLimit ? ' · storage limit reached' : ''}`
     : `${bytes(storage.totalBytes)} total · shared with other files on this drive`;
-  meter.hidden = false;
+  meter.hidden = Boolean(account && storage.unlimited);
   meter.max = Math.max(1, storage.totalBytes);
-  meter.value = Math.max(0, storage.totalBytes - storage.availableBytes);
-  meter.setAttribute('aria-label', demo ? 'Demo storage allowance used' : 'Library drive space used or reserved');
+  meter.value = Math.max(0, account ? storage.usedBytes : storage.totalBytes - storage.availableBytes);
+  meter.setAttribute('aria-label', demo ? 'Demo storage allowance used' : account ? 'Your saved library allowance used' : 'Library drive space used or reserved');
   meter.title = `${bytes(storage.availableBytes)} available of ${bytes(storage.totalBytes)}`;
   panel.dataset.low = String(storage.availableBytes / storage.totalBytes < .1);
 }

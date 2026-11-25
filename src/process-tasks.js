@@ -20,16 +20,19 @@ export function requestProcessLabel(path, method = 'GET') {
 }
 
 export function createProcessTasks({ delay = 450, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
-  const tasks = new Map(), listeners = new Set(); let sequence = 0, downloads = [], owner = '';
+  const tasks = new Map(), listeners = new Set(), cancellations = new Map(); let sequence = 0, downloads = [], owner = '';
   const snapshot = () => ({ tasks: [...tasks.values()].filter((task) => task.visible).map(({ timer, visible, ...task }) => task), downloads });
   const emit = () => { const value = snapshot(); for (const listener of listeners) listener(value); };
   function begin(label, detail = {}) {
-    const id = `request:${++sequence}`, task = { id, label, ...detail, created: now(), state: 'running', visible: false };
+    const {cancel,...metadata}=detail;
+    const id = `request:${++sequence}`, task = { id, label, ...metadata, cancellable:typeof cancel === 'function', created: now(), state: 'running', visible: false };
+    if (cancel) cancellations.set(id,cancel);
     task.timer = setTimer(() => { if (tasks.has(id)) { task.visible = true; emit(); } }, delay); task.timer?.unref?.(); tasks.set(id, task);
     let ended = false;
     return (error) => {
       if (ended || !tasks.has(id)) return; ended = true;
       clearTimer(task.timer); delete task.timer;
+      cancellations.delete(id);
       if (!error || !task.visible || error.name === 'AbortError') tasks.delete(id);
       else { task.state = 'failed'; task.detail = error.message; task.finished = now(); }
       const finished = [...tasks.values()].filter((item) => item.state !== 'running');
@@ -37,9 +40,10 @@ export function createProcessTasks({ delay = 450, now = Date.now, setTimer = set
       emit();
     };
   }
-  return { begin, snapshot, subscribe(listener) { listeners.add(listener); listener(snapshot()); return () => listeners.delete(listener); },
+  return { begin, snapshot, cancel(id) { const task=tasks.get(id), cancel=cancellations.get(id); if (!task || !cancel || task.state !== 'running') return;
+    task.state='cancelled';task.finished=now();cancellations.delete(id);cancel();emit(); }, subscribe(listener) { listeners.add(listener); listener(snapshot()); return () => listeners.delete(listener); },
     setDownloads(jobs, { includeFinished = false } = {}) { downloads = includeFinished ? jobs : jobs.filter((job) => !['complete', 'completed', 'cancelled'].includes(job.state)); emit(); },
-    setAccount(id) { if (owner && id !== owner) { for (const task of tasks.values()) clearTimer(task.timer); tasks.clear(); downloads = []; } owner = id; emit(); },
+    setAccount(id) { if (owner && id !== owner) { for (const cancel of cancellations.values()) cancel(); cancellations.clear(); for (const task of tasks.values()) clearTimer(task.timer); tasks.clear(); downloads = []; } owner = id; emit(); },
     clearFinished() { for (const task of tasks.values()) if (task.state !== 'running') tasks.delete(task.id); emit(); },
   };
 }

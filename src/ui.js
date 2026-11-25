@@ -28,7 +28,9 @@ export function drawIcons() {
 }
 
 export async function api(path, options = {}) {
-  const label = requestProcessLabel(path, options.method || 'GET'), finish = label ? processTasks.begin(label) : null;
+  const controller = new AbortController();
+  options = {...options,signal:AbortSignal.any([controller.signal,...[options.signal].filter(Boolean)])};
+  const label = requestProcessLabel(path, options.method || 'GET'), finish = label ? processTasks.begin(label,{cancel:() => controller.abort()}) : null;
   try {
     const result = await requestAPI(path, options); finish?.();
     if (options.method && options.method !== 'GET' && /\/(?:learning|narration|reading-estimate|recordings|ivoox|ocr|audiobookshelf|imports|discovery)(?:\/|$)/u.test(path)) {

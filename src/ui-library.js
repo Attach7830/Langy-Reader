@@ -14,6 +14,7 @@ import { pdfOCR } from './pdf-ocr.js';
 import { bookLanguageSuggestions } from './reading-languages.js';
 import { showReadingTime } from './ui-reading-time.js';
 import { audiobookshelfBook } from './audiobookshelf-ui.js';
+import { coverSearch } from './cover-search.js';
 import { folderAudiobookshelf } from './folder-audiobookshelf.js';
 import { offlineDownloads } from './offline-downloads.js';
 import { downloadedBooks } from './book-source.js';
@@ -28,6 +29,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   const books = $('#books');
   const bookDialog = $('#book-dialog');
   const bookForm = $('#book-form');
+  const coverSearchUI=coverSearch(bookForm);
   const coverPicker = bookCoverPicker(bookForm, $('#book-cover-options'));
   const bulkImport = archiveBulk(bookForm);
   const ocr = pdfOCR({ changed: refresh, readingLanguages });
@@ -292,7 +294,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     clearTimeout(libraryTimer);
     if (snapshot.books.some((book) => ['queued', 'running'].includes(book.learning?.state)
       || ['queued', 'running'].includes(book.learning?.counting?.state)
-      || ['queued', 'running'].includes(book.learning?.reading?.state)) || archiveWorking(snapshot.archive?.job)) {
+      || ['queued', 'running'].includes(book.learning?.reading?.state)) || archiveWorking(snapshot.archive?.job) || snapshot.imports?.some((job)=>['queued','downloading','importing'].includes(job.state))) {
       libraryTimer = setTimeout(() => { if (!document.querySelector('dialog[open]')) void refresh(); }, archiveWorking(snapshot.archive?.job) ? 1200 : 4500);
     } else if (snapshot.archive?.jobs?.some((job) => ['retry_wait', 'needs_action'].includes(job.state))) {
       libraryTimer = setTimeout(() => { if (!document.querySelector('dialog[open]')) void refresh(); }, 60_000);
@@ -569,7 +571,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   function showBook(book) {
     if (book?.canEdit === false) return;
     if (bookPending) { if (!bookDialog.open) bookDialog.showModal(); return; }
-    metadataFields.reset();
+    metadataFields.reset(); coverSearchUI.reset();
     editingBook = book;
     slowImport = null;
     $('#archive-slow-download').hidden = true;
@@ -591,7 +593,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     bookForm.elements.audiobookDelayMinutes.disabled = true;
     $('#book-source option[value="anna"]').disabled = !snapshot.archive?.available;
     $('#book-source option[value="anna"]').textContent = snapshot.archive?.available ? 'Anna’s Archive' : 'Anna’s Archive (self-hosted)';
-    $('#archive-book-fields').hidden = true;
+    $('#archive-book-fields').hidden = true; $('#web-book-fields').hidden = true; $('#book-web-url').disabled=true; $('#gutenberg-results').replaceChildren(); $('#gutenberg-more').hidden=true;
+    $('#book-source option[value=web]').disabled=snapshot.demo;
     message('#book-import-progress');
     $('#file-limit').textContent = `Maximum ${snapshot.maxUpload / 1024 ** 2} MiB`;
     const choices = [new Option('Uncategorized', ''), ...snapshot.categories.map(({ id, name, language }) => new Option(language ? `${name} · ${languageName(language)}` : name, id))];
@@ -693,16 +696,30 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     }));
   }
   $('#book-source').addEventListener('change', () => {
-    const archive = $('#book-source').value === 'anna';
+    const archive = $('#book-source').value === 'anna', web = $('#book-source').value === 'web';
     metadataFields.cancel();
-    $('#file-field').hidden = archive;
+    $('#file-field').hidden = archive || web; $('#web-book-fields').hidden = !web; $('#book-web-url').disabled=!web;
     $('#archive-book-fields').hidden = !archive;
     slowImport = null; $('#archive-slow-download').hidden = true; bookForm.elements.archiveSlowURL.value = '';
     bookForm.elements.archiveReference.readOnly = false;
     message('#book-error');
-    if (!archive && selectedFile) metadataFields.start(selectedFile);
+    if (!archive && !web && selectedFile) metadataFields.start(selectedFile);
     if (!archive) bulkImport.reset();
   });
+  let cataloguePage=1, catalogueQuery='', catalogueEpoch=0;
+  async function searchGutenberg(append=false){
+    if (!append) {cataloguePage=1;catalogueQuery=$('#gutenberg-query').value.trim();}
+    if (!catalogueQuery) return message('#gutenberg-status','Enter a title or author.');
+    const epoch=++catalogueEpoch; $('#gutenberg-search').disabled=$('#gutenberg-more').disabled=true; message('#gutenberg-status','Searching Gutenberg…');
+    try{const result=await api('/api/book-catalogue/gutenberg?q='+encodeURIComponent(catalogueQuery)+'&page='+cataloguePage); if(epoch!==catalogueEpoch)return;
+      if(!append)$('#gutenberg-results').replaceChildren();
+      for(const item of result.books){const row=element('div','form-stack'), title=element('strong','',item.title), author=element('span','field-note',item.author), choose=element('button','button secondary small','Use this EPUB');choose.type='button';
+        choose.addEventListener('click',()=>{$('#book-web-url').value=item.url;bookForm.elements.title.value=item.title;bookForm.elements.author.value=item.author;if(item.language)bookForm.elements.language.value=item.language;message('#gutenberg-status','Book selected. Review its folder and import options, then choose Import book.');});row.append(title,author,choose);$('#gutenberg-results').append(row);}
+      $('#gutenberg-more').hidden=!result.more;message('#gutenberg-status',result.books.length?'Select a book to fill in its download link and details.':'No matching EPUBs found.');
+    }catch(error){message('#gutenberg-status',error.message);}finally{if(epoch===catalogueEpoch)$('#gutenberg-search').disabled=$('#gutenberg-more').disabled=false;}
+  }
+  $('#gutenberg-search').addEventListener('click',()=>void searchGutenberg());
+  $('#gutenberg-more').addEventListener('click',()=>{cataloguePage++;void searchGutenberg(true);});
   $('#configure-archive').addEventListener('click', () => bookDialog.close());
   search.addEventListener('input', render);
   $('#reading-filter').addEventListener('change', render);
@@ -756,7 +773,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     data.set('language', language);
     try { data.set('languages', JSON.stringify(languagePicker.value())); }
     catch (error) { return message('#book-error', error.message); }
-    const archiveImport = !editingBook && $('#book-source').value === 'anna';
+    const archiveImport = !editingBook && $('#book-source').value === 'anna', webImport = !editingBook && $('#book-source').value === 'web';
+    const webURL=$('#book-web-url').value.trim();data.delete('bookURL');
     const reference = bookForm.elements.archiveReference.value.trim();
     const downloadMode = bookForm.elements.archiveDownloadMode.value, slowURL = bookForm.elements.archiveSlowURL.value.trim();
     const queueUnavailable = bookForm.elements.archiveQueueUnavailable.checked;
@@ -765,7 +783,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     data.delete('archiveDownloadMode'); data.delete('archiveSlowURL');
     data.delete('archiveQueueUnavailable');
     if (archiveImport && !bulkImport.enabled() && !reference) return message('#book-error', 'Paste an Anna’s Archive book link or MD5.');
-    if (!editingBook && !archiveImport && !selectedFile) return message('#book-error', 'Choose an EPUB or PDF within the upload limit.');
+    if (webImport && !webURL) return message('#book-error','Paste a direct EPUB or PDF download link first.');
+    if (!editingBook && !archiveImport && !webImport && !selectedFile) return message('#book-error', 'Choose an EPUB or PDF within the upload limit.');
     bookPending = true;
     $('#book-submit').disabled = true;
     $('#book-submit').textContent = editingBook ? 'Saving…' : 'Importing…';
@@ -775,6 +794,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
         await importBookCover(submittedBook); data.delete('coverUrl');
         data.delete('file');
         await api(`/api/books/${submittedBook.id}`, { method: 'PATCH', body: Object.fromEntries(data) });
+      } else if (webImport) {
+        data.delete('file'); await api('/api/imports/web',{method:'POST',body:{...Object.fromEntries(data),url:webURL}}); bookDialog.close(); toast('Book download queued'); await refresh();return;
       } else if (archiveImport) {
         data.delete('file');
         if (bulkImport.enabled()) {
@@ -854,6 +875,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     finally { categoryPending = false; }
   });
 
+  bookDialog.addEventListener('close',()=>coverSearchUI.reset());
   bookDialog.addEventListener('cancel', (event) => { if (bookPending && $('#book-source').value !== 'anna') event.preventDefault(); });
   bookDialog.addEventListener('close', () => metadataFields.cancel());
   categoryDialog.addEventListener('cancel', (event) => { if (categoryPending) event.preventDefault(); });

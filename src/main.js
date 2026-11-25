@@ -558,7 +558,7 @@ function closeReader() {
 
 async function openBook(book) {
   closeReader();
-  const finishOpening = processTasks.begin('Open book', { bookId: book.id, title: book.title });
+  const finishOpening = processTasks.begin('Open book', { bookId: book.id, title: book.title, cancel: () => { closeReader(); location.hash = '#library'; } });
   activeBook = book;
   updateComprehension();
   setOfflineBook(book.id);
