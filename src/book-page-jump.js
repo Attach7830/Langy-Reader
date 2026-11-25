@@ -1,6 +1,24 @@
 import { $, element, toast } from './ui.js';
 import { dismissOnBackdrop } from './dialog-backdrop.js';
 
+async function settleKeyboard() {
+  if (!window.matchMedia?.('(pointer: coarse)').matches) return;
+  // Closing a numeric field can resize the reader while the phone keyboard
+  // retracts. Map the requested page after that layout has settled.
+  await new Promise((resolve) => {
+    const viewport = window.visualViewport;
+    let quiet, deadline;
+    function finish() {
+      clearTimeout(quiet); clearTimeout(deadline);
+      window.removeEventListener('resize', changed); viewport?.removeEventListener('resize', changed); resolve();
+    }
+    function changed() { clearTimeout(quiet); quiet = setTimeout(finish, 180); }
+    window.addEventListener('resize', changed); viewport?.addEventListener('resize', changed);
+    deadline = setTimeout(finish, 1200); changed();
+  });
+  await new Promise((resolve) => window.requestAnimationFrame(resolve));
+}
+
 export function bookPageJump({ renderer, book, go, focus = () => {} }) {
   const dialog = $('#page-jump-dialog'), form = $('#page-jump-form');
   const section = $('#page-jump-section'), input = $('#page-jump-number'), note = $('#page-jump-note');
@@ -20,6 +38,8 @@ export function bookPageJump({ renderer, book, go, focus = () => {} }) {
     const current = owner, isPdf = pdf, page = input.valueAsNumber, index = Number(section.value);
     dialog.close(); focus();
     try {
+      await settleKeyboard();
+      if (renderer() !== current) return;
       const moved = await go(isPdf ? page : { index, page });
       if (moved !== false && renderer() === current && !isPdf && page > current.pageCount) {
         toast(`This section has ${current.pageCount} ${current.pageCount === 1 ? 'page' : 'pages'}. Opened its last page.`);

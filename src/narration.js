@@ -131,14 +131,16 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     return recording?.segments?.find((part) => Number(part.key.split(':')[1]) > ordinal)?.start ?? recording?.duration ?? 0;
   }
   function syncInitialPosition() {
-    if (!initialSeek || !ready() || !descriptor?.root.isConnected || unit?.recordingId !== recording.id || !Number.isFinite(audio.duration)) return;
+    const current = renderer()?.audioUnit?.();
+    if (!initialSeek || !ready() || !current || descriptor?.root !== current.root || unit?.key !== current.key
+      || !descriptor?.root.isConnected || unit?.recordingId !== recording.id || !Number.isFinite(audio.duration)) return;
     initialSeek = false;
     audio.currentTime = firstVisibleTime();
     controls();
   }
   // Page changes run serially; another scrub replaces the pending target.
   async function follow(force = false) {
-    if (!enabled || !ready() || initialSeek || manualNavigation) return;
+    if (!enabled || !ready() || initialSeek || manualNavigation || !renderer()?.audioUnit?.()) return;
     followAgain = true; forceFollow ||= force;
     if (following) return;
     following = true;
@@ -273,6 +275,8 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     try {
       await loadCurrent();
       if (navigation !== navigationVersion || epoch !== lifecycle) return;
+      const current = renderer()?.audioUnit?.();
+      if (!current || unit?.key !== current.key || descriptor?.root !== current.root) return;
       syncInitialPosition();
       if (seekToPage && (!following || manualNavigation) && enabled && ready()) {
         const position = visibleAudioPosition(local, timed, timingMap, segmentFor(unit?.key));
