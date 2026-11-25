@@ -140,3 +140,13 @@ test('closing the summary cancels a pending correction without another model req
   const { ai, requests, body } = await fixture(t, () => { controller.abort(); return page; });
   await assert.rejects(ai.summary(body, controller.signal), { name: 'AbortError' }); assert.equal(requests.length, 1);
 });
+
+test('phrase help sends the exact selection and passage, requests the chosen language and rejects oversized or missing context', async (t) => {
+  const f = await fixture(t, () => 'Aquí significa que todavía hay asuntos por descubrir.');
+  const body = { phrase: 'muchas cosas por descubrir', context: 'Todavía quedaban muchas cosas por descubrir.', language: 'es', translationLanguage: 'pt' };
+  assert.equal(await f.ai.phrase(body, f.signal), 'Aquí significa que todavía hay asuntos por descubrir.');
+  const request = f.requests[0]; assert.match(request.messages[0].content, /Portuguese/u); assert.match(request.messages[1].content, /two or three short sentences/u);
+  assert.equal(source(request).selectedPhrase, body.phrase); assert.equal(source(request).passage, body.context);
+  for (const invalid of [{ ...body, phrase: '' }, { ...body, phrase: 'x'.repeat(701) }, { ...body, context: 'unrelated' }, { ...body, context: 'x'.repeat(4001) }]) await assert.rejects(f.ai.phrase(invalid, f.signal), /Select a phrase/u);
+  assert.equal(f.requests.length, 1);
+});
