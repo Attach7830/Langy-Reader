@@ -212,12 +212,17 @@ app.patch('/api/settings/reader', (req, res) => {
 app.get('/api/settings/learning', (req, res) => res.json({ ...learning.settings(), ...(accounts.enabled && !isAdministrator(req) ? { configurable: false, managed: true } : {}) }));
 app.get('/api/settings/audiobookshelf', (req, res) => res.json(usesOwnerAudiobookshelf(req) ? audiobookshelf.settings() : { configurable: false, managed: true, connected: false, hasKey: false }));
 app.put('/api/settings/audiobookshelf', async (req, res) => res.json(await audiobookshelf.save(req.body ?? {})));
+app.patch('/api/settings/audiobookshelf/categories/:id', async (req, res) => {
+  if (!library.snapshot(req.visitor).categories.some((category) => category.id === req.params.id)) throw new RequestError(404, 'Folder not found.');
+  res.json(await audiobookshelf.linkCategory(req.params.id, req.body?.destination));
+});
 if (!demo) app.delete('/api/settings/audiobookshelf/key', async (_req, res) => res.json(await audiobookshelf.removeKey()));
 app.get('/api/audiobookshelf/libraries', async (_req, res) => res.json(await audiobookshelf.libraries()));
 app.get('/api/audiobookshelf/libraries/:id/items', async (req, res) => res.json(await audiobookshelf.items(req.params.id, Number(req.query.page || 0))));
 app.get('/api/books/:id/audiobookshelf', (req, res) => res.json(usesOwnerAudiobookshelf(req) ? audiobookshelf.status(library.getBook(req.params.id, req.visitor)) : { configurable: false, connected: false, managed: true, jobs: [] }));
 app.post('/api/books/:id/audiobookshelf/export', (req, res) => res.status(202).json(audiobookshelf.queue(library.getBook(req.params.id, req.visitor), 'export', req.body ?? {})));
 app.post('/api/books/:id/audiobookshelf/import', (req, res) => res.status(202).json(audiobookshelf.queue(library.getBook(req.params.id, req.visitor), 'import', req.body ?? {})));
+app.post('/api/books/:id/audiobookshelf/jobs/:job/decision', async (req, res) => res.json(await audiobookshelf.decide(library.getBook(req.params.id, req.visitor), req.params.job, req.body?.replace)));
 app.post('/api/books/:id/audiobookshelf/link', async (req, res) => res.json(await audiobookshelf.attach(library.getBook(req.params.id, req.visitor), req.body ?? {})));
 app.get('/api/books/:id/audiobookshelf/progress', async (req, res) => res.json(await audiobookshelf.remote(library.getBook(req.params.id, req.visitor), req.query.recording)));
 app.put('/api/books/:id/audiobookshelf/progress', async (req, res) => {

@@ -16,7 +16,8 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
   let running = false, closed = false;
   const persist = (job) => db.prepare('INSERT INTO jobs VALUES(?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(job.id, JSON.stringify(job));
   for (const job of jobs.values()) if (['running', 'importing'].includes(job.state)) { job.state = 'queued'; persist(job); }
-  const publicJob = (job) => job ? { id: job.id, state: job.state, languages: job.languages, error: job.error, book: job.result, pages: job.pages, textPages: job.textPages } : null;
+  const publicJob = (job) => { if (!job) return null; const { owner, expires, bytes, ...book } = job.result || {};
+    return { id: job.id, state: job.state, languages: job.languages, error: job.error, book: job.result ? book : undefined, inPlace: job.result?.id === job.source, pages: job.pages, textPages: job.textPages }; };
   const status = (book) => publicJob([...jobs.values()].filter((job) => job.source === book.id).at(-1));
   async function languages() {
     if (demo) return [];
@@ -36,8 +37,8 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
         const temporary = join(library.uploads, `ocr-${job.id}.pdf`);
         try {
           job.state = 'running'; job.error = null; persist(job);
-          if (job.outputBook) { try { job.result = library.getBook(job.outputBook); job.state = 'ready'; persist(job); continue; } catch {} }
           const book = library.getBook(job.source);
+          if (book.contentRevision === job.id) { job.result = book; job.state = 'ready'; persist(job); try { onImport(book); } catch {} continue; }
           const url = new URL('/ocr', workerURL); url.search = new URLSearchParams({ languages: job.languages.join('+'), rotate: job.rotate ? '1' : '0', mode: job.mode || 'redo' });
           const response = await request(url, { method: 'POST', headers: { 'Content-Type': 'application/pdf' },
             body: createReadStream(library.filePath(book)), duplex: 'half', signal: AbortSignal.timeout(3_660_000) });
@@ -51,13 +52,13 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
           await rm(temporary, { force: true });
           await pipeline(response.body, meter, createWriteStream(temporary, { flags: 'wx', mode: 0o600 }));
           library.getBook(book.id);
-          job.state = 'importing'; job.outputBook ||= randomUUID(); persist(job);
-          job.result = await library.importBook(job.outputBook, { path: temporary, originalname: 'searchable.pdf', size }, {
-            title: `${book.title.slice(0, 244)} (OCR)`, author: book.author, ...ocrBookLanguages(book, job.languages),
-            categoryId: book.categoryId, coverStyle: book.coverStyle || 'auto', shared: Boolean(book.shared),
-          }, { id: book.owner || '' });
           job.pages = Number(response.headers.get('X-Langy-OCR-Pages')) || null;
           job.textPages = Number(response.headers.get('X-Langy-OCR-Text-Pages')) || null;
+          job.state = 'importing'; persist(job);
+          const current = library.getBook(book.id);
+          job.result = await library.replacePDF(book.id, { path: temporary, size }, {
+            revision: job.id, expectedRevision: book.contentRevision, ...ocrBookLanguages(current, job.languages),
+          }, { id: book.owner || '' });
           job.state = 'ready'; persist(job); try { onImport(job.result); } catch {}
         } catch (error) { job.state = 'error'; job.error = error instanceof RequestError ? error.message : 'OCR could not finish. Check the language service and retry.'; persist(job); }
         finally { await rm(temporary, { force: true }); }

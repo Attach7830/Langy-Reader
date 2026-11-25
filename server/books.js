@@ -1,4 +1,4 @@
-import { mkdir, open, rename, rm, statfs, writeFile } from 'node:fs/promises';
+import { mkdir, open, rename, rm, stat, statfs, writeFile, copyFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join, extname, basename } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -178,6 +178,7 @@ export async function openLibrary(dir, limits = null) {
     db.exec("ALTER TABLE books ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'");
   }
   if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'coverStyle')) db.exec("ALTER TABLE books ADD COLUMN coverStyle TEXT NOT NULL DEFAULT 'auto'");
+  if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'contentRevision')) db.exec("ALTER TABLE books ADD COLUMN contentRevision TEXT NOT NULL DEFAULT ''");
   if (!db.prepare('PRAGMA table_info(categories)').all().some(({ name }) => name === 'language')) {
     db.exec('ALTER TABLE categories ADD COLUMN language TEXT');
   }
@@ -263,7 +264,7 @@ export async function openLibrary(dir, limits = null) {
     return { categoryId: id, language: folderLanguage, languages: contained };
   }
 
-  function filePath(book) { return join(folder, `${book.id}.${book.format}`); }
+  function filePath(book) { return join(folder, `${book.id}${book.contentRevision ? '.' + book.contentRevision : ''}.${book.format}`); }
   function coverPath(book) { return join(folder, `${book.id}.cover`); }
 
   return {
@@ -420,6 +421,42 @@ export async function openLibrary(dir, limits = null) {
         }
       }
     },
+    async replacePDF(id, file, options, visitor) {
+      const original = getBook(id, visitor), revision = options.revision;
+      if (limits) throw new RequestError(403, 'PDF OCR is available on self-hosted installations.');
+      if (original.owner !== editable(visitor)) throw new RequestError(403, 'Only the book owner can update this PDF.');
+      if (original.format !== 'pdf' || !/^[\w-]{1,120}$/u.test(revision || '')) throw new RequestError(422, 'Choose a valid PDF replacement.');
+      if (original.contentRevision === revision) return publicBook(original, visitor);
+      if (options.expectedRevision !== undefined && original.contentRevision !== options.expectedRevision) throw new RequestError(409, 'This PDF changed during OCR. Scan the current version again.');
+      const replacement = { ...original, contentRevision: revision }, destination = filePath(replacement), staging = destination + '.pending';
+      if (!file?.path || file.path === filePath(original) || file.path === destination) throw new RequestError(422, 'Choose a separate OCR output file.');
+      let published = false;
+      try {
+        const { size } = await stat(file.path);
+        if (!size || size > maxUpload) throw new RequestError(413, 'The searchable PDF must be between 1 byte and 120 MiB.');
+        await readMetadata(file.path, 'pdf');
+        await copyFile(file.path, staging); await rename(staging, destination);
+        const current = getBook(id, visitor);
+        if (current.contentRevision !== original.contentRevision || current.owner !== original.owner) throw new RequestError(409, 'This PDF changed during OCR. Scan the current version again.');
+        const languages = normalizeBookLanguages(options.languages, current.languages), language = normalizeLanguage(options.language || current.language);
+        if (!language) throw new RequestError(422, 'Choose a valid book language.');
+        const assignment = folderAssignment(current.categoryId, primaryLanguage(language, languages), languages, visitor);
+        // Publish the completed file with one database transaction. A crash
+        // before this point leaves the old PDF selected and readable.
+        db.exec('BEGIN');
+        try {
+          db.prepare('UPDATE books SET contentRevision=?,bytes=?,updatedAt=?,language=?,languages=? WHERE id=?')
+            .run(revision, size, Date.now(), assignment.language, JSON.stringify(assignment.languages), id);
+          touch(); db.exec('COMMIT'); published = true;
+        } catch (error) { db.exec('ROLLBACK'); throw error; }
+        // Keep the original upload as a private backup, retaining only the
+        // latest OCR version alongside it after subsequent scans.
+        if (original.contentRevision) await rm(filePath(original), { force: true }).catch(() => {});
+        return publicBook(getBook(id, visitor), visitor);
+      } finally {
+        await Promise.allSettled([staging, file.path, ...(!published ? [destination] : [])].map((path) => rm(path, { force: true })));
+      }
+    },
     async resolveBookDetails(id, body, visitor) {
       const book = getBook(id, visitor);
       if (book.owner !== editable(visitor)) throw new RequestError(403, 'Only the book owner can edit or remove this book.');
@@ -490,7 +527,7 @@ export async function openLibrary(dir, limits = null) {
       if (book.owner !== editable(visitor)) throw new RequestError(403, 'Only the book owner can edit or remove this book.');
       db.prepare('DELETE FROM books WHERE id = ?').run(id);
       touch();
-      const cleanup = await Promise.allSettled([filePath(book), coverPath(book)].map((path) => rm(path, { force: true })));
+      const cleanup = await Promise.allSettled([...new Set([filePath(book), filePath({ ...book, contentRevision: '' }), coverPath(book)])].map((path) => rm(path, { force: true })));
       if (cleanup.some((result) => result.status === 'rejected')) console.error('Could not remove every file for book', id);
     },
     async pruneDemoBooks() {

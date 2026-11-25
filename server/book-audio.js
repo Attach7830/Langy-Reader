@@ -48,7 +48,8 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
   }
 
   function status(book, selected) {
-    const row = selected ? db.prepare("SELECT * FROM book_audio WHERE book=? AND id=? AND state='ready'").get(book.id, selected) || newest(book) : newest(book);
+    const latest = () => db.prepare('SELECT * FROM book_audio WHERE book=? ORDER BY created DESC,rowid DESC LIMIT 1').get(book.id);
+    const row = selected ? db.prepare("SELECT * FROM book_audio WHERE book=? AND id=? AND state='ready'").get(book.id, selected) || latest() : latest();
     const current = sections(book);
     return { connected: Boolean(configuration().baseUrl), previewAudio, audio: publicRecording(row && row.digest === digest(current) ? row : null) };
   }
