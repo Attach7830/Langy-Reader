@@ -21,7 +21,9 @@ try {
   context = await browser.newContext({ viewport: { width: 393, height: 851 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, serviceWorkers: 'block', extraHTTPHeaders: adminHeaders });
   await context.addInitScript(() => { if (window.top === window) { const prefs = JSON.parse(localStorage.getItem('langy-settings-v1') || '{}'); localStorage.setItem('langy-settings-v1', JSON.stringify({ ...prefs, progressSyncEnabled: false })); } });
   page = await context.newPage(); page.on('pageerror', (error) => errors.push(error.message));
-  await page.route('**/api/ai/word', (route) => route.fulfill({ json: { text: 'A useful dictionary definition.', language: 'en' } }));
+  await page.route('**/api/ai/word', (route) => route.fulfill({ json: { text: 'A useful dictionary definition.', language: 'en', senses: [
+    { label: 'First contextual meaning', terms: [], source: 'Test dictionary' }, { label: 'Second contextual meaning', terms: [], source: 'Test dictionary' },
+  ] } }));
   const zip = new JSZip(); zip.file('mimetype', 'application/epub+zip');
   zip.file('META-INF/container.xml', '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>');
   zip.file('OEBPS/book.opf', '<?xml version="1.0"?><package version="3.0" unique-identifier="id" xmlns="http://www.idpf.org/2007/opf"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">langy-browser-fixture</dc:identifier><dc:title>Reader interactions</dc:title><dc:language>es</dc:language></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="one" href="one.xhtml" media-type="application/xhtml+xml"/><item id="two" href="two.xhtml" media-type="application/xhtml+xml"/><item id="notes" href="notes.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="one"/><itemref idref="two"/><itemref idref="notes"/></spine></package>');
@@ -91,6 +93,24 @@ try {
     await page.locator('#downloads-dialog').waitFor({ state: 'visible' });
     await page.touchscreen.tap(3, 3); await page.locator('#downloads-dialog').waitFor({ state: 'hidden' });
   });
+  await check('mobile library supports all column counts, list, covers only and a persistent queue dismissal delay', async () => {
+    const options = page.locator('.library-view-options'); await options.locator('summary').click();
+    for (const layout of ['1', '2', '3', '4', 'list']) {
+      await page.locator('#library-layout').selectOption(layout);
+      await page.waitForFunction((value) => document.querySelector('#books').dataset.layout === value, layout);
+      const columns = await page.locator('#books').evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length);
+      assert.equal(columns, layout === 'list' ? 1 : Number(layout));
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    }
+    assert.equal(await page.locator(`[data-book="${book.id}"] .book-format`).textContent(), 'EPUB');
+    await page.locator('#library-covers-only').check(); assert.equal(await page.locator('.book-info').first().isVisible(), false);
+    await page.locator('#library-covers-only').uncheck(); await page.locator('#library-layout').selectOption('auto'); await options.locator('summary').click();
+    await page.locator('#mobile-navigation [data-open-processes]').click(); await page.locator('#process-dismiss-minutes').fill('2.5'); await page.locator('#process-dismiss-minutes').press('Tab');
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('langy-settings-v1')).processDismissMinutes === 2.5);
+    await page.waitForFunction(() => !Object.keys(JSON.parse(localStorage.getItem('langy-account-settings-v1') || '{}').pending || {}).length);
+    await page.reload(); await page.locator('#mobile-navigation [data-open-processes]').click(); assert.equal(await page.locator('#process-dismiss-minutes').inputValue(), '2.5');
+    await page.locator('#process-dismiss-minutes').fill('0'); await page.locator('#process-dismiss-minutes').press('Tab'); await page.locator('#downloads-dialog [data-close]').click();
+  });
   await check('Import book offers a per-import audiobook delay and the server retains that schedule', async () => {
     assert.equal(importAudio.scheduled.state, 'waiting'); assert.equal(importAudio.scheduled.minutes, 7);
     assert.equal(importAudio.scheduled.due, book.addedAt + 7 * 60000);
@@ -140,6 +160,12 @@ try {
     assert.ok(point); const fullscreen = await page.locator('#fullscreen').getAttribute('aria-pressed');
     await page.touchscreen.tap(point.x, point.y); await page.locator('#word-help').waitFor({ state: 'visible', timeout: 3000 });
     assert.equal(await page.locator('#fullscreen').getAttribute('aria-pressed'), fullscreen);
+  });
+  await check('tapping the mobile definition popup cycles meanings and keeps it open', async () => {
+    const gloss = page.locator('#word-help .word-gloss'); await gloss.filter({ hasText: 'First contextual meaning' }).waitFor();
+    await gloss.tap(); await page.locator('#word-help .word-gloss').filter({ hasText: 'Second contextual meaning' }).waitFor();
+    await page.locator('#word-help .word-gloss').tap(); await page.locator('#word-help .word-gloss').filter({ hasText: 'First contextual meaning' }).waitFor();
+    assert.equal(await page.locator('#word-help').isVisible(), true);
   });
   await check('hyperlink jumps expose an immediately usable Back to text control', async () => {
     await page.goto(base + '/#library'); await page.evaluate(() => localStorage.removeItem('langy-progress-v1')); await page.reload(); await open();
@@ -490,7 +516,7 @@ try {
     const otherTab = await memberContext.newPage(); await otherTab.goto(base + '/#library'); await otherTab.locator('#shared-books-control').waitFor({ state: 'visible' });
     await memberPage.goto(base + '/#settings/account'); await memberPage.locator('#account-panel').waitFor({ state: 'visible' });
     assert.equal(await memberPage.locator('#account-admin').isVisible(), false);
-    memberPage.once('dialog', (dialog) => dialog.accept()); await memberPage.locator('[data-sign-out]').click();
+    memberPage.once('dialog', (dialog) => dialog.accept()); await memberPage.locator('#account-panel [data-switch-user]').click();
     await memberPage.locator('#login-form').waitFor({ state: 'visible' }); await otherTab.locator('#login-form').waitFor({ state: 'visible' });
     assert.equal(await memberPage.evaluate(() => localStorage.getItem('langy-progress-v1')), null);
     assert.equal(await memberPage.evaluate(() => localStorage.getItem('langy-auth-account')), null);
