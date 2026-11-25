@@ -84,8 +84,8 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({ path: output + '/mobile-library.png', fullPage: true });
   });
-  await check('the Downloads dialog closes on an outside tap', async () => {
-    await page.locator('#mobile-navigation [data-open-downloads]').click();
+  await check('the Process queue closes on an outside tap', async () => {
+    await page.locator('#mobile-navigation [data-open-processes]').click();
     await page.locator('#downloads-dialog').waitFor({ state: 'visible' });
     await page.touchscreen.tap(3, 3); await page.locator('#downloads-dialog').waitFor({ state: 'hidden' });
   });
@@ -351,6 +351,33 @@ try {
     await desktopPage.goto(base + '/#about'); await desktopPage.locator('#about-title').waitFor({ state: 'visible' });
     await desktopPage.screenshot({ path: output + '/about-desktop.png' });
     assert.equal(await desktopPage.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  });
+  await check('desktop reader supports trackpad text size, section shortcuts, contextual phrase help and one process queue', async () => {
+    await desktopPage.goto(base + '/#read/' + book.id);
+    await desktopPage.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 1 of 3');
+    await desktopPage.locator('#reader-message').waitFor({ state: 'hidden' });
+    const before = await desktopPage.evaluate(() => ({ size: 20, ...JSON.parse(localStorage.getItem('langy-settings-v1')) }));
+    let frame = await (await desktopPage.locator('#viewer iframe').elementHandle()).contentFrame();
+    assert.equal(await frame.evaluate(() => { const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -24, clientX: 120, clientY: 180 }); document.body.dispatchEvent(event); return event.defaultPrevented; }), true);
+    await desktopPage.waitForFunction((size) => JSON.parse(localStorage.getItem('langy-settings-v1')).size > size, before.size);
+    assert.equal((await desktopPage.evaluate(() => JSON.parse(localStorage.getItem('langy-settings-v1')))).touchSize, before.touchSize);
+    assert.equal(await desktopPage.evaluate(() => visualViewport.scale), 1); await delay(700);
+    await desktopPage.keyboard.press('Control+ArrowRight');
+    await desktopPage.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 2 of 3');
+    await desktopPage.keyboard.press('Control+ArrowLeft');
+    await desktopPage.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 1 of 3'); await delay(300);
+    let phrases = 0;
+    await desktopPage.route('**/api/ai/phrase', async (route) => { phrases++; const data = route.request().postDataJSON(); assert.equal(data.phrase, 'La viajera'); assert.ok(data.context.includes('casa tranquila')); await route.fulfill({ json: { text: 'The traveler is the woman arriving at the house.' } }); });
+    frame = await (await desktopPage.locator('#viewer iframe').elementHandle()).contentFrame();
+    await frame.evaluate(() => { const node = document.querySelector('#source').firstChild, range = document.createRange(); range.setStart(node, 0); range.setEnd(node, 10); const selected = getSelection(); selected.removeAllRanges(); selected.addRange(range); document.dispatchEvent(new Event('selectionchange')); });
+    await desktopPage.locator('#phrase-help').waitFor({ state: 'visible' }); assert.equal(phrases, 0);
+    await desktopPage.locator('[data-explain-phrase]').click(); await desktopPage.locator('[data-phrase-answer]').filter({ hasText: 'The traveler' }).waitFor(); assert.equal(phrases, 1);
+    await desktopPage.screenshot({ path: output + '/contextual-phrase-desktop.png' });
+    await desktopPage.locator('[data-close-phrase]').click();
+    await desktopPage.locator('#open-process-queue').click(); await desktopPage.locator('#downloads-dialog').waitFor({ state: 'visible' });
+    assert.equal(await desktopPage.locator('#downloads-title').textContent(), 'Process queue');
+    assert.equal(await desktopPage.locator('#open-offline-downloads').count(), 0);
+    await desktopPage.screenshot({ path: output + '/process-queue-desktop.png' });
   });
   await desktop.close(); assert.deepEqual(errors, [], 'the app must not emit uncaught browser errors');
 } catch (error) { results.push({ name: 'browser setup', pass: false, error: error.stack }); console.error(error); }
