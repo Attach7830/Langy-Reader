@@ -15,7 +15,7 @@ async function fixture(t) {
     originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
     Object.defineProperty(globalThis, name, { configurable: true, value: dom.window[name] });
   }
-  const oldFetch = globalThis.fetch, writes = [];
+  const oldFetch = globalThis.fetch, writes = []; let librariesUnavailable = false;
   let config = { configurable: true, connected: true, baseUrl: 'https://abs.test', hasKey: true, libraryId: 'books', folderId: 'default', categoryDestinations: {} };
   const libraries = [{ id: 'books', name: 'Books', folders: [{ id: 'default', path: '/books' }, { id: 'spanish-folder', path: '/books/es' }] },
     { id: 'chinese-library', name: 'Chinese library', folders: [{ id: 'chinese-folder', path: '/chinese' }] }];
@@ -24,7 +24,7 @@ async function fixture(t) {
       if (options.method === 'PUT') { const body = JSON.parse(options.body); writes.push(body); config = { ...config, ...body }; delete config.apiKey; }
       return Response.json(config);
     }
-    if (path === '/api/audiobookshelf/libraries') return Response.json({ libraries });
+    if (path === '/api/audiobookshelf/libraries') return librariesUnavailable ? Response.json({ error: 'ABS is unavailable' }, { status: 503 }) : Response.json({ libraries });
     if (path === '/api/library') return Response.json({ categories: [{ id: 'spanish', name: 'Spanish' }, { id: 'chinese', name: 'Mandarin' }] });
     if (path === '/api/settings/opds' || path === '/api/settings/sync') return Response.json({ available: false });
     if (path === '/api/books/book/narration') return Response.json({ audio: { state: 'ready', id: 'recording' }, recordings: [] });
@@ -36,7 +36,7 @@ async function fixture(t) {
     globalThis.fetch = oldFetch; dom.window.close();
     for (const [name, descriptor] of originals) if (descriptor) Object.defineProperty(globalThis, name, descriptor); else delete globalThis[name];
   });
-  return { dom, writes, config(value) { config = { ...config, ...value }; } };
+  return { dom, writes, failLibraries() { librariesUnavailable = true; }, config(value) { config = { ...config, ...value }; } };
 }
 
 test('the Settings page saves distinct category folders through its main Save settings button', async (t) => {
@@ -74,4 +74,17 @@ test('book exports preview their mapped destination and do not offer unavailable
   f.config({ categoryDestinations: { chinese: { libraryId: 'chinese-library', folderId: 'removed-folder' } } });
   await panel.show(); assert.equal(document.querySelector('#abs-export').disabled, true);
   assert.match(document.querySelector('#abs-export-destination').textContent, /Settings/u);
+});
+
+
+test('saving another Settings preference preserves destinations when ABS libraries cannot load', async (t) => {
+  const f = await fixture(t); let returned = 0;
+  f.config({ categoryDestinations: { spanish: { libraryId: 'books', folderId: 'spanish-folder' } } }); f.failLibraries();
+  const page = settingsPage({ preferences: () => ({ ...defaults, keys: { ...defaults.keys } }), apply() {},
+    navigate(tab) { page.open(tab); }, back() { returned++; page.leave(); } });
+  page.setDemo(false); page.open('devices');
+  await until(() => document.querySelector('#abs-settings-status').textContent.includes('unavailable'));
+  document.querySelector('#settings-form').dispatchEvent(new f.dom.window.Event('submit', { cancelable: true }));
+  await until(() => returned === 1);
+  assert.equal(f.writes.length, 0, 'unavailable library choices must not clear existing destinations');
 });
