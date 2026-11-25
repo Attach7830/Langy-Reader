@@ -27,6 +27,7 @@ import { temporaryControls } from './reader-peek.js';
 import { discoveryScreen } from './ui-discovery.js';
 import { locationHistory } from './location-history.js';
 import { readingShortcut } from './reader-shortcuts.js';
+import { beforeSignOut } from './auth.js';
 import { accountSettings } from './account-settings.js';
 import { readingBookmarks } from './bookmarks.js';
 import { readingTime as readingTimeTracker } from './reading-time.js';
@@ -222,7 +223,7 @@ function applySettings(updated, aiChanged, notify = true) {
   if (JSON.stringify(settings) === JSON.stringify(updated) && !aiChanged) return;
   const relayout = ['size', 'touchSize', 'font', 'line', 'width', 'summaryLanguage', 'showPinyin'].some((key) => settings[key] !== updated[key]);
   const syncChanged = settings.progressSyncEnabled !== updated.progressSyncEnabled;
-  const libraryChanged = settings.nativeLanguage !== updated.nativeLanguage || settings.quietLibrary !== updated.quietLibrary;
+  const libraryChanged = settings.nativeLanguage !== updated.nativeLanguage || settings.quietLibrary !== updated.quietLibrary || settings.showSharedBooks !== updated.showSharedBooks;
   const cacheChanged = settings.cacheAI !== updated.cacheAI;
   settings = saveSettings(updated, { notify });
   document.documentElement.dataset.immersion = String(settings.immersionMode);
@@ -837,6 +838,8 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) { void readingSync.flush(); void account.flush({ keepalive: true }); }
   else { void readingSync.check(); void account.resume(); }
 });
+beforeSignOut(async () => { closeReader(); await Promise.allSettled([account.flush(), readingTime.flush(), vocabulary.flush(), readingSync.flushSaved()]); });
+window.addEventListener('langy-signing-out', () => { account.close(); closeReader(); library.dispose(); processes.dispose(); });
 window.addEventListener('pagehide', () => { void readingSync.flush(); void account.flush({ keepalive: true }); });
 window.addEventListener('online', () => { void account.resume(); void flushOfflineChanges(); void readingSync.flushSaved(); void refreshOfflineReader(); });
 window.addEventListener('langy-offline-synced', () => { if (!$('#library-screen').hidden) void library.refresh().catch((error) => message('#library-error', error.message)); });
