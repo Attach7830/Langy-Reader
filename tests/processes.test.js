@@ -1,0 +1,45 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { openProcesses } from '../server/processes.js';
+
+test('process overview filters book ownership and projects only status fields from every worker queue', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'langy-processes-')), db = new DatabaseSync(join(dir, 'learning.sqlite'));
+  db.exec(`CREATE TABLE analyses(book,state,error); CREATE TABLE estimates(book,state,error,queuedAt);
+    CREATE TABLE book_audio(id,book,state,error,created); CREATE TABLE audio(id,book,state,error,created);
+    CREATE TABLE recordings(id,book,name,state,error,created,progress); CREATE TABLE audio_rescans(id,book,state,error,created,cursor,windows);
+    CREATE TABLE ivoox_imports(id,book,state,error,created,bytes); CREATE TABLE import_narration(book,due,minutes,state,error);`);
+  const stamp = Date.now();
+  for (const book of ['one', 'two']) {
+    db.prepare('INSERT INTO import_narration VALUES(?,?,?,?,?)').run(book, stamp + 60000, 1, 'waiting', null);
+    db.prepare('INSERT INTO analyses VALUES(?,?,?)').run(book, 'running', null);
+    db.prepare('INSERT INTO estimates VALUES(?,?,?,?)').run(book, 'queued', null, stamp);
+    db.prepare('INSERT INTO book_audio VALUES(?,?,?,?,?)').run(book, book, 'queued', null, stamp);
+    db.prepare('INSERT INTO audio VALUES(?,?,?,?,?)').run(book, book, 'generating', null, stamp);
+    db.prepare('INSERT INTO recordings VALUES(?,?,?,?,?,?,?)').run(book, book, 'Recording', 'syncing', null, stamp, .4);
+    db.prepare('INSERT INTO audio_rescans VALUES(?,?,?,?,?,?,?)').run(book, book, 'running', null, stamp, 1, '[{},{}]');
+    db.prepare('INSERT INTO ivoox_imports VALUES(?,?,?,?,?,?)').run(book, book, 'downloading', null, stamp, 1024);
+  }
+  const handles = [db];
+  for (const [file, field] of [['pdf-ocr.sqlite', 'source'], ['audiobookshelf.sqlite', 'book']]) {
+    const next = new DatabaseSync(join(dir, file)); handles.push(next); next.exec('CREATE TABLE jobs(json TEXT)');
+    for (const book of ['one', 'two']) next.prepare('INSERT INTO jobs VALUES(?)').run(JSON.stringify({ id: book, [field]: book, state: 'queued', apiKey: 'must-not-leak', kind: 'export', server: 'private-server' }));
+  }
+  let calls = 0;
+  const process = openProcesses(dir, { library: { snapshot(visitor) { calls++; return { books: [{ id: visitor.id, title: 'Owned book' }] }; } },
+    account: (visitor) => visitor, discovery: { status: () => ({}) }, learning: { textProcesses: () => [{ book: 'one', state: 'running' }, { book: 'two', state: 'running' }] },
+    archive: { list: () => [{ id: 'download', state: 'retry_wait', nextAttempt: stamp + 10000, details: { title: 'Queued book' }, apiKey: 'must-not-leak', source: 'private-url' }] } });
+  t.after(async () => { process.close(); handles.forEach((handle) => handle.close()); await rm(dir, { recursive: true, force: true }); });
+  const result = process.list({ id: 'one' }); assert.equal(result.unavailable, false); assert.equal(calls, 1);
+  assert.ok(result.jobs.every((job) => !job.bookId || job.bookId === 'one'));
+  assert.equal(result.jobs.find((job) => job.kind === 'recording').progress, 40); assert.equal(result.jobs.find((job) => job.kind === 'repair').progress, 50);
+  assert.equal(result.jobs.find((job) => job.kind === 'archive').state, 'waiting');
+  assert.equal(result.jobs.some((job) => job.kind === 'audio-section'), false, 'parent audiobook already represents its constituent jobs');
+  for (const kind of ['analysis', 'estimate', 'scheduled-narration', 'narration', 'recording', 'repair', 'ivoox', 'indexing', 'archive', 'ocr', 'audiobookshelf']) assert.ok(result.jobs.some((job) => job.kind === kind), kind);
+  assert.equal(/must-not-leak|private-server|private-url/u.test(JSON.stringify(result)), false);
+  const demo = openProcesses(dir, { library: { snapshot: () => ({ books: [{ id: 'two' }] }) }, account: (visitor) => visitor, discovery: { status: () => ({}) }, learning: { textProcesses: () => [] }, demo: true });
+  assert.ok(demo.list({ id: 'two' }).jobs.every((job) => job.bookId === 'two')); demo.close();
+});
