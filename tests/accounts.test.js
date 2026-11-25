@@ -1,0 +1,51 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
+import { openAccounts } from '../server/accounts.js';
+const original = 'long-original-reader-password', replacement = 'long-replacement-reader-password';
+
+test('accounts preserve the configured administrator, hash credentials and retain UI password changes across restarts', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'langy-accounts-')); let accounts;
+  t.after(async () => { accounts?.close(); await rm(dir, { recursive: true, force: true }); });
+  accounts = await openAccounts(dir, { username: 'reader', password: original });
+  const admin = await accounts.authenticate('READER', original); assert.equal(admin.role, 'admin'); assert.equal(admin.id, '');
+  assert.equal(accounts.preferenceOwner(admin), 'user:reader');
+  const member = await accounts.create({ username: 'second-reader', password: replacement });
+  const visitor = await accounts.authenticate('SECOND-reader', replacement); assert.equal(visitor.userId, member.id); assert.equal(visitor.role, 'user'); assert.ok(visitor.id);
+  assert.notEqual(accounts.preferenceOwner(visitor), accounts.preferenceOwner(admin));
+  const key = createHash('md5').update(replacement).digest('hex'); assert.equal((await accounts.authenticate('second-reader', key, { sync: true })).userId, member.id);
+  assert.equal(await accounts.authenticate('second-reader', 'wrong password'), null);
+  const encoded = (await readFile(join(dir, 'accounts.sqlite'))).toString('latin1') + (await readFile(join(dir, 'accounts.sqlite-wal'))).toString('latin1');
+  assert.equal(encoded.includes(original), false); assert.equal(encoded.includes(replacement), false); assert.equal(encoded.includes(key), false);
+  assert.equal(encoded.includes(createHash('sha256').update(`reader:${original}`).digest('hex')), false, 'administrator recovery metadata must not leave a fast password verifier in the database');
+  assert.throws(() => accounts.update(admin.userId, { disabled: true }), /administrator/u);
+  await accounts.resetPassword(admin.userId, replacement); accounts.close();
+  accounts = await openAccounts(dir, { username: 'reader', password: original });
+  assert.equal(await accounts.authenticate('reader', original), null); assert.equal((await accounts.authenticate('reader', replacement)).role, 'admin');
+  accounts.close(); accounts = await openAccounts(dir, { username: 'reader', password: 'operator-recovery-password' });
+  assert.equal((await accounts.authenticate('reader', 'operator-recovery-password')).userId, admin.userId); assert.equal(accounts.preferenceOwner(accounts.visitorForOwner('')), 'user:reader');
+});
+
+test('session cookies expire and revocation also invalidates cached Basic and KOReader credentials', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'langy-sessions-')); let time = Date.now();
+  const accounts = await openAccounts(dir, { password: original, now: () => time }); t.after(async () => { accounts.close(); await rm(dir, { recursive: true, force: true }); });
+  const member = await accounts.create({ username: 'reader-two', password: replacement }), visitor = await accounts.authenticate(member.username, replacement);
+  let cookie, options, basicBlocker;
+  const request = (value, authorization = '') => ({ secure: true, ip: 'test', get(name) { return name === 'Cookie' ? value || '' : name === 'Authorization' ? authorization : ''; } });
+  const response = { cookie(name, value, config) { if (name === 'langy_session') { cookie = `${name}=${value}`; options = config; } else if (name === 'langy_no_basic') { basicBlocker = `${name}=${value}`; assert.ok(config.maxAge > options.maxAge); } }, clearCookie() {} };
+  accounts.issue(request(), response, visitor);
+  assert.equal(options.httpOnly, true); assert.equal(options.secure, true); assert.equal(options.sameSite, 'lax');
+  assert.equal((await accounts.identify(request(cookie))).userId, member.id);
+  accounts.update(member.id, { disabled: true }); assert.equal(await accounts.identify(request(cookie)), null); assert.equal(await accounts.authenticate(member.username, replacement), null);
+  accounts.update(member.id, { disabled: false }); assert.equal(await accounts.identify(request(cookie)), null);
+  accounts.issue(request(), response, await accounts.authenticate(member.username, replacement)); time += 31 * 86400000;
+  assert.equal(await accounts.identify(request(cookie)), null);
+  const cachedAdmin = 'Basic ' + Buffer.from(`reader:${original}`).toString('base64');
+  assert.equal(await accounts.identify(request(`${cookie}; ${basicBlocker}`, cachedAdmin)), null, 'expired member sessions must not fall back to cached administrator credentials');
+  assert.equal((await accounts.identify(request('', cachedAdmin))).role, 'admin', 'Basic clients without browser cookies still work');
+  accounts.logout(request(cookie), response);
+  assert.equal(await accounts.identify(request(basicBlocker, cachedAdmin)), null, 'sign-out also blocks cached browser credentials');
+});
