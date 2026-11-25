@@ -30,6 +30,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   let recording, recordingBook, connection = false, previewAudio = false, unit, local, descriptor, timed = [], timingMap = new Map();
   let lifecycle = 0, controller, poll, animation, bookRequest, following = false, followAgain = false, forceFollow = false;
   let wantPlaying = false, enabled = false, initialSeek = true, highlighted, highlightedWindow;
+  let waitingForMetadata = true;
   let manualNavigation = false, navigationVersion = 0, manualPage;
   const cache = new Map();
   const ready = () => recording?.state === 'ready';
@@ -132,7 +133,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   }
   function syncInitialPosition() {
     const current = renderer()?.audioUnit?.();
-    if (!initialSeek || !ready() || !current || descriptor?.root !== current.root || unit?.key !== current.key
+    if (!initialSeek || waitingForMetadata || !ready() || !current || descriptor?.root !== current.root || unit?.key !== current.key
       || !descriptor?.root.isConnected || unit?.recordingId !== recording.id || !Number.isFinite(audio.duration)) return;
     initialSeek = false;
     audio.currentTime = firstVisibleTime();
@@ -176,7 +177,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     catch { wantPlaying = false; status.textContent = 'Press Play to start narration.'; }
   }
   function seekTo(time, { page = false } = {}) {
-    if (!enabled || !ready() || !Number.isFinite(audio.duration)) return;
+    if (!enabled || !ready() || waitingForMetadata || !Number.isFinite(audio.duration)) return;
     if (!page) manualPage = undefined;
     initialSeek = false;
     audio.currentTime = Math.max(0, Math.min(recording.duration, time));
@@ -224,9 +225,12 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     await loadCurrent().catch((error) => { if (!previewAudio) throw error; });
     if (epoch !== lifecycle || recording !== result.audio) return;
     if (enabled && isReady && audio.getAttribute('src') !== recording.url) {
-      initialSeek = true;
+      // duration can still describe the previous source until loadedmetadata.
+      // An early seek would be discarded when the new source resets its clock.
+      initialSeek = true; waitingForMetadata = true;
       audio.onloadedmetadata = () => {
         if (epoch !== lifecycle) return;
+        waitingForMetadata = false;
         syncInitialPosition(); controls();
         window.dispatchEvent(new CustomEvent('langy-recording-ready'));
         if (wantPlaying) void startPlayback();
@@ -297,7 +301,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     timed = []; timingMap.clear(); cache.clear();
     following = followAgain = forceFollow = wantPlaying = false;
     manualNavigation = false; manualPage = undefined; navigationVersion++;
-    initialSeek = true;
+    initialSeek = true; waitingForMetadata = true;
     previewAudio = false;
     recordingCount = 0;
     deviceControls.clear();
