@@ -24,6 +24,7 @@ export async function setOfflineAccount(id) {
   if (session?.enabled && (session.readerAccountId !== id || !localStorage.getItem('langy-auth-account'))) return;
   localStorage.setItem('langy-offline-owner', id);
   const registration = await navigator.serviceWorker?.getRegistration?.();
+  if (offlineOwner() !== id) return;
   (navigator.serviceWorker?.controller || registration?.active)?.postMessage({ type: 'ACCOUNT', id });
   // Keep other accounts' downloads and outboxes; every access remains scoped
   // to the authenticated owner, including when that owner returns later.
