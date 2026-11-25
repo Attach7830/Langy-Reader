@@ -83,3 +83,14 @@ test('the external PDF connector sends a private key only to its tested service 
   assert.equal(JSON.stringify(result).includes('synthetic-private-key'), false);
   assert.deepEqual(await readFile(library.filePath(library.getBook(book.id))), output); assert.deepEqual(await readFile(library.filePath(book)), source);
 });
+
+test('cancelling active OCR aborts the scan and retains the same original PDF',async(t)=>{
+  const dir=await mkdtemp(join(tmpdir(),'langy-cancel-ocr-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const library=await openLibrary(dir),source=Buffer.from('%PDF-1.4\noriginal pages\n%%EOF'),path=join(library.uploads,'scan.pdf');await writeFile(path,source);
+  const book=await library.importBook('cancel-scan',{path,size:source.length,originalname:'scan.pdf'},{language:'zh'});let started=false,aborted=false;
+  const service=await openPDFOCR(dir,{library,request:async(_url,options)=>{for await(const _chunk of options.body){}started=true;
+    return new Promise((_resolve,reject)=>{const cancel=()=>{aborted=true;reject(new DOMException('Cancelled','AbortError'));};if(options.signal.aborted)cancel();else options.signal.addEventListener('abort',cancel,{once:true});});
+  }});t.after(()=>service.close());
+  const job=service.queue(book,{languages:['chi_sim']});await until(()=>started);service.cancel(book,job.id);await until(()=>aborted);await service.pump();
+  assert.equal(service.status(book).state,'cancelled');assert.deepEqual(await readFile(library.filePath(library.getBook(book.id))),source);assert.equal(library.getBook(book.id).contentRevision,'');
+});

@@ -74,6 +74,8 @@ test('book exports preview their mapped destination and do not offer unavailable
   const book = { id: 'book', categoryId: 'chinese' }, panel = audiobookshelfBook({ book: () => book, changed() {} });
   await panel.show();
   assert.equal(document.querySelector('#abs-book-library').value, 'chinese-library');
+  assert.equal(document.querySelector('#abs-export-library').disabled, true);
+  assert.equal(document.querySelector('#abs-export-folder').disabled, true);
   assert.match(document.querySelector('#abs-export-destination').textContent, /Chinese library.*\/chinese/u);
   assert.equal(document.querySelector('#abs-export').disabled, false);
   f.config({ categoryDestinations: { chinese: { libraryId: 'chinese-library', folderId: 'removed-folder' } } });
@@ -99,7 +101,8 @@ test('manual export sends the selected library and folder instead of the saved d
   const f = await fixture(t); document.querySelector('#learning-dialog').open = true;
   const panel = audiobookshelfBook({ book: () => ({ id: 'book', categoryId: null }), changed() {} });
   await panel.show();
-  assert.equal(document.querySelector('#abs-export-library').value, 'books');
+  assert.equal(document.querySelector('#abs-export-library').value, '');
+  assert.equal(document.querySelector('#abs-export').disabled, true, 'an unmapped book must not inherit the English/global destination');
   const select = document.querySelector('#abs-export-library'); select.value = 'chinese-library'; select.dispatchEvent(new f.dom.window.Event('change'));
   assert.equal(document.querySelector('#abs-export-folder').value, 'chinese-folder');
   assert.match(document.querySelector('#abs-export-destination').textContent, /Chinese library/u);

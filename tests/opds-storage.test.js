@@ -152,10 +152,11 @@ test('OPDS browses EPUBs, categories and search with bounded feeds, and download
   assert.ok(!JSON.stringify(settings).includes('test-password'));
   const storage = await (await fetch(base + '/api/storage', { headers })).json();
   const fs = await statfs(folder, { bigint: true });
-  assert.equal(storage.scope, 'drive');
-  assert.equal(storage.totalBytes, Number(fs.blocks * fs.bsize));
-  assert.ok(storage.availableBytes > 0 && storage.availableBytes <= storage.totalBytes);
-  assert.equal(storage.availableBytes + storage.usedBytes + storage.reservedBytes, storage.totalBytes);
+  assert.equal(storage.scope, 'account'); assert.equal(storage.unlimited, true);
+  assert.ok(storage.usedBytes > 0);
+  // Other tests can write between this API response and statfs; capacity is stable.
+  assert.ok(storage.availableBytes > 0 && storage.availableBytes <= Number(fs.blocks * fs.bsize));
+  assert.equal(storage.totalBytes, storage.usedBytes + storage.availableBytes);
   assert.ok(!JSON.stringify(storage).includes(folder));
 });
 

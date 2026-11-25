@@ -70,3 +70,29 @@ test('Remember me persists for thirty days, session-only sign-ins expire in a da
   assert.equal(await accounts.identify(request(remembered)), null); assert.equal(Object.hasOwn(cookies.get('langy_session').options, 'maxAge'), false);
   const current = sessionCookie(); accounts.logout(request(current), response); assert.equal(await accounts.identify(request(current)), null);
 });
+
+test('administrator policies enforce expiry, remembered login, device access and concurrent browser session caps', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'langy-policies-')); let time = Date.now();
+  const accounts = await openAccounts(dir, { password: original, now: () => time });
+  t.after(async () => { accounts.close(); await rm(dir, { recursive: true, force: true }); });
+  const member = await accounts.create({ username: 'limited', password: replacement, allowRemember: false, maxSessions: 1, sessionHours: 2, expiresAt: time + 3600000, storageLimit: 123 });
+  const visitor = await accounts.authenticate(member.username, replacement), key = createHash('md5').update(replacement).digest('hex');
+  assert.equal(accounts.policyForOwner(visitor.id).storageLimit, 123); assert.equal(accounts.canUseArchiveKey(visitor), false);
+  accounts.update(member.id, { sharedArchive: true }); assert.equal(accounts.canUseArchiveKey(visitor), true);
+  const request = (cookie = '') => ({ secure: true, get: (name) => name === 'Cookie' ? cookie : '' });
+  let cookie, config;
+  const response = { cookie(name, value, options) { if (name === 'langy_session') { cookie = `${name}=${value}`; config = options; } } };
+  accounts.issue(request(), response, visitor, { rememberMe: true }); const first = cookie;
+  assert.equal(Object.hasOwn(config, 'maxAge'), false); assert.equal(accounts.remembered(request(cookie)), false);
+  accounts.issue(request(), response, visitor); assert.equal(await accounts.identify(request(first)), null); assert.ok(await accounts.identify(request(cookie)));
+  accounts.revokeSessions(member.id); assert.equal(await accounts.identify(request(cookie)), null);
+  assert.ok(await accounts.authenticate(member.username, key, { sync: true }));
+  accounts.update(member.id, { allowDevices: false }); assert.equal(await accounts.authenticate(member.username, key, { sync: true }), null);
+  assert.equal(await accounts.authenticate(member.username, replacement, { source: 'basic:test' }), null);
+  assert.ok(await accounts.authenticate(member.username, replacement));
+  accounts.update(member.id, { allowRemember: true, rememberDays: 5 }); accounts.issue(request(), response, visitor, { rememberMe: true });
+  assert.equal(config.maxAge, 3600000, 'account expiry caps remembered login');
+  time += 3600001; assert.equal(await accounts.identify(request(cookie)), null);
+  assert.equal(await accounts.authenticate(member.username, replacement), null); assert.equal(accounts.canUseArchiveKey(visitor), false);
+  for (const policy of [{storageLimit:-1}, {expiresAt:'tomorrow'}, {maxSessions:0}, {allowRemember:1}, {sessionHours:169}]) assert.throws(() => accounts.update(member.id, policy), {status:422});
+});

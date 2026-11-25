@@ -156,3 +156,27 @@ test('references cannot become arbitrary fetch URLs, and downloads reject privat
   await assert.rejects(publicDownload('https://127.0.0.1/file'), /private/u);
   await assert.rejects(resolveDownloadHost('mixed.example', async () => [{ address: '8.8.8.8', family: 4 }, { address: '127.0.0.1', family: 4 }]), /private/u);
 });
+
+test('private membership keys stay per account and queued jobs recheck shared-key permission', async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), 'langy-archive-permissions-')); t.after(() => rm(folder, { recursive: true, force: true }));
+  const library = await openLibrary(folder); t.after(() => library.close?.());
+  const member = { id: 'member', authenticated: true, role: 'user' }, other = { id: 'other', authenticated: true, role: 'user' };
+  let allowed = false, active = true; const seen = [];
+  const archive = await openArchive(folder, { library, autoStart: false, activeOwner: () => active,
+    canUseShared: (visitor) => !visitor?.id || visitor.id === member.id && allowed,
+    visitorForOwner: (id) => id === member.id ? member : id === other.id ? other : undefined,
+    request: async (value) => { seen.push(new URL(value).searchParams.get('key')); return response({ error: 'Invalid member key' }, 401); } }); t.after(() => archive.close?.());
+  await archive.save({apiKey:'shared-private-key'});
+  assert.equal(archive.settings(member).hasKey, false);
+  await assert.rejects(archive.save({useShared:true}, member), {status:403});
+  await archive.save({apiKey:'member-private-key', useShared:false}, member);
+  assert.equal(archive.settings(member).hasKey, true); assert.equal(archive.settings(other).hasKey, false);
+  assert.equal(JSON.stringify(archive.settings(member)).includes('member-private-key'), false);
+  assert.equal((await stat(join(folder, 'archive-users.json'))).mode & 0o777, 0o600);
+  archive.queue({reference:'a'.repeat(32), downloadMode:'fast'},member); await archive.pump(); assert.deepEqual(seen,['member-private-key']);
+  allowed = true; await archive.save({useShared:true},member);
+  const queued = archive.queue({reference:'b'.repeat(32), downloadMode:'fast'},member); allowed = false;
+  await archive.pump(); assert.equal(archive.job(queued.id,member).state,'error'); assert.deepEqual(seen,['member-private-key']);
+  assert.equal(archive.settings().hasKey, true); await archive.removeKey(member); assert.equal(archive.settings().hasKey,true);
+  active = false; assert.throws(() => archive.settings(member), {status:403});
+});

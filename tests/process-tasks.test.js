@@ -15,3 +15,9 @@ test('process tracking ignores quick requests, reports slow work and failures, a
   tasks.setAccount('one'); tasks.setDownloads([{ state: 'downloading' }]); tasks.setAccount('two'); assert.deepEqual(tasks.snapshot(), { tasks: [], downloads: [] });
   assert.equal(requestProcessLabel('/api/processes'), ''); assert.equal(requestProcessLabel('/api/ai/status'), ''); assert.equal(requestProcessLabel('/api/ai/phrase', 'POST'), 'Explain selected phrase');
 });
+
+test('the process X cancels a slow request once and exposes no executable callback in queue data',()=>{
+  let show,calls=0;const tasks=createProcessTasks({setTimer(callback){show=callback;return 1;},clearTimer(){}});
+  const finish=tasks.begin('Slow lookup',{cancel(){calls++;}});show();const job=tasks.snapshot().tasks[0];assert.equal(job.cancellable,true);assert.equal('cancel' in job,false);
+  tasks.cancel(job.id);tasks.cancel(job.id);assert.equal(calls,1);assert.equal(tasks.snapshot().tasks[0].state,'cancelled');finish(new DOMException('Cancelled','AbortError'));assert.equal(tasks.snapshot().tasks.length,0);
+});
