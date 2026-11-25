@@ -1,0 +1,33 @@
+name: Reader browser checks
+on:
+  push:
+    branches: [main, fix/reader-interactions]
+    paths: ['src/**', 'shared/**', 'public/**', 'index.html', 'scripts/browser/**', '.github/workflows/reader-browser.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  mobile-reader:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --package-lock=false playwright@1.65.1
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: langy-browser-chromium-1.65.1-v1
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: node scripts/browser/reader.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Reader-browser-results
+          path: browser-results/
+          retention-days: 14
