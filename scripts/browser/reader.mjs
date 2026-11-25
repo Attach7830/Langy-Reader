@@ -205,25 +205,27 @@ try {
   await open();
   await check('whole-book search jumps to an unrendered chapter, returns to the prior page and survives repeated jumps and reload', async () => {
     const before = await position();
+    const passageVisible = () => {
+      const frame = document.querySelector('#viewer iframe'), marker = frame?.contentDocument?.getElementById('search-destination'); if (!marker) return false;
+      const range = marker.ownerDocument.createRange(); range.setStart(marker.firstChild, 0); range.setEnd(marker.firstChild, 4);
+      const box = range.getBoundingClientRect(), offset = frame.getBoundingClientRect(), host = document.querySelector('#viewer').getBoundingClientRect();
+      return box.width > 0 && box.left + offset.left < host.right && box.right + offset.left > host.left && box.top + offset.top < host.bottom && box.bottom + offset.top > host.top;
+    };
     async function searchJump() {
       await page.locator('#reader-more > summary').click();
       await page.locator('#book-tools-button').click(); await page.locator('#book-search-form [name=query]').fill('faro violeta');
       await page.getByRole('button', { name: 'Search whole book', exact: true }).click();
       const result = page.locator('.book-search-result'); await result.waitFor(); assert.equal(await result.count(), 1); await result.click();
       await page.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 2 of 3');
-      await page.waitForFunction(() => {
-        const frame = document.querySelector('#viewer iframe'), marker = frame?.contentDocument?.getElementById('search-destination'); if (!marker) return false;
-        const range = marker.ownerDocument.createRange(); range.setStart(marker.firstChild, 0); range.setEnd(marker.firstChild, 4);
-        const box = range.getBoundingClientRect(), offset = frame.getBoundingClientRect(), host = document.querySelector('#viewer').getBoundingClientRect();
-        return box.width > 0 && box.left + offset.left < host.right && box.right + offset.left > host.left && box.top + offset.top < host.bottom && box.bottom + offset.top > host.top;
-      });
+      await page.waitForFunction(passageVisible);
       assert.ok(Number((await page.locator('#page-label').textContent()).match(/Page (\d+)/)[1]) > 1, 'the jump must reach the passage within the chapter');
       assert.equal(await page.locator('#reader-message[data-problem="true"]').isVisible(), false);
     }
     await searchJump(); await page.locator('#return-location').click();
     await page.waitForFunction(({ id, before }) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target === before, { id: book.id, before });
-    await searchJump(); const saved = await position(); await page.reload(); await page.locator('#viewer iframe').first().waitFor();
-    await page.waitForFunction(({ id, saved }) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target === saved, { id: book.id, saved });
+    await searchJump(); const savedPage = await page.locator('#page-label').textContent(); await page.reload(); await page.locator('#viewer iframe').first().waitFor();
+    await page.waitForFunction(passageVisible);
+    assert.equal(await page.locator('#page-label').textContent(), savedPage);
     assert.equal(await page.locator('#reader-message[data-problem="true"]').isVisible(), false);
     await page.locator('#contents-button').click(); await page.getByRole('button', { name: 'Primera parte', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 1 of 3');
