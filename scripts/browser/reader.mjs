@@ -83,6 +83,11 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({ path: output + '/mobile-library.png', fullPage: true });
   });
+  await check('the Downloads dialog closes on an outside tap', async () => {
+    await page.locator('#mobile-navigation [data-open-downloads]').click();
+    await page.locator('#downloads-dialog').waitFor({ state: 'visible' });
+    await page.touchscreen.tap(3, 3); await page.locator('#downloads-dialog').waitFor({ state: 'hidden' });
+  });
   await check('completed book packs show Downloaded and open locally even when the source URL fails', async () => {
     await page.waitForFunction(() => Boolean(localStorage.getItem('langy-offline-owner')));
     const file = await context.request.get(base + '/api/books/' + book.id + '/file'); assert.equal(file.status(), 200);
@@ -273,6 +278,7 @@ try {
   await check('About and How to are available to self-hosted readers and fit a phone screen', async () => {
     await page.goto(base + '/#about'); await page.locator('#about-title').waitFor({ state: 'visible' });
     assert.equal(await page.getByText('A note from the project’s creator', { exact: true }).isVisible(), true);
+    assert.equal(await page.getByRole('heading', { name: 'Your library, connected.', exact: true }).isVisible(), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({ path: output + '/about-mobile.png' });
     await page.goto(base + '/#howto'); await page.locator('#howto-title').waitFor({ state: 'visible' });
