@@ -180,6 +180,58 @@ try {
     const before = await position(); await page.locator('#next').click(); await changed(before);
     const after = await position(); await delay(1000); assert.equal(await position(), after);
   });
+  await check('the audio close button hides both player modes without pausing playback', async () => {
+    await page.locator('#audio-toggle').click(); await page.locator('#narration-player').waitFor({ state: 'visible' });
+    await page.locator('#narration-play').click();
+    await page.waitForFunction(() => !document.querySelector('#narration-audio').paused);
+    await page.locator('#narration-close').click(); await page.locator('#narration-player').waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false);
+    await page.locator('#audio-toggle').click(); await page.locator('#narration-player').waitFor({ state: 'visible' });
+    await page.locator('#podcast-toggle').click(); await page.locator('#narration-close').click();
+    await page.locator('#narration-player').waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false);
+    await page.locator('#audio-toggle').click(); await page.locator('#narration-play').click();
+    await page.locator('#narration-close').click();
+  });
+  await check('sections dismiss on an outside tap and page jumps reach the first and last pages of any section', async () => {
+    await page.locator('#contents-button').click(); await page.locator('#contents-dialog').waitFor({ state: 'visible' });
+    await page.touchscreen.tap(3, 3); await page.locator('#contents-dialog').waitFor({ state: 'hidden' });
+    await page.locator('#reader-more > summary').click(); await page.locator('#jump-page').click();
+    await page.locator('#page-jump-dialog').waitFor({ state: 'visible' });
+    await page.locator('#page-jump-section').selectOption('0'); await page.locator('#page-jump-number').fill('5');
+    await page.getByRole('button', { name: 'Go to page', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 1 of 3' && /^Page 5 of /.test(document.querySelector('#page-label').textContent));
+    await page.locator('#reader-more > summary').click(); await page.locator('#jump-page').click();
+    const last = await page.locator('#page-jump-number').getAttribute('max'); await page.locator('#page-jump-number').fill(last);
+    await page.getByRole('button', { name: 'Go to page', exact: true }).click();
+    await page.waitForFunction((last) => document.querySelector('#page-label').textContent === `Page ${last} of ${last}`, last);
+    await page.locator('#next').click(); await page.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 2 of 3');
+    await page.locator('#reader-more > summary').click(); await page.locator('#jump-page').click();
+    await page.locator('#page-jump-section').selectOption('2'); await page.locator('#page-jump-number').fill('1');
+    await page.getByRole('button', { name: 'Go to page', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 3 of 3');
+  });
+  await check('Settings opens as its own page, keeps drafts between tabs and returns to the saved book position', async () => {
+    const before = await position(); await page.locator('#reader-more > summary').click(); await page.locator('#reader-more [data-settings="reading"]').click();
+    await page.waitForURL('**/#settings/reading'); await page.locator('#settings').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('dialog#settings').count(), 0); assert.equal(await page.locator('#reader-screen').isVisible(), false);
+    await page.locator('[data-settings-tab="language"]').click(); await page.locator('[name="cacheAI"]').uncheck();
+    await page.locator('[data-settings-tab="reading"]').click(); await page.locator('[data-settings-tab="language"]').click();
+    assert.equal(await page.locator('[name="cacheAI"]').isChecked(), false);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({ path: output + '/settings-mobile.png' });
+    await page.locator('#settings-back').click(); await page.waitForURL('**/#read/' + book.id);
+    await page.waitForFunction(({ id, before }) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target === before, { id: book.id, before });
+    await page.locator('#viewer iframe').first().waitFor();
+    assert.equal(await page.locator('#pinyin-toggle').isVisible(), false);
+    const updated = await context.request.patch(base + '/api/books/' + book.id, { data: { language: 'zh-Hans', languages: [] } }); assert.equal(updated.status(), 200);
+    await page.goto(base + '/#library'); await page.reload(); await open();
+    await page.locator('#pinyin-toggle').waitFor({ state: 'visible' }); await page.locator('#pinyin-toggle').click();
+    assert.equal(await page.locator('#pinyin-toggle').getAttribute('aria-pressed'), 'true');
+    await page.locator('#pinyin-toggle').click(); assert.equal(await page.locator('#pinyin-toggle').getAttribute('aria-pressed'), 'false');
+    const edges = await page.evaluate(() => { const host = document.querySelector('#viewer').getBoundingClientRect(), area = document.querySelector('.reading-main').getBoundingClientRect(); return { left: host.left - area.left, right: area.right - host.right, radius: getComputedStyle(document.querySelector('#viewer')).borderRadius }; });
+    assert.equal(edges.left, 0); assert.equal(edges.right, 0); assert.equal(edges.radius, '0px');
+  });
   await check('About and How to are available to self-hosted readers and fit a phone screen', async () => {
     await page.goto(base + '/#about'); await page.locator('#about-title').waitFor({ state: 'visible' });
     assert.equal(await page.getByText('A note from the project’s creator', { exact: true }).isVisible(), true);
@@ -198,7 +250,7 @@ try {
     await delay(1000); await page.reload(); await page.locator('#mobile-navigation [data-settings]').click();
     await page.locator('[data-settings-tab="language"]').click(); assert.equal(await page.locator('[name="cacheAI"]').isChecked(), false);
     await page.locator('#clear-ai-cache').click(); await page.locator('#ai-cache-status').filter({ hasText: 'Saved AI answers cleared.' }).waitFor();
-    await page.locator('#settings [data-close]').first().click();
+    await page.locator('#settings-back').click();
   });
   const desktop = await browser.newContext({ viewport: { width: 1280, height: 900 } }), desktopPage = await desktop.newPage();
   desktopPage.on('pageerror', (error) => errors.push(error.message));
