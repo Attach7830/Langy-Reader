@@ -10,6 +10,18 @@ export function selectedOCRLanguages(available, selected) {
     if (baseLanguage(ocrLanguage(code), '') === baseLanguage(language, '') && !result.includes(code)) result.push(code);
   return result;
 }
+export function preferredOCRLanguages(available, languages) {
+  const result = [];
+  for (const language of languages || []) {
+    let code;
+    if (baseLanguage(language) === 'zh') {
+      let script; try { script = new Intl.Locale(language).maximize().script; } catch {}
+      code = script === 'Hant' ? 'chi_tra' : 'chi_sim';
+    } else code = available.find((item) => !item.endsWith('_vert') && baseLanguage(ocrLanguage(item), '') === baseLanguage(language, ''));
+    if (code && available.includes(code) && !result.includes(code)) result.push(code);
+  }
+  return result;
+}
 export function ocrBookLanguages(book, codes) {
   const detected = [];
   for (const code of codes) {

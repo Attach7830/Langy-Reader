@@ -182,7 +182,9 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
 
   return {
     status, queue, segment, assemble, cancel, files,
-    next: () => db.prepare("SELECT * FROM book_audio WHERE state='queued' AND kind='generated' ORDER BY created,rowid LIMIT 1").get(),
+    next: () => db.prepare(`SELECT * FROM book_audio WHERE state='queued' AND kind='generated'
+      AND NOT EXISTS (SELECT 1 FROM json_each(book_audio.parts) part JOIN audio a ON a.id=json_extract(part.value,'$.id')
+        WHERE a.state IN ('queued','generating','aligning')) ORDER BY created,rowid LIMIT 1`).get(),
     fail(job, message) { db.prepare("UPDATE book_audio SET state='error',error=? WHERE id=? AND state!='cancelled'").run(message, job.id); },
     audioFile(book, id) { return db.prepare("SELECT id FROM book_audio WHERE book=? AND id=? AND state='ready'").get(book.id, id) ? join(folder, `${id}.mp3`) : null; },
   };

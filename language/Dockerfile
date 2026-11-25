@@ -19,6 +19,8 @@ COPY spanish_dictionary.py spanish_lexicon.py ./
 COPY book_alignment.py ./
 COPY vocabulary_filters.py ./
 COPY pdf_ocr.py ./
+COPY install_ocr_models.py ./
+RUN python install_ocr_models.py
 USER langy
 EXPOSE 8000
 CMD ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

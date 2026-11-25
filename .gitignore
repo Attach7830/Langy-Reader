@@ -9,6 +9,8 @@ data/
 .secrets/
 archive-settings.json
 audiobookshelf-settings.json
+ocr-settings.json
+ocr/__pycache__/
 android/.gradle/
 android/.signing/
 android/local.properties

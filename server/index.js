@@ -128,9 +128,10 @@ const accountInfo = (visitor) => ({ ...accounts.describe(visitor), legacyAccount
 app.get('/api/account', async (req, res) => { req.visitor = await accounts.identify(req); res.json(accountInfo(req.visitor)); });
 app.post('/api/account/login', async (req, res) => {
   if (!accounts.enabled) throw new RequestError(403, 'Accounts are not enabled on this installation.');
+  if (req.body?.rememberMe !== undefined && typeof req.body.rememberMe !== 'boolean') throw new RequestError(422, 'Choose whether to remember this sign-in.');
   const visitor = await accounts.authenticate(req.body?.username, req.body?.password, { source: `login:${req.ip}` });
   if (!visitor) return res.status(401).json({ error: 'Incorrect username or password.' });
-  accounts.issue(req, res, visitor); res.json(accountInfo(visitor));
+  accounts.issue(req, res, visitor, { rememberMe: req.body?.rememberMe === true }); res.json(accountInfo(visitor));
 });
 app.post('/api/account/logout', (req, res) => { accounts.logout(req, res); res.json({ signedOut: true }); });
 app.use(async (req, res, next) => {
@@ -144,8 +145,9 @@ app.post('/api/account/password', async (req, res) => {
   if (!accounts.enabled) throw new RequestError(403, 'Accounts are not enabled.');
   const verified = await accounts.authenticate(req.visitor.username, req.body?.currentPassword, { source: `password:${req.ip}` });
   if (!verified) throw new RequestError(403, 'The current password is incorrect.');
+  const rememberMe = accounts.remembered(req);
   await accounts.resetPassword(req.visitor.userId, req.body?.newPassword);
-  accounts.issue(req, res, req.visitor); res.json({ saved: true });
+  accounts.issue(req, res, req.visitor, { rememberMe }); res.json({ saved: true });
 });
 app.get('/api/admin/users', (req, res) => { accounts.requireAdmin(req.visitor); res.json({ users: accounts.list() }); });
 app.post('/api/admin/users', async (req, res) => {
@@ -157,7 +159,7 @@ app.use('/opds', opdsRouter({ library, demo, onDownload: demo ? undefined : prog
 app.use((req, _res, next) => {
   if (accounts.enabled && !usesOwnerAudiobookshelf(req) && /^\/api\/(?:audiobookshelf(?:\/|$)|settings\/audiobookshelf(?:\/|$))/u.test(req.path) && (req.method !== 'GET' || req.path.startsWith('/api/audiobookshelf/'))) throw new RequestError(403, 'Audiobookshelf is managed by the instance owner.');
   if (accounts.enabled && !isAdministrator(req)) {
-    const service = /^\/api\/(?:settings\/(?:learning|archive|audiobookshelf)(?:\/|$)|audiobookshelf(?:\/|$))/u.test(req.path);
+    const service = /^\/api\/(?:settings\/(?:learning|archive|audiobookshelf|ocr)(?:\/|$)|audiobookshelf(?:\/|$))/u.test(req.path);
     if (service && (req.method !== 'GET' || req.path.startsWith('/api/audiobookshelf/'))) throw new RequestError(403, 'Server connections are managed by the administrator.');
   }
   next();
@@ -210,6 +212,9 @@ app.patch('/api/settings/reader', (req, res) => {
   res.status(result.conflict ? 409 : 200).json(result);
 });
 app.get('/api/settings/learning', (req, res) => res.json({ ...learning.settings(), ...(accounts.enabled && !isAdministrator(req) ? { configurable: false, managed: true } : {}) }));
+app.get('/api/settings/ocr', (req, res) => res.json(accounts.enabled && !isAdministrator(req) ? { configurable: false, managed: true, provider: ocr.settings().provider } : ocr.settings()));
+app.put('/api/settings/ocr', async (req, res) => res.json(await ocr.save(req.body ?? {})));
+app.delete('/api/settings/ocr/key', async (_req, res) => res.json(await ocr.removeKey()));
 app.get('/api/settings/audiobookshelf', (req, res) => res.json(usesOwnerAudiobookshelf(req) ? audiobookshelf.settings() : { configurable: false, managed: true, connected: false, hasKey: false }));
 app.put('/api/settings/audiobookshelf', async (req, res) => res.json(await audiobookshelf.save(req.body ?? {})));
 app.patch('/api/settings/audiobookshelf/categories/:id', async (req, res) => {
@@ -232,7 +237,7 @@ app.get('/api/books/:id/ocr', async (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);
   let languages = [], error;
   if (!demo && book.format === 'pdf') { try { languages = await ocr.languages(); } catch (failure) { error = failure.message; } }
-  res.json({ available: !demo && book.format === 'pdf', job: ocr.status(book), languages, error });
+  res.json({ available: !demo && book.format === 'pdf', job: ocr.status(book), languages, error, provider: ocr.settings().provider });
 });
 app.get('/api/books/:id/bookmarks', (req, res) => res.json({ bookmarks: library.bookmarks(req.params.id, req.visitor) }));
 app.get('/api/books/:id/search', (req, res) => res.json(toolsForBook.search(library.getBook(req.params.id, req.visitor), req.query.q)));

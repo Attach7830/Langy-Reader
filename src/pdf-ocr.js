@@ -1,12 +1,13 @@
 import { $, api, element, message } from './ui.js';
-import { bookLanguages, baseLanguage } from '../shared/language.js';
-import { selectedOCRLanguages } from '../shared/ocr-languages.js';
+import { bookLanguages } from '../shared/language.js';
+import { selectedOCRLanguages, preferredOCRLanguages } from '../shared/ocr-languages.js';
 import { defaults } from './settings.js';
 
-const codes = { en: 'eng', es: 'spa', pt: 'por', zh: 'chi_sim', fr: 'fra', de: 'deu', it: 'ita', ja: 'jpn', ko: 'kor', ru: 'rus', ar: 'ara', hi: 'hin', nl: 'nld' };
 function name(code) {
   if (code === 'chi_sim') return 'Mandarin · simplified';
   if (code === 'chi_tra') return 'Mandarin · traditional';
+  if (code === 'chi_sim_vert') return 'Mandarin · simplified, vertical text';
+  if (code === 'chi_tra_vert') return 'Mandarin · traditional, vertical text';
   try { return new Intl.DisplayNames('en', { type: 'language' }).of(code.replace('_', '-')); } catch { return code; }
 }
 export function pdfOCR({ changed, readingLanguages = () => defaults.readingLanguages }) {
@@ -28,7 +29,7 @@ export function pdfOCR({ changed, readingLanguages = () => defaults.readingLangu
       if (version !== epoch) return;
       if (initial) {
         const choices = selectedOCRLanguages(result.languages, readingLanguages() || defaults.readingLanguages);
-        const preferred = new Set(bookLanguages(book).map((language) => codes[baseLanguage(language)]).filter(Boolean));
+        const preferred = new Set(preferredOCRLanguages(choices, bookLanguages(book)));
         languages.replaceChildren(...choices.map((code) => { const option = new Option(`${name(code)} (${code})`, code); option.selected = preferred.has(code); return option; }));
         if (!languages.selectedOptions.length && languages.options.length) languages.options[0].selected = true;
         loaded = result.available && choices.length > 0;

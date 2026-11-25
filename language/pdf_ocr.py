@@ -51,8 +51,9 @@ def searchable_pdf(content, languages, correct_rotation=True, mode='redo'):
         reader = PdfReader(source)
         if reader.is_encrypted or not 0 < len(reader.pages) <= 2000:
             raise HTTPException(422, 'OCR needs an unencrypted PDF with 1 to 2,000 pages.')
+        chinese = any(code.startswith('chi_') for code in languages)
         command = ['ocrmypdf', '--redo-ocr' if mode == 'redo' else '--skip-text', '--output-type', 'pdf', '--optimize', '0', '--jobs', '2',
-                   '--oversample', '300', '--tesseract-timeout', '120', '--language', '+'.join(languages)]
+                   '--oversample', '400' if chinese else '300', '--tesseract-timeout', '300' if chinese else '120', '--tesseract-oem', '1', '--language', '+'.join(languages)]
         if correct_rotation:
             command += ['--rotate-pages']
             # OCRmyPDF cannot deskew losslessly while replacing a hidden text layer.

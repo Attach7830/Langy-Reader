@@ -18,7 +18,7 @@ test('currently reading and set aside persist separately from completion and rem
   assert.ok(aside.setAsideAt); assert.equal(aside.starredAt, null); assert.ok(library.getBook('sample', first).readAt);
   assert.equal(library.getBook('sample', second).setAsideAt, null);
   const reopened = await openLibrary(dir, { upload: 100000, books: 4, storage: 1000000 });
-  assert.equal(reopened.snapshot(first).books[0].setAsideAt, aside.setAsideAt);
+  assert.equal(reopened.snapshot(first).books.find((book) => book.id === 'sample').setAsideAt, aside.setAsideAt);
   reopened.setCurrentlyReading('sample', { currentlyReading: true }, first);
   assert.equal(reopened.getBook('sample', first).setAsideAt, null);
   assert.equal(reopened.getBook('sample', first).bytes, original.bytes);

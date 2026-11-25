@@ -37,7 +37,7 @@ test('demo read status belongs to each visitor, respects book access and expires
   library.setReadStatus('sample', { read: true }, a);
   assert.ok(library.getBook('sample', a).readAt);
   assert.equal(library.getBook('sample', b).readAt, null);
-  assert.equal(library.snapshot(b).books[0].readAt, null);
+  assert.equal(library.snapshot(b).books.find((book) => book.id === 'sample').readAt, null);
   library.setReadStatus('sample', { read: true }, b);
   library.setReadStatus('sample', { read: false }, a);
   assert.ok(library.getBook('sample', b).readAt);

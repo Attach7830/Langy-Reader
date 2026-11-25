@@ -48,7 +48,7 @@ export function audioTools({ book, refresh }) {
         audioChanged(book().id); await refresh();
       } catch (error) { message('#recording-error', error.message); button.disabled = false; }
     });
-    const text = pending(state) ? `Rescanning missed words · ${state.completed} / ${state.windows} passages · ${state.added} additional matches found`
+    const text = pending(state) ? `${state.state === 'queued' ? `Repair queued${state.queuePosition ? ` · position ${state.queuePosition}` : ''}` : 'Repairing missed words'} · ${state.completed} / ${state.windows} passages · ${state.added} additional matches found. Queued books take turns; existing alignment remains available.`
       : state?.state === 'ready' ? `Rescan complete · ${state.added} additional words matched. ${state.totalWords - state.matchedBefore - state.added} words remain unconfirmed.`
         : state?.state === 'error' ? state.error : state?.state === 'cancelled' ? 'Rescan cancelled. Existing alignment retained.'
           : 'Listen again around gaps while preserving recognized word positions. Unmatched speech is not forced onto the text.';

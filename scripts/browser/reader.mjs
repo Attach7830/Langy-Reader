@@ -14,7 +14,7 @@ const adminPassword = 'browser-administrator-test-password', memberPassword = 'b
 const adminHeaders = { Authorization: 'Basic ' + Buffer.from(`reader:${adminPassword}`).toString('base64') };
 const server = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, PORT: '19391', READER_DATA: dir, READER_DEMO: '0', READER_USER: 'reader', READER_PASSWORD: adminPassword, READER_SYNC_USER: '', READER_SYNC_PASSWORD: '', READER_LANGUAGE_URL: 'http://127.0.0.1:1' }, stdio: ['ignore', 'pipe', 'pipe'] });
 for (const pipe of [server.stdout, server.stderr]) pipe.on('data', (part) => { if (serverLog.length < 200) serverLog.push(part.toString()); });
-let browser, context, page;
+let browser, context, page, demoServer;
 try {
   for (let i = 0; i < 100; i++) { if (await fetch(base + '/healthz').then((r) => r.ok).catch(() => false)) break; if (server.exitCode != null) throw new Error('Server failed: ' + serverLog.join('')); await delay(100); }
   browser = await chromium.launch({ headless: true });
@@ -26,7 +26,8 @@ try {
   ] } }));
   const zip = new JSZip(); zip.file('mimetype', 'application/epub+zip');
   zip.file('META-INF/container.xml', '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>');
-  zip.file('OEBPS/book.opf', '<?xml version="1.0"?><package version="3.0" unique-identifier="id" xmlns="http://www.idpf.org/2007/opf"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">langy-browser-fixture</dc:identifier><dc:title>Reader interactions</dc:title><dc:language>es</dc:language></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="one" href="one.xhtml" media-type="application/xhtml+xml"/><item id="two" href="two.xhtml" media-type="application/xhtml+xml"/><item id="notes" href="notes.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="one"/><itemref idref="two"/><itemref idref="notes"/></spine></package>');
+  zip.file('OEBPS/book.opf', '<?xml version="1.0"?><package version="3.0" unique-identifier="id" xmlns="http://www.idpf.org/2007/opf"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">langy-browser-fixture</dc:identifier><dc:title>Reader interactions</dc:title><dc:language>es</dc:language></metadata><manifest><item id="cover" href="cover.png" media-type="image/png" properties="cover-image"/><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="one" href="one.xhtml" media-type="application/xhtml+xml"/><item id="two" href="two.xhtml" media-type="application/xhtml+xml"/><item id="notes" href="notes.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="one"/><itemref idref="two"/><itemref idref="notes"/></spine></package>');
+  zip.file('OEBPS/cover.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRZsAAAAASUVORK5CYII=', 'base64'));
   zip.file('OEBPS/nav.xhtml', '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Contents</title></head><body><nav epub:type="toc"><ol><li><a href="one.xhtml">Primera parte</a></li><li><a href="two.xhtml">Segunda parte</a></li><li><a href="notes.xhtml">Notas</a></li></ol></nav></body></html>');
   const paragraph = 'La viajera llegó a una casa tranquila cerca del río. En la ventana había una planta pequeña y un libro abierto. Quería conocer la historia del pueblo, así que se sentó a conversar con la mujer que cuidaba el jardín. Todavía quedaban muchas cosas por descubrir.';
   for (const name of ['one', 'two']) zip.file(`OEBPS/${name}.xhtml`, `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>${name}</title></head><body><h1>${name === 'one' ? 'Primera parte' : 'Segunda parte'}</h1><p id="source">${paragraph} <a href="notes.xhtml#note">Leer nota</a></p>${Array.from({ length: 90 }, (_, i) => `<p id="passage-${i}">${paragraph} ${paragraph}</p>`).join('')}</body></html>`);
@@ -87,6 +88,40 @@ try {
     await page.locator('#book-actions-dialog [data-close]').click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({ path: output + '/mobile-library.png', fullPage: true });
+  });
+  await check('cover cache defaults on, survives reload, clears on request and disables per account', async () => {
+    await page.waitForFunction((id) => document.querySelector(`[data-book="${id}"] .book-cover img`)?.src.startsWith('data:image/'), book.id);
+    let requests = 0; const count = (request) => { if (new URL(request.url()).pathname.endsWith('/cover')) requests++; }; page.on('request', count);
+    await page.reload(); await page.waitForFunction((id) => document.querySelector(`[data-book="${id}"] .book-cover img`)?.src.startsWith('data:image/'), book.id);
+    assert.equal(requests, 0, 'cached images require no cover request after reload'); page.off('request', count);
+    await page.locator('#mobile-navigation [data-settings]').click(); await page.locator('[data-settings-tab="reading"]').click();
+    assert.equal(await page.locator('[name=cacheCovers]').isChecked(), true);
+    await page.locator('#clear-cover-cache').click(); await page.locator('#cover-cache-status').filter({ hasText: 'Cached cover images cleared.' }).waitFor();
+    assert.equal(await page.evaluate(async () => (await caches.keys()).some((key) => key.startsWith('langy-covers-'))), false);
+    await page.locator('[name=cacheCovers]').uncheck(); await page.locator('#settings-form button[type=submit]').click();
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('langy-settings-v1')).cacheCovers === false);
+    await page.waitForFunction(() => !Object.keys(JSON.parse(localStorage.getItem('langy-account-settings-v1') || '{}').pending || {}).length);
+    await page.reload(); await page.locator('#mobile-navigation [data-settings]').click(); await page.locator('[data-settings-tab="reading"]').click();
+    assert.equal(await page.locator('[name=cacheCovers]').isChecked(), false);
+    assert.equal((await (await context.request.get(base + '/api/settings/reader')).json()).preferences.cacheCovers, false);
+    await page.locator('[name=cacheCovers]').check(); await page.locator('#settings-form button[type=submit]').click(); await page.locator('#books .book-card').first().waitFor();
+  });
+  await check('Devices saves and tests the optional OCR connector without exposing its key', async () => {
+    let saved = { configurable: true, provider: 'builtin', baseUrl: '', hasKey: false }, key;
+    await page.route('**/api/settings/ocr', async (route) => {
+      if (route.request().method() === 'PUT') { const body = route.request().postDataJSON(); key = body.apiKey; saved = { ...saved, provider: body.provider, baseUrl: body.baseUrl, hasKey: Boolean(key) }; }
+      await route.fulfill({ json: saved });
+    });
+    await page.locator('#mobile-navigation [data-settings]').click(); await page.locator('[data-settings-tab="devices"]').click();
+    await page.locator('#ocr-service-controls').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#ocr-external-fields').isVisible(), false);
+    await page.locator('#ocr-provider').selectOption('paddle'); await page.locator('#ocr-service-url').fill('http://ocr.test:8093'); await page.locator('#ocr-service-key').fill('browser-synthetic-ocr-key');
+    await page.locator('#ocr-service-save').click(); await page.locator('#ocr-service-status').filter({ hasText: 'tested and saved' }).waitFor();
+    assert.equal(key, 'browser-synthetic-ocr-key'); assert.equal(await page.locator('#ocr-service-key').inputValue(), ''); assert.equal(await page.locator('#ocr-remove-key').isVisible(), true);
+    await page.screenshot({ path: output + '/ocr-connector-mobile.png' });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.locator('#ocr-provider').selectOption('builtin'); await page.locator('#ocr-service-save').click(); await page.locator('#ocr-service-status').filter({ hasText: 'Built-in OCR selected.' }).waitFor();
+    await page.locator('#settings-back').click(); await page.unroute('**/api/settings/ocr');
   });
   await check('the Process queue closes on an outside tap', async () => {
     await page.locator('#mobile-navigation [data-open-processes]').click();
@@ -481,10 +516,29 @@ try {
     memberContext = await browser.newContext({ viewport: { width: 393, height: 851 }, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
     memberPage = await memberContext.newPage(); memberPage.on('pageerror', (error) => errors.push(error.message));
     await memberPage.goto(base + '/#library'); await memberPage.locator('#login-form').waitFor({ state: 'visible' });
+    assert.equal(await memberPage.locator('#login-form [name=rememberMe]').isChecked(), false);
     await memberPage.locator('#login-form [name=username]').fill('member'); await memberPage.locator('#login-form [name=password]').fill(memberPassword);
     await memberPage.locator('#login-form [type=submit]').click(); await memberPage.locator('#shared-books-control').waitFor({ state: 'visible' });
+    assert.equal((await memberContext.cookies()).find((cookie) => cookie.name === 'langy_session').expires, -1);
     assert.equal(await memberPage.locator('#books .book-card').count(), 0);
     assert.equal((await memberContext.request.get(base + '/api/books/' + book.id + '/file')).status(), 404);
+  });
+  await check('Remember me persists a secure session across browser reopening without saving the password locally', async () => {
+    await memberPage.goto(base + '/#settings/account'); await memberPage.locator('#account-panel').waitFor({ state: 'visible' });
+    memberPage.once('dialog', (dialog) => dialog.accept()); await memberPage.locator('#account-panel [data-switch-user]').click();
+    await memberPage.locator('#login-form').waitFor({ state: 'visible' }); await memberPage.locator('#login-form [name=rememberMe]').check();
+    await memberPage.locator('#login-form [name=username]').fill('member'); await memberPage.locator('#login-form [name=password]').fill(memberPassword);
+    await memberPage.screenshot({ path: output + '/remember-me-mobile.png' });
+    await memberPage.locator('#login-form [type=submit]').click(); await memberPage.locator('#shared-books-control').waitFor({ state: 'visible' });
+    const persisted = (await memberContext.cookies()).filter((cookie) => cookie.expires > Date.now() / 1000), session = persisted.find((cookie) => cookie.name === 'langy_session');
+    assert.equal(session.httpOnly, true); assert.equal(session.sameSite, 'Lax'); assert.ok(session.expires > Date.now() / 1000 + 29 * 86400);
+    assert.equal(await memberPage.evaluate((password) => Object.values(localStorage).some((value) => value.includes(password)), memberPassword), false);
+    const resumed = await browser.newContext({ viewport: { width: 393, height: 851 }, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
+    try {
+      await resumed.addCookies(persisted); const reopened = await resumed.newPage(); await reopened.goto(base + '/#library');
+      await reopened.locator('#shared-books-control').waitFor({ state: 'visible' });
+      assert.equal((await (await resumed.request.get(base + '/api/account')).json()).user.username, 'member');
+    } finally { await resumed.close(); }
   });
   await check('mobile readers can import privately and share an existing book from Edit', async () => {
     await memberPage.locator('#import-book').click(); await memberPage.locator('#book-dialog').waitFor({ state: 'visible' });
@@ -521,12 +575,34 @@ try {
     const otherTab = await memberContext.newPage(); await otherTab.goto(base + '/#library'); await otherTab.locator('#shared-books-control').waitFor({ state: 'visible' });
     await memberPage.goto(base + '/#settings/account'); await memberPage.locator('#account-panel').waitFor({ state: 'visible' });
     assert.equal(await memberPage.locator('#account-admin').isVisible(), false);
+    await memberPage.evaluate(async () => { const cache = await caches.open('langy-covers-signout-check'); await cache.put('/signout-cover', new Response('private cover')); });
     memberPage.once('dialog', (dialog) => dialog.accept()); await memberPage.locator('#account-panel [data-switch-user]').click();
     await memberPage.locator('#login-form').waitFor({ state: 'visible' }); await otherTab.locator('#login-form').waitFor({ state: 'visible' });
     assert.equal(await memberPage.evaluate(() => localStorage.getItem('langy-progress-v1')), null);
     assert.equal(await memberPage.evaluate(() => localStorage.getItem('langy-auth-account')), null);
+    assert.equal(await memberPage.evaluate(async () => (await caches.keys()).some((key) => key.startsWith('langy-covers-'))), false);
     assert.equal((await (await memberContext.request.get(base + '/api/account')).json()).authenticated, false);
     await memberPage.screenshot({ path: output + '/sign-in-mobile.png' }); await memberContext.close();
+  });
+  await check('demo starts with Mandarin and English story folders and both sample EPUBs open on mobile', async () => {
+    const demoBase = 'http://127.0.0.1:19392';
+    demoServer = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, PORT: '19392', READER_DATA: join(dir, 'demo'), READER_DEMO: '1', READER_PASSWORD: '', READER_LANGUAGE_URL: 'http://127.0.0.1:1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    for (const pipe of [demoServer.stdout, demoServer.stderr]) pipe.on('data', (part) => { if (serverLog.length < 400) serverLog.push(part.toString()); });
+    for (let index = 0; index < 100; index++) { if (await fetch(demoBase + '/healthz').then((response) => response.ok).catch(() => false)) break; await delay(100); }
+    const demoContext = await browser.newContext({ viewport: { width: 393, height: 851 }, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
+    try {
+      const demoPage = await demoContext.newPage(); demoPage.on('pageerror', (error) => errors.push(error.message));
+      for (const [folder, id, title] of [['demo-mandarin', 'demo-story-zh', '蓝色的伞'], ['demo-english', 'demo-story-en', 'The Note in the Book']]) {
+        await demoPage.goto(demoBase + '/#library'); await demoPage.locator('#mobile-category').selectOption(folder);
+        await demoPage.waitForFunction(() => document.querySelectorAll('#books .book-card').length === 1);
+        assert.equal(await demoPage.locator('#books .book-card').count(), 1);
+        await demoPage.locator('#books a[href="#read/' + id + '"]').click(); await demoPage.locator('#viewer iframe').first().waitFor();
+        await demoPage.waitForFunction((title) => document.querySelector('#reading-title')?.textContent.includes(title), title);
+        if (id === 'demo-story-zh') await demoPage.locator('#pinyin-toggle').waitFor({ state: 'visible' });
+        assert.equal(await demoPage.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+        await demoPage.screenshot({ path: output + '/' + id + '-mobile.png' });
+      }
+    } finally { await demoContext.close(); }
   });
   await desktop.close(); assert.deepEqual(errors, [], 'the app must not emit uncaught browser errors');
 } catch (error) { results.push({ name: 'browser setup', pass: false, error: error.stack }); console.error(error); }
@@ -535,6 +611,7 @@ finally {
   await writeFile(join(output, 'server.log'), serverLog.join(''));
   await context?.close(); await browser?.close();
   if (server.exitCode == null) { const stopped = new Promise((resolve) => server.once('exit', resolve)); server.kill('SIGTERM'); await stopped; }
+  if (demoServer?.exitCode === null) { const stopped = new Promise((resolve) => demoServer.once('exit', resolve)); demoServer.kill('SIGTERM'); await stopped; }
   await rm(dir, { recursive: true, force: true });
 }
 if (results.some((result) => !result.pass)) process.exitCode = 1;

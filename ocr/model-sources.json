@@ -1,0 +1,14 @@
+{
+  "PP-OCRv5_server_det": {
+    "revision": "ca867c897ecbca8873081573a802ad70d499cb94",
+    "files": { "inference.json": { "git": "7b582d63397b09eea2b3ee8c7c7e4efae5d0ccff" }, "inference.yml": { "git": "c4f16313e7e2c567da8e9fa8f4aeba14a307786e" }, "inference.pdiparams": { "sha256": "183146fe9d9910352f68482f623bcbbb9fa7b9e8fa1463b9ad288cef00524d2d" } }
+  },
+  "PP-OCRv5_server_rec": {
+    "revision": "b26c3587fda8da3c8ec0ce357214b4d661ff1558",
+    "files": { "inference.json": { "git": "67011337d66c66562b8a719c70e40cfcc242ac9e" }, "inference.yml": { "git": "f5156e77296f540e963bdf4f89be90153234a90e" }, "inference.pdiparams": { "sha256": "63853f062a5f4089befc16f565a68277618e0da5cb45468b49d11079de0ada77" } }
+  },
+  "PP-LCNet_x1_0_textline_ori": {
+    "revision": "cd237a44b0e359d4fe38310a416203cf7403faa5",
+    "files": { "inference.json": { "git": "7491116096100398d6a660f2d689fc821023bbfa" }, "inference.yml": { "git": "61977592412f3529cf153ed9c904f6700cb8b9a6" }, "inference.pdiparams": { "sha256": "0de2bcf996cf553e2b848dd7b1769dafffc6917b1ccdf55c1d8efe7909fbf743" } }
+  }
+}

@@ -7,11 +7,18 @@ import { deviceSettings } from './ui-device-settings.js';
 import { readingLanguagesPicker } from './reading-languages.js';
 import { readingFontSize, fontSizeChange, touchReader } from './touch-preferences.js';
 import { credentialRemoval } from './credential-removal.js';
+import { coverCache } from './cover-cache.js';
 
 export function settingsPage({ preferences, apply, navigate, back }) {
   const narration = narrationSettings();
   const archive = archiveSettings();
   const devices = deviceSettings();
+  $('#clear-cover-cache').addEventListener('click', async (event) => {
+    event.target.disabled = true;
+    try { await coverCache.clear(); message('#cover-cache-status', 'Cached cover images cleared. Covers will load again when needed.'); }
+    catch { message('#cover-cache-status', 'Device storage is unavailable.'); }
+    finally { event.target.disabled = false; }
+  });
   const form = $('#settings-form');
   const fields = form.elements;
   const readingLanguages = readingLanguagesPicker({ host: $('#reading-language-list'), input: $('#reading-language-choice'), add: $('#reading-language-add'), error: (text) => message('#settings-error', text) });
@@ -143,6 +150,7 @@ export function settingsPage({ preferences, apply, navigate, back }) {
     fields.synonymContextHelp.checked = current.synonymContextHelp;
     fields.showPinyin.checked = current.showPinyin;
     fields.cacheAI.checked = current.cacheAI !== false;
+    fields.cacheCovers.checked = current.cacheCovers !== false;
     fields.audioHighlight.checked = current.audioHighlight;
     fields.progressSyncEnabled.checked = current.progressSyncEnabled;
     fields.syncDeviceName.value = current.syncDeviceName;
@@ -237,6 +245,7 @@ export function settingsPage({ preferences, apply, navigate, back }) {
       synonymContextHelp: fields.synonymContextHelp.checked,
       showPinyin: fields.showPinyin.checked,
       cacheAI: fields.cacheAI.checked,
+      cacheCovers: fields.cacheCovers.checked,
       audioRecordings: preferences().audioRecordings || {},
       audioHighlight: fields.audioHighlight.checked,
       progressSyncEnabled: fields.progressSyncEnabled.checked,

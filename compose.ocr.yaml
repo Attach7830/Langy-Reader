@@ -1,0 +1,17 @@
+# Optional CPU PaddleOCR service. Run on an AVX-capable Linux machine.
+# Same-host connector URL: http://paddle-ocr:8000
+services:
+  paddle-ocr:
+    build: ./ocr
+    init: true
+    restart: unless-stopped
+    environment:
+      LANGY_OCR_API_KEY: ${LANGY_OCR_API_KEY:-}
+    ports:
+      - "${LANGY_OCR_BIND:-127.0.0.1}:${LANGY_OCR_PORT:-8093}:8000"
+    networks: [default]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

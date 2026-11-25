@@ -121,7 +121,7 @@ test('discovery jobs and cached results are private per visitor, cancellation fr
 });
 
 test('a model that never resolves reaches a hard timeout and a later request remains usable', async (t) => {
-  const f = await fixture(t, { timeoutMs: 30, plan(_source, _signal, n) { return n === 1 ? new Promise(() => {}) : plan; } });
+  const f = await fixture(t, { timeoutMs: 1000, plan(_source, _signal, n) { return n === 1 ? new Promise(() => {}) : plan; } });
   f.discovery.queue({}); const failed = await f.finish(); assert.equal(failed.state, 'error'); assert.match(failed.error, /timed out/u);
   f.discovery.queue({}); const recovered = await f.finish(); assert.equal(recovered.state, 'ready', recovered.error);
 });

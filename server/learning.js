@@ -91,7 +91,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
   };
   const previewAudio = demo && process.env.READER_DEMO_AUDIO_PREVIEW !== '0';
   const audioConfig = () => previewAudio ? { ...config, baseUrl: '', apiKey: '' } : config;
-  let working = false;
+  let working = false, workerLane = 0;
   const completeAudio = bookNarration({
     db, folder, library, demo, previewAudio, configuration: audioConfig,
     queuePart: (book, key, replace) => queue(book, key, replace, false), wake: () => void work(),
@@ -108,19 +108,26 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
   const ivoox = demo ? null : await openIvoox({ db, folder, library, recordings });
 
   async function languageCall(path, body, type = 'application/json') {
+    const synchronizing = ['/align', '/transcribe', '/match-recording', '/rescan'].includes(path);
     let response;
     try {
       response = await fetch(new URL(path, workerURL), {
         method: 'POST', headers: { 'Content-Type': type },
         body: type === 'application/json' ? JSON.stringify(body) : body,
-        signal: AbortSignal.timeout(['/align', '/transcribe', '/match-recording', '/rescan'].includes(path) ? 600_000 : 180_000),
+        signal: AbortSignal.timeout(synchronizing ? 600_000 : 180_000),
       });
-    } catch {
+    } catch (error) {
+      if (error.name === 'TimeoutError') throw new RequestError(504, synchronizing
+        ? 'Word synchronization exceeded ten minutes. Check the language service CPU and memory, then retry.'
+        : 'Language processing timed out. Check the language service and retry.');
       throw new RequestError(503, 'Language processing is unavailable. Start the language service and try again.');
     }
-    if (!response.ok) throw new RequestError(502, ['/align', '/transcribe', '/match-recording', '/rescan'].includes(path)
-      ? 'Word synchronization failed. Check the language service and try again.'
-      : 'The language service could not read this text.');
+    if (!response.ok) {
+      let detail; if (synchronizing) try { detail = (await response.json()).detail; } catch {}
+      throw new RequestError(502, synchronizing
+        ? 'Word synchronization failed. ' + (typeof detail === 'string' ? detail.replace(/[\x00-\x1f]/gu, ' ').slice(0, 300) : 'Check the language service and try again.')
+        : 'The language service could not read this text.');
+    }
     return response.json();
   }
 
@@ -443,28 +450,19 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     let type;
     try {
       scheduledAudio.pump();
-      job = db.prepare("SELECT * FROM analyses WHERE state='queued' ORDER BY rowid LIMIT 1").get();
-      type = 'analysis';
-      if (job) await analyze(job);
-      else {
-        type = 'audio';
-        job = db.prepare("SELECT * FROM audio WHERE state='queued' ORDER BY created, rowid LIMIT 1").get();
-        if (job) await generate(job);
-        else {
-          type = 'book';
-          job = completeAudio.next();
-          if (job) await completeAudio.assemble(job);
-          else {
-            type = 'recording';
-            job = demo ? null : recordings.next();
-            if (job) await recordings.process(job);
-            else {
-              type = 'rescan';
-              job = demo ? null : rescans.next();
-              if (job) await rescans.process(job);
-            }
-          }
-        }
+      // Give every queue a turn. Continually importing/generating books must
+      // not starve existing alignment repairs, or vice versa.
+      const lanes = [
+        ['analysis', () => db.prepare("SELECT * FROM analyses WHERE state='queued' ORDER BY rowid LIMIT 1").get(), analyze],
+        ['audio', () => db.prepare("SELECT * FROM audio WHERE state='queued' ORDER BY created,rowid LIMIT 1").get(), generate],
+        ['book', completeAudio.next, completeAudio.assemble],
+        ['recording', () => demo ? null : recordings.next(), recordings.process],
+        ['rescan', () => demo ? null : rescans.next(), rescans.process],
+      ];
+      for (let offset = 0; offset < lanes.length; offset++) {
+        const lane = (workerLane + offset) % lanes.length, [kind, next, process] = lanes[lane];
+        const selected = next(); if (!selected) continue;
+        job = selected; type = kind; workerLane = (lane + 1) % lanes.length; await process(job); break;
       }
       if (job && autoRepair && !demo && ['analysis', 'book', 'recording'].includes(type)) autoRepairBook(job.book);
     } catch (error) {

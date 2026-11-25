@@ -1,5 +1,21 @@
 import { bookCovers, validCoverStyle } from '../shared/book-covers.js';
 import { element, icon } from './ui.js';
+import { coverCache } from './cover-cache.js';
+
+let visibleCovers;
+const coverRequests = new WeakMap();
+function loadCover(image, book) {
+  const load = () => { void coverCache.source(book).then((url) => { if (url) image.src = url; }); };
+  if (typeof IntersectionObserver === 'undefined') { load(); return; }
+  visibleCovers ||= new IntersectionObserver((entries) => {
+    for (const { target, isIntersecting } of entries) {
+      if (!isIntersecting && target.isConnected) continue;
+      visibleCovers.unobserve(target); const request = coverRequests.get(target); coverRequests.delete(target);
+      if (target.isConnected) request?.();
+    }
+  }, { rootMargin: '300px' });
+  coverRequests.set(image, load); visibleCovers.observe(image);
+}
 
 export function bookCover(book, { preview = false } = {}) {
   const style = validCoverStyle(book.coverStyle) ? book.coverStyle : 'auto';
@@ -13,7 +29,7 @@ export function bookCover(book, { preview = false } = {}) {
   else cover.append(element('span', 'cover-author', book.author || (preview ? 'Author' : '')), element('span', 'cover-decoration'));
   if (book.thumbnailType && style === 'auto') {
     const image = document.createElement('img'); image.alt = ''; image.loading = 'lazy';
-    image.src = `/api/books/${encodeURIComponent(book.id)}/cover`;
+    loadCover(image, book);
     image.addEventListener('error', () => image.remove(), { once: true }); cover.append(image);
   }
   return cover;
