@@ -6,6 +6,7 @@ import express from 'express';
 import multer from 'multer';
 import { maxUpload, openLibrary, RequestError } from './books.js';
 import { openAccounts } from './accounts.js';
+import { openFonts, fontUploadLimit } from './fonts.js';
 import { openAIProfiles } from './ai-profiles.js';
 import { openAISettings } from './ai.js';
 import { openProcesses } from './processes.js';
@@ -76,13 +77,14 @@ const readingTime = openReadingTime(dir, { section: (book, key) => learning.voca
 const toolsForBook = bookTools({ learning, ai });
 const offlinePack = offlinePacks({ learning, mandarin, lookupSynonyms });
 const readingAccount = (visitor) => ({ id: readerSettings.get(visitor).accountId, expires: visitor?.expires ?? null });
+const userFonts = await openFonts(dir);
 const vocabularyMeaning = vocabularyMeanings({ vocabulary: learning.vocabulary, ai, lookupSynonyms });
 const archive = await openArchive(dir, { library, demo, onImport: (book, details) => learning.scheduleAudiobook(library.getBook(book.id), details) });
 const ocr = await openPDFOCR(dir, { library, demo, onImport: (book) => learning.ensure(library.getBook(book.id)) });
 const audiobookshelf = await openAudiobookshelf(dir, { library, learning, demo });
 const processes = openProcesses(dir, { library, archive, discovery, learning, demo, account: readingAccount });
 const uploadLimit = limits?.upload ?? maxUpload;
-const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 9, fieldSize: 1024 } });
+const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 10, fieldSize: 4096 } });
 const audioUpload = multer({ dest: library.uploads, limits: { fileSize: maxAudioUpload, files: 1, fields: 1, fieldSize: 1024 } });
 const chapterUpload = multer({ storage: chapterStorage(library.uploads), limits: { fileSize: maxAudioUpload, files: chapterFileLimit, fields: 1, fieldSize: 1024 } });
 const demoUploads = demo ? [limitJobs({ perMinute: 32, perVisitor: 8 })] : [];
@@ -211,6 +213,11 @@ app.patch('/api/settings/reader', (req, res) => {
   if (!result.conflict && result.preferences.cacheAI === false) aiCache.clear(req.visitor);
   res.status(result.conflict ? 409 : 200).json(result);
 });
+app.get('/api/fonts', async (req, res) => res.json({ accountId: readingAccount(req.visitor).id, fonts: await userFonts.list(readingAccount(req.visitor).id) }));
+const fontUpload = multer({ dest: library.uploads, limits: { fileSize: fontUploadLimit, files: 1, fields: 1, fieldSize: 400 } }).single('file');
+app.post('/api/fonts', ...demoUploads, (req, res, next) => { req.fontUpload = true; fontUpload(req, res, next); }, async (req, res) => res.status(201).json(await userFonts.add(req.file, readingAccount(req.visitor), req.body?.name)));
+app.get('/api/fonts/:id/file', (req, res) => { const font = userFonts.file(req.params.id, readingAccount(req.visitor).id); res.set('Cache-Control', 'private, no-store').set('X-Content-Type-Options', 'nosniff').type(font.type).sendFile(font.path, { dotfiles: 'allow', cacheControl: false }); });
+app.delete('/api/fonts/:id', async (req, res) => { await userFonts.remove(req.params.id, readingAccount(req.visitor).id); res.json({ fonts: await userFonts.list(readingAccount(req.visitor).id) }); });
 app.get('/api/settings/learning', (req, res) => res.json({ ...learning.settings(), ...(accounts.enabled && !isAdministrator(req) ? { configurable: false, managed: true } : {}) }));
 app.get('/api/settings/ocr', (req, res) => res.json(accounts.enabled && !isAdministrator(req) ? { configurable: false, managed: true, provider: ocr.settings().provider } : ocr.settings()));
 app.put('/api/settings/ocr', async (req, res) => res.json(await ocr.save(req.body ?? {})));
@@ -350,8 +357,9 @@ app.post('/api/books', ...demoUploads, (req, _res, next) => {
 }, upload.single('file'), async (req, res) => {
   let narrationOptions;
   try {
-    const allowed = new Set(['title','author','language','languages','categoryId','coverStyle','autoAudiobook','audiobookDelayMinutes','shared']);
+    const allowed = new Set(['title','author','language','languages','categoryId','coverStyle','coverUrl','autoAudiobook','audiobookDelayMinutes','shared']);
     if (Object.keys(req.body ?? {}).some((key) => !allowed.has(key))) throw new RequestError(400, 'Too many book details were submitted. Refresh the page and try again.');
+    if (Object.entries(req.body ?? {}).some(([key, value]) => typeof value !== 'string' || key !== 'coverUrl' && Buffer.byteLength(value) > 1024)) throw new RequestError(400, 'One of the book details is too long or invalid. Shorten it and try again.');
     narrationOptions = importNarrationOptions(req.body ?? {});
     if (demo && narrationOptions) throw new RequestError(403, 'Scheduled audiobook generation is available on self-hosted installations.');
   } catch (error) { if (req.file?.path) await rm(req.file.path, { force: true }); throw error; }
@@ -359,6 +367,7 @@ app.post('/api/books', ...demoUploads, (req, _res, next) => {
   learning.scheduleAudiobook(library.getBook(imported.id, req.visitor), narrationOptions ?? {});
   res.status(201).json(imported);
 });
+app.post('/api/books/:id/cover', ...demoUploads, async (req, res) => res.json(await library.importCover(req.params.id, req.body?.url, req.visitor)));
 app.patch('/api/books/:id', async (req, res) => {
   const details = await library.resolveBookDetails(req.params.id, req.body ?? {}, req.visitor);
   const book = library.editBook(req.params.id, details, req.visitor);
@@ -505,6 +514,7 @@ app.use((err, _req, res, next) => {
   if (res.headersSent) return next(err);
   if (res.destroyed) return;
   if (err instanceof multer.MulterError) {
+    if (_req.fontUpload) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'Font files must be at most 32 MiB.' : 'Choose one font file and an optional name.' });
     if (_req.audioUpload) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
       error: err.code === 'LIMIT_FILE_SIZE' ? 'Audio files must be 1 GiB or smaller.' : _req.chapterUpload ? 'Choose at most 200 chapter files and one recording name.' : 'Upload one audiobook at a time.',
     });
