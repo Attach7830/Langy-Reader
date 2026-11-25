@@ -32,7 +32,7 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
     return p.x < box.left + box.width / 3 ? -1 : p.x > box.left + box.width * 2 / 3 ? 1 : 0;
   }
   function policy() {
-    const action = zoomed() || canPan() ? 'auto' : 'none';
+    const action = zoomed() ? 'auto' : canPan() ? 'pan-x pan-y' : 'none';
     host.style.touchAction = action; host.classList.toggle('reader-native-zoom', zoomed());
     const css = 'html,body,body * {touch-action:' + action + ' !important;}';
     for (const { style } of bindings.values()) if (style && style.textContent !== css) style.textContent = css;
@@ -157,7 +157,7 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
       pointers.set(event.pointerId ?? 1, start);
       if (pointers.size > 1 || event.isPrimary === false) {
         multi = true; gesture = undefined; clearTap(); const value = pair();
-        if (!pinch && onPinch && !zoomed() && !canPan() && value?.distance > 8) {
+        if (!pinch && onPinch && !zoomed() && value?.distance > 8) {
           pinch = { initial: value.distance, factor: 1, center: value.center, changed: false };
           onPinch({ phase: 'start', factor: 1, center: value.center });
         }

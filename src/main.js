@@ -331,6 +331,8 @@ function positionChanged(position) {
   }
   if (changed && !position.reflowed) readingSync.changed();
   $('#page-label').textContent = position.label;
+  const heading = position.heading || position.label;
+  $('#reading-subtitle').textContent = heading; $('#reading-subtitle').title = heading;
   $('#position-detail').textContent = position.detail;
   $('#previous').disabled = !position.previous;
   $('#next').disabled = !position.next;
@@ -567,6 +569,7 @@ async function openBook(book) {
   document.title = `${book.title} · Langy Reader`;
   $('#reading-title').textContent = book.title;
   $('#reading-subtitle').textContent = [book.format.toUpperCase(), languageName(book.language)].join(' · ');
+  $('#reading-subtitle').title = '';
   $('#pdf-zoom').hidden = book.format !== 'pdf';
   pinyinButton.refresh();
   const contentsButton = $('#contents-button');

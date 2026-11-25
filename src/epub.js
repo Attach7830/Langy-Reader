@@ -227,7 +227,7 @@ export async function openEpub({ host, url, position, language, settings, hooks,
   const book = ePub(undefined, { replacements: 'blobUrl' });
   const earlierSections = new Map();
   let rendition, observer, renderError, outline;
-  let activeSection = 0, lastTarget;
+  let activeSection = 0, lastTarget, sourceAnchor;
   let spineSizes = [], syncResolution;
   let preferences = settings;
   let disposed = false;
@@ -254,6 +254,7 @@ export async function openEpub({ host, url, position, language, settings, hooks,
   try {
     await book.open(buffer, 'binary');
     signal.throwIfAborted();
+    const navigation = epubContents(book), comparePosition = new ePub.CFI();
     spineSizes = book.spine.spineItems.map((section) => {
       try {
         const path = decodeURIComponent(archiveURL(section.url).pathname.slice(1));
@@ -298,23 +299,37 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       reflowing = false;
       const { start } = location;
       activeSection = Number(start.index);
-      lastTarget = start.cfi;
+      // Preserve an explicit text anchor through deferred layout reports. A
+      // generated page-boundary CFI can otherwise reopen the preceding column.
+      if (sourceAnchor && sourceAnchor.index !== start.index) sourceAnchor = undefined;
+      lastTarget = sourceAnchor?.target || start.cfi;
       const { page, total } = start.displayed;
+      const section = book.spine.get(start.index), entries = navigation.filter((entry) => entry.target?.index === start.index);
+      let heading = entries[0]?.label;
+      for (const entry of entries) {
+        if (!entry.target.fragment) { heading = entry.label; continue; }
+        const anchor = section.document?.getElementById(entry.target.fragment);
+        if (anchor && comparePosition.compare(section.cfiFromElement(anchor), lastTarget) <= 0) heading = entry.label;
+      }
+      heading ||= section.document?.querySelector('h1,h2,h3')?.textContent?.replace(/\s+/gu, ' ').trim() || `Section ${start.index + 1}`;
       const count = book.spine.length;
       const percent = (start.index + page / total) / count;
       hooks.position({
-        target: start.cfi, label: `Page ${page} of ${total}`,
+        target: lastTarget, heading, label: `Page ${page} of ${total}`,
         detail: `Section ${start.index + 1} of ${count}`,
         percent: Math.min(1, percent), previous: !location.atStart, next: !location.atEnd, reflowed,
       });
     }
     rendition.on('relocated', report);
+    let resumedTarget;
     if (typeof position === 'string' && position.startsWith('epubcfi(')) {
-      try { await display(position); }
+      try { await display(position); resumedTarget = position; }
       catch { await display(); }
     } else await display();
     await new Promise(requestAnimationFrame);
-    report(await rendition.currentLocation());
+    const resumed = await rendition.currentLocation();
+    if (resumedTarget && resumed?.start) sourceAnchor = { target: resumedTarget, index: resumed.start.index, page: resumed.start.displayed.page };
+    report(resumed);
 
     async function resize() {
       const next = size();
@@ -471,11 +486,13 @@ export async function openEpub({ host, url, position, language, settings, hooks,
         if (!valid() || !range.startContainer.isConnected) return;
         const contents = rendition.getContents().find((content) => content.document === range.startContainer.ownerDocument);
         if (!contents) return;
+        sourceAnchor = undefined;
         await display(contents.cfiFromRange(range));
         report(rendition.currentLocation());
       },
       readingOutline() { return outline ??= inferOutline(book, signal); },
       async move(direction) {
+        sourceAnchor = undefined;
         await resize();
         await (direction > 0 ? rendition.next() : rendition.prev());
         // next/prev resolve before epub.js emits its deferred relocation event.
@@ -483,6 +500,7 @@ export async function openEpub({ host, url, position, language, settings, hooks,
         await settle();
       },
       async go(target) {
+        sourceAnchor = undefined;
         if (Number.isInteger(target?.page)) {
           await resize();
           const index = Number.isInteger(target.index) ? target.index : activeSection;
@@ -509,7 +527,11 @@ export async function openEpub({ host, url, position, language, settings, hooks,
           const track = trackText(section.document.querySelector('body') || section.document.documentElement, language);
           const word = track.words.find((item) => item.to > target.from), range = word && track.rangeFor(word);
           if (!range) throw new Error('This text match could not be located.');
-          await display(section.cfiFromRange(range)); await settle(); return;
+          const match = section.cfiFromRange(range);
+          await display(match); await settle();
+          const location = await rendition.currentLocation();
+          sourceAnchor = { target: match, index: location.start.index, page: location.start.displayed.page };
+          report(location); return;
         }
         let location = typeof target === 'string' ? target : target.cfi ?? target.index;
         if (target.fragment) {
