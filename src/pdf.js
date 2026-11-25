@@ -5,6 +5,7 @@ import { hanPattern } from '../shared/language.js';
 import { pdfLinkLayer } from './book-links.js';
 import { serializeRenderer } from './reader-navigation.js';
 import { savedReadingFile } from './book-source.js';
+import { adjacentSection } from './section-navigation.js';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const baseUrl = new URL('/pdf-assets/', location.href);
@@ -144,6 +145,19 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
       syncPosition: () => ({ progress: String(pageNumber), percentage: pageNumber / pdf.numPages, target: pageNumber }),
       get syncResolution() { return syncResolution; },
       contents,
+      async sectionTarget(direction) {
+        const entries = [{ position: 1, target: 1 }];
+        for (const item of contents) {
+          try {
+            const destination = typeof item.target === 'string' ? await pdf.getDestination(item.target) : item.target;
+            if (destination?.[0] == null) continue;
+            const position = (Number.isInteger(destination[0]) ? destination[0] : await pdf.getPageIndex(destination[0])) + 1;
+            if (!entries.some((entry) => entry.position === position)) entries.push({ position, target: position });
+          } catch { /* Skip invalid outline destinations. */ }
+        }
+        signal.throwIfAborted(); entries.sort((a, b) => a.position - b.position);
+        return adjacentSection(entries, pageNumber, direction);
+      },
       readingRoots() { return [shell.querySelector('.textLayer')].filter(Boolean); },
       audioUnit() {
         const root = shell.querySelector('.textLayer');
