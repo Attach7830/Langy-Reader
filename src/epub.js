@@ -503,12 +503,13 @@ export async function openEpub({ host, url, position, language, settings, hooks,
         }
         if (target?.sync) return resumeProgress(target.sync);
         if (target?.text) {
+          await resize();
           const section = book.spine.get(Number(target.key.split(':')[1]));
           await section.load(book.load.bind(book)); signal.throwIfAborted();
-          const track = trackText(section.document.body || section.document.documentElement, language);
+          const track = trackText(section.document.querySelector('body') || section.document.documentElement, language);
           const word = track.words.find((item) => item.to > target.from), range = word && track.rangeFor(word);
           if (!range) throw new Error('This text match could not be located.');
-          await display(section.cfiFromRange(range)); report(rendition.currentLocation()); return;
+          await display(section.cfiFromRange(range)); await settle(); return;
         }
         let location = typeof target === 'string' ? target : target.cfi ?? target.index;
         if (target.fragment) {
