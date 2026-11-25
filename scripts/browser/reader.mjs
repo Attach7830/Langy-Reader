@@ -19,6 +19,7 @@ try {
   context = await browser.newContext({ viewport: { width: 393, height: 851 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, serviceWorkers: 'block' });
   await context.addInitScript(() => { if (window.top === window) { const prefs = JSON.parse(localStorage.getItem('langy-settings-v1') || '{}'); localStorage.setItem('langy-settings-v1', JSON.stringify({ ...prefs, progressSyncEnabled: false })); } });
   page = await context.newPage(); page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => { if (message.text().startsWith('Resume ')) console.log(message.text()); });
   await page.route('**/api/ai/word', (route) => route.fulfill({ json: { text: 'A useful dictionary definition.', language: 'en' } }));
   const zip = new JSZip(); zip.file('mimetype', 'application/epub+zip');
   zip.file('META-INF/container.xml', '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>');
@@ -212,7 +213,13 @@ try {
     await page.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 3 of 3');
   });
   await check('Settings opens as its own page, keeps drafts between tabs and returns to the saved book position', async () => {
-    const before = await position(); await page.locator('#reader-more > summary').click(); await page.locator('#reader-more [data-settings="reading"]').click();
+    const before = await position();
+    await page.evaluate((id) => {
+      const audio = document.querySelector('#narration-audio');
+      for (const name of ['emptied', 'loadedmetadata', 'seeking', 'seeked']) audio.addEventListener(name, () => console.log('Resume media', name, audio.currentTime, document.querySelector('#position-detail').textContent));
+      new MutationObserver(() => console.log('Resume reader', document.querySelector('#page-label').textContent, document.querySelector('#position-detail').textContent, JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target)).observe(document.querySelector('#page-label'), { childList: true, subtree: true });
+    }, book.id);
+    await page.locator('#reader-more > summary').click(); await page.locator('#reader-more [data-settings="reading"]').click();
     await page.waitForURL('**/#settings/reading'); await page.locator('#settings').waitFor({ state: 'visible' });
     assert.equal(await page.locator('dialog#settings').count(), 0); assert.equal(await page.locator('#reader-screen').isVisible(), false);
     await page.locator('[data-settings-tab="language"]').click(); await page.locator('[name="cacheAI"]').uncheck();
