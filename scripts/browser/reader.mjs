@@ -196,7 +196,8 @@ try {
     assert.equal(await page.locator('#narration-player').isVisible(), false, 'swiping up with controls closed must not reopen audio');
     assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false);
     await page.locator('#contents-dialog [data-close]').click();
-    await page.locator('#audio-toggle').click(); await page.locator('#narration-play').click(); await page.locator('#narration-close').click();
+    await page.keyboard.press('Space');
+    await page.waitForFunction(() => document.querySelector('#narration-audio').paused);
   });
   await check('manual page turns with missing word alignment do not snap back while narration is enabled', async () => {
     const before = await position(); await page.locator('#next').click(); await changed(before);
