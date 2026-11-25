@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile, rename, rm, access } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, rm, access, stat } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -15,7 +15,7 @@ export const maxAudioUpload = 1024 * 1024 ** 2;
 const formats = 'mp3,mov,ogg,wav,flac,aac';
 const pending = new Set(['queued', 'syncing', 'assembling']);
 
-export function uploadedAudio({ db, folder, library, languageCall, wake, isRescanning = () => false }) {
+export function uploadedAudio({ db, folder, library, languageCall, wake, isRescanning = () => false, reserveStorage = async () => () => {} }) {
   db.exec(`CREATE TABLE IF NOT EXISTS recordings (
     id TEXT PRIMARY KEY, book TEXT NOT NULL REFERENCES analyses(book) ON DELETE CASCADE,
     name TEXT NOT NULL, originalName TEXT NOT NULL, mime TEXT NOT NULL, bytes INTEGER NOT NULL,
@@ -23,7 +23,7 @@ export function uploadedAudio({ db, folder, library, languageCall, wake, isResca
     quality TEXT, parts TEXT NOT NULL DEFAULT '[]', error TEXT, created INTEGER NOT NULL
   ) STRICT;
   UPDATE recordings SET state='queued' WHERE state='syncing';`);
-  const chapters = chapterAudio({ db, folder, library, wake });
+  const chapters = chapterAudio({ db, folder, library, wake, reserveStorage });
   const source = (id) => join(folder, `${id}.source`);
   const transcript = (id) => join(folder, `${id}.transcript.json`);
   const row = (book, id) => {
@@ -41,7 +41,7 @@ export function uploadedAudio({ db, folder, library, languageCall, wake, isResca
   async function accept(book, file, body) {
     if (!file) throw new RequestError(422, 'Choose an audiobook file.');
     const id = randomUUID();
-    let saved = false;
+    let saved = false, release = () => {};
     try {
       if (file.size > maxAudioUpload) throw new RequestError(413, 'Audio files must be 1 GiB or smaller.');
       let probe;
@@ -53,7 +53,8 @@ export function uploadedAudio({ db, folder, library, languageCall, wake, isResca
       if (!probe.streams?.length || !Number.isFinite(duration) || duration <= 0 || duration > 72 * 3600) {
         throw new RequestError(422, 'The audiobook needs a valid duration of up to 72 hours.');
       }
-      library.getBook(book.id);
+      const owner = library.getBook(book.id).owner || '';
+      release = await reserveStorage(owner, (await stat(file.path)).size);
       const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim().slice(0, 120) : basename(file.originalname).slice(0, 120);
       const type = String(probe.format.format_name).split(',')[0];
       const mime = ({ mp3: 'audio/mpeg', mov: 'audio/mp4', ogg: 'audio/ogg', wav: 'audio/wav', flac: 'audio/flac', aac: 'audio/aac' })[type] || 'application/octet-stream';
@@ -64,6 +65,7 @@ export function uploadedAudio({ db, folder, library, languageCall, wake, isResca
       return publicRow(row(book, id));
     } finally {
       if (!saved) await Promise.allSettled([rm(file.path, { force: true }), rm(source(id), { force: true })]);
+      release();
     }
   }
 
@@ -98,7 +100,8 @@ export function uploadedAudio({ db, folder, library, languageCall, wake, isResca
         await run('ffmpeg', ['-nostdin', '-v', 'error', '-y', '-protocol_whitelist', 'file,pipe', '-format_whitelist', formats,
           '-i', source(job.id), '-vn', '-map', '0:a:0', '-ar', '24000', '-ac', '1', '-c:a', 'libmp3lame', '-b:a', '96k', target], { timeout: 1800000 });
         if (!valid()) return;
-        await rename(target, playback);
+        const release = await reserveStorage(book.owner || '', (await stat(target)).size);
+        try { await rename(target, playback); } finally { release(); }
         if (!valid()) { await rm(playback, { force: true }); return; }
       }
       const transcriptVersion = `2:${env.READER_ALIGNMENT_MODEL || 'small'}`;
@@ -122,9 +125,9 @@ export function uploadedAudio({ db, folder, library, languageCall, wake, isResca
         }
         checkpoint.offset = offset + 59;
         const save = join(temporary, 'transcript.json');
-        await writeFile(save, JSON.stringify(checkpoint));
-        await rename(save, transcript(job.id));
-        if (!valid()) { await rm(transcript(job.id), { force: true }); return; }
+        const savedCheckpoint = JSON.stringify(checkpoint), release = await reserveStorage(book.owner || '', Buffer.byteLength(savedCheckpoint));
+        try { await writeFile(save, savedCheckpoint); await rename(save, transcript(job.id)); } finally { release(); }
+        if (!valid()) return;
         db.prepare('UPDATE recordings SET progress=? WHERE id=?').run(Math.min(.95, (offset + 59) / job.duration * .95), job.id);
         // Give book analysis and other queued work a turn between transcription chunks.
         if (checkpoint.offset < job.duration) return;
@@ -204,7 +207,8 @@ export function uploadedAudio({ db, folder, library, languageCall, wake, isResca
     originalChapter: chapters.original,
     list: (book) => db.prepare('SELECT * FROM recordings WHERE book=? ORDER BY created,id').all(book.id).map(publicRow),
     next: () => db.prepare("SELECT * FROM recordings WHERE state IN ('queued','syncing','assembling') ORDER BY created,id LIMIT 1").get(),
-    fail(job, message) { db.prepare("UPDATE recordings SET state='error',error=? WHERE id=?").run(message, job.id); },
+    fail(job, message) { db.prepare("UPDATE recordings SET state='error',error=? WHERE id=? AND state!='cancelled'").run(message, job.id); },
+    cancel(book, id) { row(book, id); db.prepare("UPDATE recordings SET state='cancelled',error=NULL WHERE book=? AND id=? AND state IN ('queued','syncing','assembling')").run(book.id, id); },
     original(book, id) { const item = row(book, id); return { path: source(id), name: item.originalName, mime: item.mime }; },
     async remove(book, id) {
       const item = row(book, id);

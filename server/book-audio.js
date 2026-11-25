@@ -15,7 +15,7 @@ const active = new Set(['queued', 'assembling']);
 const digest = (rows) => createHash('sha256').update(JSON.stringify(rows.map(({ key, digest, markers }) => [key, digest, markers]))).digest('hex');
 const escapeMetadata = (text) => String(text).replace(/[\r\n]/gu, ' ').replace(/[\\=;#]/gu, '\\$&');
 
-export function bookNarration({ db, folder, library, demo, previewAudio = false, configuration, queuePart, wake }) {
+export function bookNarration({ db, folder, library, demo, previewAudio = false, configuration, queuePart, wake, reserveStorage = async () => () => {} }) {
   db.function('has_spoken_text', { deterministic: true }, (text) => Number(/[\p{L}\p{N}]/u.test(text)));
   db.exec(`CREATE TABLE IF NOT EXISTS book_audio (
     id TEXT PRIMARY KEY, book TEXT NOT NULL REFERENCES analyses(book) ON DELETE CASCADE,
@@ -161,17 +161,22 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
         '-f', 'ffmetadata', '-i', metadataPath, '-map_metadata', '1', '-map_chapters', '1',
         '-c:a', 'libmp3lame', '-b:a', '96k', '-id3v2_version', '3', output], { timeout: 1800000 });
       if (!valid()) return;
-      await rename(output, join(folder, `${job.id}.mp3`));
-      db.prepare("UPDATE book_audio SET state='ready',segments=?,markers=?,duration=?,error=NULL WHERE id=?")
-        .run(JSON.stringify(segments), JSON.stringify(chapters), duration, job.id);
+      const release = await reserveStorage(book.owner || '', (await stat(output)).size);
+      try {
+        if (!valid()) return;
+        await rename(output, join(folder, `${job.id}.mp3`));
+        db.prepare("UPDATE book_audio SET state='ready',segments=?,markers=?,duration=?,error=NULL WHERE id=?")
+          .run(JSON.stringify(segments), JSON.stringify(chapters), duration, job.id);
+      } finally { release(); }
     } finally { await rm(temporary, { recursive: true, force: true }); }
   }
 
-  function cancel(book) {
-    const row = newest(book);
+  function cancel(book, id) {
+    const row = id ? db.prepare('SELECT * FROM book_audio WHERE book=? AND id=?').get(book.id, id) : newest(book);
     if (!row || !active.has(row.state)) return 0;
     db.prepare("UPDATE book_audio SET state='cancelled' WHERE id=?").run(row.id);
-    for (const { id } of JSON.parse(row.parts)) db.prepare("UPDATE audio SET state='cancelled' WHERE id=? AND state='queued'").run(id);
+    const shared = new Set(db.prepare("SELECT parts FROM book_audio WHERE book=? AND id!=? AND state IN ('queued','assembling')").all(book.id, row.id).flatMap((item) => JSON.parse(item.parts).map((part) => part.id)));
+    for (const { id } of JSON.parse(row.parts)) if (!shared.has(id)) db.prepare("UPDATE audio SET state='cancelled' WHERE id=? AND state IN ('queued','generating','aligning')").run(id);
     return 1;
   }
 

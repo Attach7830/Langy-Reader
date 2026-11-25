@@ -10,7 +10,22 @@ const parameters = { N: 32768, r: 8, p: 3, maxmem: 64 * 1024 ** 2 };
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 const md5 = (value) => createHash('md5').update(value).digest('hex'); // KOReader wire protocol only; never stored unhashed.
 const passwordValid = (value) => typeof value === 'string' && value.length >= 15 && value.length <= 256;
-const publicUser = ({ id, username, role, disabled, created }) => ({ id, username, role, disabled: Boolean(disabled), created });
+const policyDefaults = { sharedArchive: 0, storageLimit: null, expiresAt: null, allowRemember: 1, rememberDays: 30, sessionHours: 24, maxSessions: 30, allowDevices: 1 };
+const publicUser = ({ id, username, role, disabled, created, ...policy }) => ({ id, username, role, disabled: Boolean(disabled), created,
+  ...Object.fromEntries(Object.keys(policyDefaults).map((key) => [key, ['sharedArchive', 'allowRemember', 'allowDevices'].includes(key) ? Boolean(policy[key]) : policy[key] ?? policyDefaults[key]])) });
+function accountPolicy(body, previous = policyDefaults) {
+  const result = { ...policyDefaults, ...previous };
+  for (const key of ['sharedArchive', 'allowRemember', 'allowDevices']) if (body[key] !== undefined) {
+    if (typeof body[key] !== 'boolean') throw new RequestError(422, 'Choose valid account permissions.'); result[key] = Number(body[key]);
+  }
+  for (const [key, max] of [['rememberDays', 365], ['sessionHours', 168], ['maxSessions', 100]]) if (body[key] !== undefined) {
+    if (!Number.isInteger(body[key]) || body[key] < 1 || body[key] > max) throw new RequestError(422, `${key} must be between 1 and ${max}.`); result[key] = body[key];
+  }
+  for (const key of ['storageLimit', 'expiresAt']) if (body[key] !== undefined) {
+    if (body[key] !== null && (!Number.isSafeInteger(body[key]) || body[key] < 0 || body[key] > (key === 'storageLimit' ? 1024 ** 5 : 8640000000000000))) throw new RequestError(422, 'Choose a valid storage limit or expiry date.'); result[key] = body[key];
+  }
+  return Object.fromEntries(Object.keys(policyDefaults).map((key) => [key, result[key]]));
+}
 const cookies = (req) => Object.fromEntries((req.get('Cookie') || '').split(';').flatMap((part) => {
   const at = part.indexOf('='); return at < 0 ? [] : [[part.slice(0, at).trim(), part.slice(at + 1).trim()]];
 }));
@@ -37,6 +52,12 @@ export async function openAccounts(dir, { demo = false, username = 'reader', pas
       owner TEXT NOT NULL UNIQUE,settingsKey TEXT NOT NULL UNIQUE,created INTEGER NOT NULL) STRICT;
     CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,created INTEGER NOT NULL,expires INTEGER NOT NULL) STRICT;
     CREATE INDEX IF NOT EXISTS session_user ON sessions(user);`);
+  const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map((column) => column.name));
+  for (const [key, value] of Object.entries(policyDefaults)) if (!userColumns.has(key)) db.exec(`ALTER TABLE users ADD COLUMN ${key} INTEGER${value === null ? '' : ` NOT NULL DEFAULT ${value}`}`);
+  if (!db.prepare('PRAGMA table_info(sessions)').all().some((column) => column.name === 'remembered')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN remembered INTEGER NOT NULL DEFAULT 0; UPDATE sessions SET remembered=1 WHERE expires-created>86400000;');
+  }
+  const active = (user) => Boolean(user && !user.disabled && (user.expiresAt === null || user.expiresAt > now()));
   const meta = (key) => db.prepare('SELECT value FROM account_meta WHERE key=?').get(key)?.value;
   const setMeta = (key, value) => db.prepare('INSERT INTO account_meta VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, value);
   const userById = (id) => db.prepare('SELECT * FROM users WHERE id=?').get(id);
@@ -72,15 +93,16 @@ export async function openAccounts(dir, { demo = false, username = 'reader', pas
   async function authenticate(name, value, { sync = false, source = 'login' } = {}) {
     if (!enabled || typeof name !== 'string' || name.length > 128 || typeof value !== 'string' || value.length > 256) return null;
     const key = digest(`${sync}:${name.toLowerCase()}:${value}`), hit = verified.get(key), user = db.prepare('SELECT * FROM users WHERE username=?').get(name);
-    if (hit && hit.until > now() && user && !user.disabled && user.id === hit.id && user.version === hit.version) return visitorForUser(user);
+    const deviceLogin = sync || source.startsWith('basic:');
+    if (hit && hit.until > now() && active(user) && (!deviceLogin || user.allowDevices) && user.id === hit.id && user.version === hit.version) return visitorForUser(user);
     throttle(`${source}:${name.toLowerCase()}`); inFlight++;
     try {
       if (!dummy) dummy = hashPassword(randomBytes(24).toString('hex'));
       const valid = await verifyPassword(value, user?.[sync ? 'sync' : 'password'] || await dummy);
-      if (!valid || !user || user.disabled) return null;
+      if (!valid || !active(user) || deviceLogin && !user.allowDevices) return null;
       // Check again after the KDF, so a concurrent disable/reset takes effect.
       const latest = userById(user.id);
-      if (!latest || latest.disabled || latest.version !== user.version) return null;
+      if (!active(latest) || latest.version !== user.version) return null;
       if (verified.size >= 512) verified.delete(verified.keys().next().value);
       verified.set(key, { id: user.id, version: user.version, until: now() + 30000 });
       return visitorForUser(latest);
@@ -93,19 +115,22 @@ export async function openAccounts(dir, { demo = false, username = 'reader', pas
     const token = cookies(req)[sessionName];
     if (!token || !/^[A-Za-z0-9_-]{43}$/u.test(token)) return null;
     const row = db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user WHERE s.token=? AND s.expires>? AND u.disabled=0').get(digest(token), now());
-    return row ? visitorForUser(row) : null;
+    return active(row) ? visitorForUser(row) : null;
   }
   function remembered(req) {
     const token = cookies(req)[sessionName];
-    const row = token && db.prepare('SELECT created,expires FROM sessions WHERE token=? AND expires>?').get(digest(token), now());
-    return Boolean(row && row.expires - row.created > 86400000);
+    const row = token && db.prepare('SELECT remembered FROM sessions WHERE token=? AND expires>?').get(digest(token), now());
+    return Boolean(row?.remembered);
   }
   function issue(req, res, visitor, { rememberMe = false } = {}) {
-    const token = randomBytes(32).toString('base64url'), duration = (rememberMe ? 30 : 1) * 86400000;
+    const user = userById(visitor.userId);
+    if (!active(user)) throw new RequestError(401, 'This account is no longer active.');
+    rememberMe = Boolean(rememberMe && user.allowRemember);
+    const token = randomBytes(32).toString('base64url'), duration = Math.min((rememberMe ? user.rememberDays * 24 : user.sessionHours) * 3600000, user.expiresAt === null ? Infinity : user.expiresAt - now());
     const previous = cookies(req)[sessionName]; if (previous) db.prepare('DELETE FROM sessions WHERE token=?').run(digest(previous));
     db.prepare('DELETE FROM sessions WHERE expires<=?').run(now());
-    db.prepare('INSERT INTO sessions VALUES(?,?,?,?)').run(digest(token), visitor.userId, now(), now() + duration);
-    db.prepare('DELETE FROM sessions WHERE user=? AND token NOT IN (SELECT token FROM sessions WHERE user=? ORDER BY created DESC,rowid DESC LIMIT 30)').run(visitor.userId, visitor.userId);
+    db.prepare('INSERT INTO sessions(token,user,created,expires,remembered) VALUES(?,?,?,?,?)').run(digest(token), visitor.userId, now(), now() + duration, Number(rememberMe));
+    db.prepare('DELETE FROM sessions WHERE user=? AND token NOT IN (SELECT token FROM sessions WHERE user=? ORDER BY created DESC,rowid DESC LIMIT ?)').run(visitor.userId, visitor.userId, user.maxSessions);
     res.cookie(sessionName, token, { ...cookieOptions(req), ...(rememberMe ? { maxAge: duration } : {}) });
     // Keep stale browser/native Basic credentials from taking over after this session expires.
     res.cookie('langy_no_basic', '1', { ...cookieOptions(req), maxAge: 400 * 86400000 });
@@ -136,7 +161,8 @@ export async function openAccounts(dir, { demo = false, username = 'reader', pas
     if (!['user', 'admin'].includes(body.role || 'user')) throw new RequestError(422, 'Choose a valid account role.');
     if (db.prepare('SELECT 1 FROM users WHERE username=?').get(name)) throw new RequestError(409, 'That username is already in use.');
     const id = randomUUID(), hashes = await Promise.all([hashPassword(body.password), hashPassword(md5(body.password))]);
-    try { db.prepare('INSERT INTO users(id,username,password,sync,role,owner,settingsKey,created) VALUES(?,?,?,?,?,?,?,?)').run(id, name, ...hashes, body.role || 'user', id, `user-id:${id}`, now()); }
+    const policy = accountPolicy(body);
+    try { db.prepare(`INSERT INTO users(id,username,password,sync,role,owner,settingsKey,created,${Object.keys(policy).join(',')}) VALUES(${Array(8 + Object.keys(policy).length).fill('?').join(',')})`).run(id, name, ...hashes, body.role || 'user', id, `user-id:${id}`, now(), ...Object.values(policy)); }
     catch (error) { if (error.errcode === 2067 || error.code?.includes('CONSTRAINT')) throw new RequestError(409, 'That username is already in use.'); throw error; }
     return publicUser(userById(id));
   }
@@ -144,10 +170,18 @@ export async function openAccounts(dir, { demo = false, username = 'reader', pas
     const user = userById(id); if (!user) throw new RequestError(404, 'Account not found.');
     if (body.role !== undefined && !['user', 'admin'].includes(body.role) || body.disabled !== undefined && typeof body.disabled !== 'boolean') throw new RequestError(422, 'Choose valid account permissions.');
     const role = body.role ?? user.role, disabled = body.disabled === undefined ? user.disabled : Number(body.disabled);
+    const policy = accountPolicy(body, user);
     if (id === meta('bootstrap') && (role !== 'admin' || disabled)) throw new RequestError(409, 'The environment administrator must stay active with the administrator role.');
+    if (id === meta('bootstrap') && policy.expiresAt !== null) throw new RequestError(409, 'The initial administrator account cannot expire.');
     if (user.role === 'admin' && !user.disabled && (role !== 'admin' || disabled) && db.prepare("SELECT count(*) AS n FROM users WHERE role='admin' AND disabled=0").get().n <= 1) throw new RequestError(409, 'Keep at least one active administrator.');
-    db.prepare('UPDATE users SET role=?,disabled=?,version=version+1 WHERE id=?').run(role, disabled, id);
-    db.prepare('DELETE FROM sessions WHERE user=?').run(id); return publicUser(userById(id));
+    db.prepare(`UPDATE users SET role=?,disabled=?,${Object.keys(policy).map((key) => `${key}=?`).join(',')},version=version+1 WHERE id=?`).run(role, disabled, ...Object.values(policy), id);
+    if (role !== user.role || disabled) db.prepare('DELETE FROM sessions WHERE user=?').run(id);
+    else {
+      db.prepare('DELETE FROM sessions WHERE user=? AND ((remembered=1 AND ?=0) OR ?<=?)').run(id, policy.allowRemember, policy.expiresAt ?? Number.MAX_SAFE_INTEGER, now());
+      db.prepare('DELETE FROM sessions WHERE user=? AND token NOT IN (SELECT token FROM sessions WHERE user=? ORDER BY created DESC,rowid DESC LIMIT ?)').run(id, id, policy.maxSessions);
+      db.prepare('UPDATE sessions SET expires=min(expires,?,created+CASE WHEN remembered=1 THEN ? ELSE ? END) WHERE user=?').run(policy.expiresAt ?? Number.MAX_SAFE_INTEGER, policy.rememberDays * 86400000, policy.sessionHours * 3600000, id);
+    }
+    return publicUser(userById(id));
   }
   async function resetPassword(id, value) {
     if (!passwordValid(value)) throw new RequestError(422, 'Use a password of 15–256 characters.');
@@ -157,10 +191,14 @@ export async function openAccounts(dir, { demo = false, username = 'reader', pas
     db.prepare('DELETE FROM sessions WHERE user=?').run(id); return publicUser(userById(id));
   }
   return { enabled, demo, identify, authenticate, issue, remembered, logout, requireAdmin, create, update, resetPassword, visitorForOwner,
+    ownerForUser(id) { return userById(id)?.owner; },
+    policyForOwner(owner = '') { const user = userByOwner(owner); return user ? { ...publicUser(user), active: active(user) } : { ...policyDefaults, active: !enabled && !owner }; },
+    canUseArchiveKey(visitor) { const user = userByOwner(visitor?.id || ''); return !enabled || active(user) && (user.role === 'admin' || Boolean(user.sharedArchive)); },
+    revokeSessions(id) { if (!userById(id)) throw new RequestError(404, 'Account not found.'); db.prepare('DELETE FROM sessions WHERE user=?').run(id); return { revoked: true }; },
     preferenceOwner: (visitor) => visitor?.accountKey || userByOwner(visitor?.id || '')?.settingsKey || `user:${username}`,
     list: () => db.prepare('SELECT * FROM users ORDER BY username COLLATE NOCASE').all().map(publicUser),
-    describe(visitor) { const user = visitor?.userId && userById(visitor.userId); return { enabled, demo, authenticated: enabled ? Boolean(user && !user.disabled) : true,
-      user: user && !user.disabled ? publicUser(user) : null }; },
+    describe(visitor) { const user = visitor?.userId && userById(visitor.userId); return { enabled, demo, authenticated: enabled ? active(user) : true,
+      user: active(user) ? publicUser(user) : null }; },
     close() { db.close(); },
   };
 }

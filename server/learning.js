@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { textWords } from '../shared/reading-text.js';
 import { RequestError } from './books.js';
 import { extractBook, languageChunks } from './book-text.js';
@@ -26,7 +27,9 @@ const run = promisify(execFile);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const asText = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 
-export async function openLearning(dir, library, demo, ai, { autoRepair = true, nativeLanguage = () => '', withAI = (_visitor, task) => task(), now = Date.now } = {}) {
+export async function openLearning(dir, library, demo, ai, { autoRepair = true, nativeLanguage = () => '', withAI = (_visitor, task) => task(), now = Date.now, reserveStorage = async () => () => {} } = {}) {
+  const workerContext = new AsyncLocalStorage(); let activeExecution;
+  const operationSignal = (milliseconds) => AbortSignal.any([AbortSignal.timeout(milliseconds), ...[workerContext.getStore()?.signal].filter(Boolean)]);
   const folder = join(dir, 'narration');
   await mkdir(folder, { recursive: true });
   const db = new DatabaseSync(join(dir, 'learning.sqlite'));
@@ -93,7 +96,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
   const audioConfig = () => previewAudio ? { ...config, baseUrl: '', apiKey: '' } : config;
   let working = false, workerLane = 0;
   const completeAudio = bookNarration({
-    db, folder, library, demo, previewAudio, configuration: audioConfig,
+    db, folder, library, demo, previewAudio, configuration: audioConfig, reserveStorage,
     queuePart: (book, key, replace) => queue(book, key, replace, false), wake: () => void work(),
   });
   const scheduledAudio = importNarration({ db, library, demo, configuration: audioConfig, queue: completeAudio.queue, now });
@@ -103,7 +106,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
   }
   const workerURL = process.env.READER_LANGUAGE_URL || 'http://127.0.0.1:8091';
   let rescans;
-  const recordings = uploadedAudio({ db, folder, library, languageCall, wake: () => void work(), isRescanning: (id) => rescans?.busy(id) });
+  const recordings = uploadedAudio({ db, folder, library, languageCall, reserveStorage, wake: () => void work(), isRescanning: (id) => rescans?.busy(id) });
   rescans = audioRescans({ db, folder, library, languageCall, publishUploaded: recordings.publish, wake: () => void work() });
   const ivoox = demo ? null : await openIvoox({ db, folder, library, recordings });
 
@@ -114,9 +117,10 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       response = await fetch(new URL(path, workerURL), {
         method: 'POST', headers: { 'Content-Type': type },
         body: type === 'application/json' ? JSON.stringify(body) : body,
-        signal: AbortSignal.timeout(synchronizing ? 600_000 : 180_000),
+        signal: operationSignal(synchronizing ? 600_000 : 180_000),
       });
     } catch (error) {
+      workerContext.getStore()?.signal.throwIfAborted();
       if (error.name === 'TimeoutError') throw new RequestError(504, synchronizing
         ? 'Word synchronization exceeded ten minutes. Check the language service CPU and memory, then retry.'
         : 'Language processing timed out. Check the language service and retry.');
@@ -178,9 +182,10 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       response = await fetch(`${captured.baseUrl}${path}`, {
         method: body ? 'POST' : 'GET',
         headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(captured.apiKey ? { Authorization: `Bearer ${captured.apiKey}` } : {}) },
-        body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(body ? 300_000 : 15_000),
+        body: body ? JSON.stringify(body) : undefined, signal: operationSignal(body ? 300_000 : 15_000),
       });
     } catch {
+      workerContext.getStore()?.signal.throwIfAborted();
       throw new RequestError(503, 'The Kokoro server could not be reached.');
     }
     if ([401, 403].includes(response.status)) throw new RequestError(502, 'Kokoro rejected the API key.');
@@ -203,17 +208,18 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     if (vocabulary.bookCounts(book) && db.prepare('SELECT textVersion FROM analyses WHERE book=?').get(book.id)?.textVersion === 1) return Promise.resolve(true);
     const signature = bookCountSignature(book), previous = textJobs.get(book.id);
     if (previous?.signature === signature) {
+      if (!retry && previous.state === 'cancelled') return Promise.resolve(false);
       if (previous.promise) return previous.promise;
       if (!retry && previous.state === 'error') return Promise.reject(previous.error);
     }
-    const job = { signature, state: 'queued' }, lane = book.format === 'pdf' ? 'pdf' : 'epub';
+    const job = { signature, state: 'queued', controller: new AbortController() }, lane = book.format === 'pdf' ? 'pdf' : 'epub';
     textJobs.set(book.id, job);
-    const current = () => textJobs.get(book.id) === job && db.prepare('SELECT book FROM analyses WHERE book=? AND language=? AND languageSelection=? AND contentRevision=?')
+    const current = () => job.state !== 'cancelled' && textJobs.get(book.id) === job && db.prepare('SELECT book FROM analyses WHERE book=? AND language=? AND languageSelection=? AND contentRevision=?')
       .get(book.id, book.language, selectionOf(book), book.contentRevision || '');
     job.promise = textLanes[lane].then(async () => {
       if (!current()) return false;
       job.state = 'running';
-      const sections = await extractBook(book, library.filePath(book), languageCall);
+      const sections = await workerContext.run(job.controller, () => extractBook(book, library.filePath(book), languageCall));
       if (!current()) return false;
       // Persist selectable text before calling NLP. Illustrations and a failed
       // lemma service must not prevent counting or recording reading progress.
@@ -235,6 +241,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       job.state = 'ready';
       return true;
     }).catch((error) => {
+      if (job.state === 'cancelled') return false;
       job.state = 'error';
       job.error = error instanceof RequestError ? error : new RequestError(502, book.format === 'pdf'
         ? 'The PDF text could not be extracted. Check the language service and retry analysis. Scanned pages need OCR.'
@@ -394,7 +401,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     let offset = 0;
     try {
       for (const [index, chunk] of narrationChunks(row, language).entries()) {
-        if (!db.prepare('SELECT id FROM audio WHERE id=?').get(job.id)) return;
+        if (!db.prepare("SELECT id FROM audio WHERE id=? AND state!='cancelled'").get(job.id)) return;
         const chunkWords = words.map((word, tokenIndex) => ({ ...word, tokenIndex })).filter((word) => word.from >= chunk.from && word.from < chunk.to);
         if (!chunkWords.length) continue;
         db.prepare("UPDATE audio SET state='generating' WHERE id=?").run(job.id);
@@ -432,11 +439,14 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       await writeFile(concat, files.map((file) => `file '${file}'`).join('\n'));
       const result = join(temporary, 'narration.mp3');
       await run('ffmpeg', ['-nostdin', '-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', concat, '-c:a', 'libmp3lame', '-b:a', '96k', result], { timeout: 180000 });
-      if (!db.prepare('SELECT id FROM audio WHERE id=?').get(job.id)) return;
-      await rename(result, join(folder, `${job.id}.mp3`));
-      const saved = db.prepare("UPDATE audio SET state='ready', timings=?, duration=?, error=NULL WHERE id=?")
-        .run(JSON.stringify(timings), offset, job.id);
-      if (!saved.changes) await rm(join(folder, `${job.id}.mp3`), { force: true });
+      if (!db.prepare("SELECT id FROM audio WHERE id=? AND state!='cancelled'").get(job.id)) return;
+      const release = await reserveStorage(library.getBook(job.book).owner || '', (await stat(result)).size);
+      try {
+        await rename(result, join(folder, `${job.id}.mp3`));
+        const saved = db.prepare("UPDATE audio SET state='ready', timings=?, duration=?, error=NULL WHERE id=? AND state!='cancelled'")
+          .run(JSON.stringify(timings), offset, job.id);
+        if (!saved.changes) await rm(join(folder, `${job.id}.mp3`), { force: true });
+      } finally { release(); }
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }
@@ -462,7 +472,9 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       for (let offset = 0; offset < lanes.length; offset++) {
         const lane = (workerLane + offset) % lanes.length, [kind, next, process] = lanes[lane];
         const selected = next(); if (!selected) continue;
-        job = selected; type = kind; workerLane = (lane + 1) % lanes.length; await process(job); break;
+        job = selected; type = kind; workerLane = (lane + 1) % lanes.length;
+        activeExecution = { type, job, controller: new AbortController() };
+        await workerContext.run(activeExecution.controller, () => process(job)); break;
       }
       if (job && autoRepair && !demo && ['analysis', 'book', 'recording'].includes(type)) autoRepairBook(job.book);
     } catch (error) {
@@ -479,10 +491,11 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
           .run(text, job.book, job.language, job.languageSelection, job.contentRevision || '');
       }
       else if (job) {
-        db.prepare("UPDATE audio SET state='error', error=? WHERE id=?").run(text, job.id);
+        db.prepare("UPDATE audio SET state='error', error=? WHERE id=? AND state!='cancelled'").run(text, job.id);
       }
       console.error(type === 'rescan' ? 'Audio rescan failed' : type === 'recording' ? 'Recording synchronization failed' : type === 'audio' ? 'Narration job failed' : 'Book analysis failed', error.name);
     } finally {
+      activeExecution = undefined;
       working = false;
     }
   }
@@ -523,8 +536,24 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
   function cancel(book) {
     scheduledAudio.cancel(book);
     const cancelled = completeAudio.cancel(book);
-    db.prepare("UPDATE audio SET state='cancelled' WHERE book=? AND state='queued'").run(book.id);
+    db.prepare("UPDATE audio SET state='cancelled' WHERE book=? AND state IN ('queued','generating','aligning')").run(book.id);
+    if (activeExecution?.job.book === book.id && ['audio','book'].includes(activeExecution.type)) activeExecution.controller.abort(new DOMException('Cancelled','AbortError'));
     return cancelled;
+  }
+  function cancelProcess(kind, book, id) {
+    if (kind === 'estimate') estimates.cancel(book.id);
+    else if (kind === 'scheduled-narration') scheduledAudio.cancel(book);
+    else if (kind === 'recording') recordings.cancel(book, id);
+    else if (kind === 'repair') { const row = db.prepare('SELECT recording FROM audio_rescans WHERE book=? AND id=?').get(book.id, id); if (row) rescans.cancel(book,row.recording); }
+    else if (kind === 'narration') completeAudio.cancel(book,id);
+    else if (kind === 'audio-section') db.prepare("UPDATE audio SET state='cancelled',error=NULL WHERE book=? AND id=? AND state IN ('queued','generating','aligning')").run(book.id,id);
+    else if (['analysis','indexing'].includes(kind)) {
+      db.prepare("UPDATE analyses SET state='cancelled',error=NULL WHERE book=? AND state IN ('queued','running')").run(book.id);
+      const text=textJobs.get(book.id); if (text) {text.state='cancelled';text.controller.abort(new DOMException('Cancelled','AbortError'));}
+    } else throw new RequestError(422,'This process cannot be cancelled.');
+    const types={analysis:'analysis',indexing:'analysis',narration:'book','audio-section':'audio',recording:'recording',repair:'rescan'};
+    if (activeExecution?.job.book === book.id && (activeExecution.type === types[kind] || kind === 'narration' && activeExecution.type === 'audio')) activeExecution.controller.abort(new DOMException('Cancelled','AbortError'));
+    return {cancelled:true};
   }
 
   async function removeRecording(book, id) {
@@ -555,7 +584,13 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     return { ...result, scheduled: scheduledAudio.status(book), recordings: demo ? [] : recordings.list(book).filter((item) => item.state === 'ready').map(({ id, name }) => ({ id, name })) };
   }
   return {
-    settings, save, voices, info, ensure, unit, chapters, remove, audioFile, prune, cancel,
+    storageFiles(book) {
+      const audio = db.prepare('SELECT id FROM audio WHERE book=?').all(book).map(({ id }) => join(folder, `${id}.mp3`));
+      const complete = db.prepare('SELECT id FROM book_audio WHERE book=?').all(book).map(({ id }) => join(folder, `${id}.mp3`));
+      const uploaded = db.prepare('SELECT id FROM recordings WHERE book=?').all(book).flatMap(({ id }) => ['.source', '.mp3', '.transcript.json', '.chapters'].map((suffix) => join(folder, id + suffix)));
+      return [...audio, ...complete, ...uploaded];
+    },
+    settings, save, voices, info, ensure, unit, chapters, remove, audioFile, prune, cancel, cancelProcess,
     textProcesses: () => [...textJobs].map(([book, job]) => ({ book, state: job.state, error: job.error?.message || null })),
     textSections(book) {
       const rows = db.prepare('SELECT key,ordinal,title,text,digest,tokens,languages FROM chapters WHERE book=? ORDER BY ordinal').all(book.id);
