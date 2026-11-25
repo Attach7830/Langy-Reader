@@ -8,6 +8,7 @@ import { readingLanguagesPicker } from './reading-languages.js';
 import { readingFontSize, fontSizeChange, touchReader } from './touch-preferences.js';
 import { credentialRemoval } from './credential-removal.js';
 import { coverCache } from './cover-cache.js';
+import { fontSettings } from './ui-fonts.js';
 
 export function settingsPage({ preferences, apply, navigate, back }) {
   const narration = narrationSettings();
@@ -38,6 +39,7 @@ export function settingsPage({ preferences, apply, navigate, back }) {
   });
   $('#theme-options').append(...themeButtons);
   $('#font-options').append(...Object.entries(fonts).map(([value, { name }]) => new Option(name, value)));
+  const importedFonts = fontSettings(form);
   $('#help-options').append(...Object.entries(modes).map(([value, name]) => new Option(value === 'translation' ? 'Translation' : name, value)));
   $('#languages').append(...languageOptions.map(({ code, label }) => new Option(label, code)));
   let shadowKeys = {}, recording, aiConfig, pending = false;
@@ -141,6 +143,7 @@ export function settingsPage({ preferences, apply, navigate, back }) {
       fields[key].value = current[key];
     }
     fields.autoHideDocks.checked = current.autoHideDocks;
+    importedFonts.select(current.font);
     for (const key of ['doubleTapToTurn', 'swipeToTurn', 'tapCenterFullscreen']) fields[key].checked = current[key] ?? defaults[key];
     fields.size.value = readingFontSize(current);
     $('#font-size-device-note').textContent = touchReader() ? 'Phone/tablet text size. Desktop text size is saved separately.' : 'Desktop text size. Phone/tablet text size is saved separately.';
@@ -160,6 +163,7 @@ export function settingsPage({ preferences, apply, navigate, back }) {
 
   function select(tab) {
     section(tab);
+    if (tab === 'reading') void importedFonts.load(preferences().font);
     if (tab === 'ai') void loadAI();
     if (tab === 'narration') void narration.load();
     if (tab === 'sources') void archive.load();

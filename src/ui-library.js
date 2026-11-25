@@ -601,6 +601,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     fields.title.value = book?.title ?? '';
     fields.title.required = false;
     fields.author.value = book?.author ?? '';
+    fields.coverUrl.value = ''; $('#book-import-cover').hidden = !isEdit; message('#book-cover-error');
     coverPicker.set(book || {});
     fields.language.value = book?.language ?? '';
     fields.language.required = false;
@@ -710,6 +711,23 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   $('#book-categories').addEventListener('change', showFolderLanguage);
   bookForm.elements.autoAudiobook.addEventListener('change', () => { bookForm.elements.audiobookDelayMinutes.disabled = !bookForm.elements.autoAudiobook.checked; });
   $('#book-file').addEventListener('change', (event) => stageFile(event.target.files[0]));
+  bookForm.elements.coverUrl.addEventListener('input', () => { if (bookForm.elements.coverUrl.value.trim()) { bookForm.elements.coverStyle.value = 'auto'; coverPicker.refresh(); } });
+  let coverPending = false;
+  async function importBookCover(target = editingBook) {
+    const url = bookForm.elements.coverUrl.value.trim(); if (!url || !target) return;
+    const imported = await api(`/api/books/${target.id}/cover`, { method: 'POST', body: { url } });
+    if (editingBook?.id === target.id && bookDialog.open) {
+      editingBook = imported; if (bookForm.elements.coverUrl.value.trim() === url) bookForm.elements.coverUrl.value = ''; coverPicker.set(imported);
+    }
+    await refresh();
+  }
+  $('#book-import-cover').addEventListener('click', async (event) => {
+    if (bookPending || coverPending) return;
+    if (!bookForm.elements.coverUrl.reportValidity() || !bookForm.elements.coverUrl.value.trim()) return message('#book-cover-error', 'Paste a direct image URL first.');
+    const target = editingBook; coverPending = true; event.target.disabled = true; $('#book-submit').disabled = true; message('#book-cover-error', 'Importing cover…');
+    try { await importBookCover(target); if (editingBook?.id === target?.id) message('#book-cover-error', 'Cover imported.'); } catch (error) { if (editingBook?.id === target?.id) message('#book-cover-error', error.message); }
+    finally { coverPending = false; event.target.disabled = false; $('#book-submit').disabled = bookPending; }
+  });
   $('#file-field').addEventListener('dragover', (event) => {
     event.preventDefault();
     event.currentTarget.classList.add('dragging');
@@ -724,11 +742,12 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
 
   bookForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (bookPending) return;
+    if (bookPending || coverPending) return;
     const submittedBook = editingBook, submittedFile = selectedFile, submittedSource = $('#book-source').value;
     await metadataFields.ready();
     if (bookPending || !bookDialog.open || submittedBook !== editingBook || submittedFile !== selectedFile || submittedSource !== $('#book-source').value) return;
     const data = new FormData(bookForm);
+    if (!String(data.get('coverUrl') || '').trim()) data.delete('coverUrl');
     if (snapshot.sharingAvailable) data.set('shared', String(bookForm.elements.shared.checked)); else data.delete('shared');
     if (!editingBook) data.set('autoAudiobook', String(bookForm.elements.autoAudiobook.checked));
     const rawLanguage = String(data.get('language') ?? '').trim();
@@ -753,8 +772,9 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     message('#book-error');
     try {
       if (editingBook) {
+        await importBookCover(submittedBook); data.delete('coverUrl');
         data.delete('file');
-        await api(`/api/books/${editingBook.id}`, { method: 'PATCH', body: Object.fromEntries(data) });
+        await api(`/api/books/${submittedBook.id}`, { method: 'PATCH', body: Object.fromEntries(data) });
       } else if (archiveImport) {
         data.delete('file');
         if (bulkImport.enabled()) {
@@ -775,8 +795,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
         data.set('file', selectedFile);
         await api('/api/books', { method: 'POST', body: data });
       }
-      bookDialog.close();
-      toast(editingBook ? 'Book updated' : 'Book imported');
+      if ((editingBook?.id || '') === (submittedBook?.id || '') && submittedFile === selectedFile) bookDialog.close();
+      toast(submittedBook ? 'Book updated' : 'Book imported');
       await refresh();
     } catch (error) {
       message(bookDialog.open ? '#book-error' : '#library-error', error.message);

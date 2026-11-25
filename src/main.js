@@ -28,6 +28,7 @@ import { discoveryScreen } from './ui-discovery.js';
 import { locationHistory } from './location-history.js';
 import { readingShortcut } from './reader-shortcuts.js';
 import { beforeSignOut } from './auth.js';
+import { userFonts } from './user-fonts.js';
 import { accountSettings } from './account-settings.js';
 import { readingBookmarks } from './bookmarks.js';
 import { readingTime as readingTimeTracker } from './reading-time.js';
@@ -242,7 +243,7 @@ function applySettings(updated, aiChanged, notify = true) {
     if (aiChanged) void checkAI();
   }
   if (relayout || aiChanged || cacheChanged) resetSummary();
-  Promise.resolve(renderer?.apply?.(readingPreferences(comprehensionPreferences()))).then(() => {
+  Promise.resolve(userFonts.ensure(settings.font)).catch(() => {}).then(() => renderer?.apply?.(readingPreferences(comprehensionPreferences()))).then(() => {
     pageGestures.refresh();
     pinyin.refresh();
     vocabulary.refresh();
@@ -585,6 +586,7 @@ async function openBook(book) {
   readerMessage('Opening book…');
   try {
     const open = book.format === 'pdf' ? (await import('./pdf.js')).openPdf : (await import('./epub.js')).openEpub;
+    if (book.format === 'epub') try { await userFonts.ensure(settings.font); } catch { toast('Imported font unavailable. Using the built-in fallback.'); }
     signal.throwIfAborted();
     const opened = await open({
       host: viewer, url: `/api/books/${book.id}/file${book.contentRevision ? '?revision=' + encodeURIComponent(book.contentRevision) : ''}`, position: progress[book.id]?.target,

@@ -109,10 +109,12 @@ function stylesheet(settings, fixed) {
   const cjk = (notoSC + notoTC).replace(/url\(([^)]+)\)/gu, (_, value) => `url("${new URL(value.replace(/^['"]|['"]$/gu, ''), location.href)}")`);
   if (fixed) return cjk + 'html { color-scheme: light; }';
   const { ink } = themes[settings.theme];
-  const stack = fonts[settings.font].stack.replace(/,\s*(?:serif|sans-serif|monospace)$/u, '');
+  const font = fonts[settings.font] || fonts.spectral;
+  const stack = font.stack.replace(/,\s*(?:serif|sans-serif|monospace)$/u, '');
   const face = (family, url, style) => `@font-face{font-family:"${family}";src:url("${new URL(url, location.href)}") format("woff2");font-style:${style};font-weight:400;font-display:swap;}`;
   return `
     ${cjk}
+    ${font.face || ''}
     ${face('Spectral', spectral, 'normal')}
     ${face('Spectral', spectralItalic, 'italic')}
     ${face('DM Sans', dmSans, 'normal')}

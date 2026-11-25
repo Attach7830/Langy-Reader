@@ -1,4 +1,4 @@
-import { closeOfflineDatabase } from './offline-store.js';
+import { closeOfflineDatabase, offlineDownloadJobs, packPrefix } from './offline-store.js';
 
 let current, leaving = false, preparation;
 export const beforeSignOut = (callback) => { preparation = callback; };
@@ -12,16 +12,18 @@ async function request(path, body) {
   return result;
 }
 function stored(key) { try { return localStorage.getItem(key); } catch { return null; } }
-export async function clearAccountData() {
+export async function clearAccountData({ removeDownloads = false } = {}) {
+  const owner = stored('langy-offline-owner') || oldAccount();
   for (const audio of document.querySelectorAll('audio')) audio.pause();
   // Let other tabs stop saving this reader's data before local stores are reset.
-  try { localStorage.removeItem('langy-auth-account'); } catch {}
+  try { localStorage.removeItem('langy-auth-account'); localStorage.removeItem('langy-offline-owner'); } catch {}
   await closeOfflineDatabase();
-  if (globalThis.indexedDB) await new Promise((resolve) => {
-    const deletion = indexedDB.deleteDatabase('langy-offline'); deletion.onsuccess = deletion.onerror = deletion.onblocked = resolve;
-  });
+  if (removeDownloads && owner && globalThis.indexedDB) {
+    for (const item of await offlineDownloadJobs.all()) if (item.owner === owner) await offlineDownloadJobs.remove(item.id);
+    await closeOfflineDatabase();
+  }
   if (globalThis.caches) {
-    for (const name of await caches.keys()) if (name.startsWith('langy-pack-') || name.startsWith('langy-covers-') || name === 'langy-offline-control') await caches.delete(name);
+    for (const name of await caches.keys()) if (name.startsWith('langy-covers-') || name === 'langy-offline-control' || removeDownloads && owner && (name.startsWith(packPrefix(owner)) || name === `langy-fonts-${owner}`)) await caches.delete(name);
     navigator.serviceWorker?.controller?.postMessage({ type: 'ACCOUNT', id: '' });
   }
   try { for (const key of Object.keys(localStorage)) if (key.startsWith('langy-')) localStorage.removeItem(key); } catch {}
@@ -41,13 +43,13 @@ async function accept(session) {
   for (const tab of document.querySelectorAll('[data-account-control]')) tab.hidden = !session.enabled;
   return session;
 }
-export async function signOut() {
+export async function signOut({ removeDownloads = false } = {}) {
   // Confirm revocation with the server before deleting offline work on this device.
   await preparation?.();
   await request('/api/account/logout', {});
   leaving = true; document.body.dataset.auth = 'loading';
   window.dispatchEvent(new Event('langy-signing-out'));
-  await clearAccountData(); location.hash = '#library'; location.reload();
+  await clearAccountData({ removeDownloads }); location.hash = '#library'; location.reload();
 }
 export async function authenticationGate() {
   let session;
