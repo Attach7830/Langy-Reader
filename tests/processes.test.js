@@ -31,15 +31,20 @@ test('process overview filters book ownership and projects only status fields fr
   let calls = 0;
   const process = openProcesses(dir, { library: { snapshot(visitor) { calls++; return { books: [{ id: visitor.id, title: 'Owned book' }] }; } },
     account: (visitor) => visitor, discovery: { status: () => ({}) }, learning: { textProcesses: () => [{ book: 'one', state: 'running' }, { book: 'two', state: 'running' }] },
-    archive: { list: () => [{ id: 'download', state: 'retry_wait', nextAttempt: stamp + 10000, details: { title: 'Queued book' }, apiKey: 'must-not-leak', source: 'private-url' }] } });
+    archive: { list: () => [{ id: 'download', state: 'retry_wait', nextAttempt: stamp + 10000, details: { title: 'Queued book' }, apiKey: 'must-not-leak', source: 'private-url' },
+      { id: 'finished', state: 'complete', created: stamp }, { id: 'cancelled', state: 'cancelled', created: stamp }, { id: 'failed', state: 'error', created: stamp, error: 'Retry me' }] } });
   t.after(async () => { process.close(); handles.forEach((handle) => handle.close()); await rm(dir, { recursive: true, force: true }); });
   const result = process.list({ id: 'one' }); assert.equal(result.unavailable, false); assert.equal(calls, 1);
   assert.ok(result.jobs.every((job) => !job.bookId || job.bookId === 'one'));
   assert.equal(result.jobs.find((job) => job.kind === 'recording').progress, 40); assert.equal(result.jobs.find((job) => job.kind === 'repair').progress, 50);
-  assert.equal(result.jobs.find((job) => job.kind === 'archive').state, 'waiting');
+  assert.equal(result.jobs.find((job) => job.id === 'archive:download').state, 'waiting');
   assert.equal(result.jobs.some((job) => job.kind === 'audio-section'), false, 'parent audiobook already represents its constituent jobs');
   for (const kind of ['analysis', 'estimate', 'scheduled-narration', 'narration', 'recording', 'repair', 'ivoox', 'indexing', 'archive', 'ocr', 'audiobookshelf']) assert.ok(result.jobs.some((job) => job.kind === kind), kind);
   assert.equal(/must-not-leak|private-server|private-url/u.test(JSON.stringify(result)), false);
+  assert.equal(result.jobs.some((job) => ['archive:finished', 'archive:cancelled'].includes(job.id)), false);
+  assert.equal(result.jobs.find((job) => job.id === 'archive:failed').state, 'failed');
+  db.prepare("UPDATE ivoox_imports SET state='ready' WHERE book='one'").run();
+  assert.equal(process.list({ id: 'one' }).jobs.some((job) => job.kind === 'ivoox'), false, 'completed downloads clear on the next refresh');
   const demo = openProcesses(dir, { library: { snapshot: () => ({ books: [{ id: 'two' }] }) }, account: (visitor) => visitor, discovery: { status: () => ({}) }, learning: { textProcesses: () => [] }, demo: true });
   assert.ok(demo.list({ id: 'two' }).jobs.every((job) => job.bookId === 'two')); demo.close();
 });
