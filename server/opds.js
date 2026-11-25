@@ -58,13 +58,13 @@ ${entries.join('\n')}
     return `<entry><id>${xml(id(key))}</id><title>${xml(title)}</title><updated>${stamp(updated)}</updated><summary type="text">${xml(summary)}</summary>${link('subsection', href, type)}</entry>`;
   }
 
-  function snapshot() {
-    const value = library.snapshot();
+  function snapshot(visitor) {
+    const value = library.snapshot(visitor);
     return { ...value, updated: value.updatedAt };
   }
 
-  router.get('/', (_req, res) => {
-    const { books, updated } = snapshot();
+  router.get('/', (req, res) => {
+    const { books, updated } = snapshot(req.visitor);
     const epubs = books.filter((book) => book.format === 'epub').length;
     feed(res, { path: '/opds', title: 'Langy Reader', updated, entries: [
       navigationEntry('books', 'All EPUB books', '/opds/books', updated, `${epubs} EPUB books for your reader.`),
@@ -75,7 +75,7 @@ ${entries.join('\n')}
   });
 
   router.get('/categories', (req, res) => {
-    const { books, categories, updated } = snapshot();
+    const { books, categories, updated } = snapshot(req.visitor);
     const page = pageNumber(req);
     const counts = new Map();
     for (const book of books.filter((item) => item.format === 'epub')) {
@@ -95,7 +95,7 @@ ${entries.join('\n')}
   });
 
   router.get('/books', (req, res) => {
-    const { books, categories, updated } = snapshot();
+    const { books, categories, updated } = snapshot(req.visitor);
     const format = query(req, 'format', 'epub');
     const sort = query(req, 'sort', 'title');
     const category = query(req, 'category');
@@ -136,14 +136,14 @@ ${book.thumbnailType ? link('http://opds-spec.org/image/thumbnail', `${base}/cov
 <OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/"><ShortName>Langy Reader</ShortName><Description>Search EPUB books by title or author.</Description><InputEncoding>UTF-8</InputEncoding><Url type="${xml(acquisitionType)}" template="/opds/books?q={searchTerms}"/></OpenSearchDescription>`));
 
   router.get('/books/:id/file.:format', async (req, res) => {
-    const book = library.getBook(req.params.id);
+    const book = library.getBook(req.params.id, req.visitor);
     if (req.params.format !== book.format) throw new RequestError(404, 'Book format not found.');
     await onDownload?.(book);
     const filename = [...book.title.replace(/[\p{Cc}<>:"/\\|?*]/gu, '_').replace(/^\.+/u, '')].slice(0, 120).join('') || 'Book';
     res.type(mime[book.format]).download(library.filePath(book), `${filename}.${book.format}`, { dotfiles: 'allow' });
   });
   router.get('/books/:id/cover', (req, res) => {
-    const book = library.getBook(req.params.id);
+    const book = library.getBook(req.params.id, req.visitor);
     if (!book.thumbnailType) throw new RequestError(404, 'Cover not found.');
     res.type(book.thumbnailType).sendFile(library.coverPath(book), { dotfiles: 'allow' });
   });
