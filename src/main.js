@@ -9,16 +9,17 @@ import './styles.css';
 import { readerDocks } from './reader-docks.js';
 import { $, $$, api, drawIcons, element, message, toast } from './ui.js';
 import { libraryScreen } from './ui-library.js';
-import { settingsDialog } from './ui-settings.js';
+import { settingsPage } from './ui-settings.js';
 import { wordHelp } from './words.js';
 import { earlierPageContext } from './reading-context.js';
 import { narration } from './narration.js';
 import { readingProgressSync } from './reading-sync.js';
-import { pinyinOverlay } from './pinyin.js';
+import { pinyinOverlay, pinyinToolbar } from './pinyin.js';
 import { readingVocabulary } from './reading-vocabulary.js';
 import { renderSummaryDetail } from './summary-detail.js';
 import { pageNavigation } from './page-navigation.js';
 import { bookContents } from './book-contents.js';
+import { bookPageJump } from './book-page-jump.js';
 import { pageTurnQueue, readerDeadline } from './reader-navigation.js';
 import { readingPreferences, readingFontSize, fontSizeChange } from './touch-preferences.js';
 import { temporaryControls } from './reader-peek.js';
@@ -56,6 +57,7 @@ let moving = false, summaryQueued = false, fallbackFullscreen = false;
 let hasReturnLocation = false, temporaryAudioVisible = false, pinchStart;
 let zoom = 1;
 let statusCheck = 0;
+let settingsReturnHash = '#library', settingsHistoryEntry = false;
 const returnHistory = locationHistory({
   location: () => activePosition && ({ target: activePosition.target, label: [activePosition.detail, activePosition.label].filter(Boolean).join(' · '), scrollTop: viewer.scrollTop, scrollLeft: viewer.scrollLeft }),
   async go(target, saved) {
@@ -88,6 +90,8 @@ const pageGestures = pageNavigation({ host: $('.reading-main'),
   turn: (direction) => { viewer.focus({ preventScroll: true }); void move(direction); },
 });
 const pinyin = pinyinOverlay({ host: viewer, preferences: () => settings, renderer: () => renderer, book: () => activeBook, request: api });
+const pinyinButton = pinyinToolbar({ button: $('#pinyin-toggle'), preferences: () => settings, book: () => activeBook,
+  change: (showPinyin) => { applySettings({ ...settings, showPinyin }); toast(showPinyin ? 'Pinyin shown' : 'Pinyin hidden'); } });
 const bookTools = readingBookTools({ book: () => activeBook, renderer: () => renderer, preferences: () => settings, request: api,
   async go(target) { const moved = await returnHistory.follow(target); if (moved) await audio.seekSource(target.key, target.from); return moved; } });
 const questions = pageQuestions({ book: () => activeBook, renderer: () => renderer, preferences: () => settings, request: api });
@@ -123,9 +127,9 @@ const library = libraryScreen({
   onRemove(id) { delete progress[id]; saveProgress(progress); },
 });
 const bookmarks = readingBookmarks({ book: () => activeBook, position: () => activePosition, go: (target) => returnHistory.follow(target), request: api });
-const settingsUI = settingsDialog({ preferences: () => settings, apply: applySettings });
+const settingsUI = settingsPage({ preferences: () => settings, apply: applySettings, navigate: openSettings, back: leaveSettings });
 const account = accountSettings({ request: api, preferences: () => settings,
-  busy: () => Boolean($('#settings').open),
+  busy: () => settingsUI.active,
   apply: (updated) => applySettings(updated, false, false),
   status: (state) => { const label = $('#account-settings-status');
     if (label) label.textContent = ({ saved: 'Reader preferences saved to your account.', pending: 'Saving reader preferences…', offline: 'Preferences saved on this browser; account sync will retry.' })[state]; },
@@ -190,6 +194,7 @@ function applyAppearance() {
   document.documentElement.dataset.immersion = String(settings.immersionMode);
   $('#immersion-toggle').setAttribute('aria-pressed', String(settings.immersionMode));
   updateAppearance(settings);
+  pinyinButton.refresh();
   $('#word-mode-label').textContent = settings.mode === 'translation'
     ? `${languageName(settings.translationLanguage)} translation` : modes[settings.mode];
   if (settings.mode === 'off') $('#word-mode-label').textContent = 'Word help off';
@@ -257,6 +262,10 @@ function showScreen(screen) {
   $('#about-screen').hidden = screen !== 'about';
   $('#howto-screen').hidden = screen !== 'howto';
   $('#discovery-screen').hidden = screen !== 'discovery';
+  $('#settings').hidden = screen !== 'settings';
+  for (const button of document.querySelectorAll('#mobile-navigation [data-settings]')) {
+    if (screen === 'settings') button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
+  }
   if (screen !== 'discovery') discovery.leave();
   $('#library-header').hidden = screen === 'reader';
   if (screen === 'about') $('#about-link').setAttribute('aria-current', 'page');
@@ -490,6 +499,7 @@ function closeReader() {
   renderer?.destroy();
   renderer = undefined;
   activeBook = undefined;
+  pinyinButton.refresh();
   summaryQueued = false;
   pageTurns.reset();
   activePosition = undefined;
@@ -518,6 +528,7 @@ async function openBook(book) {
   $('#reading-title').textContent = book.title;
   $('#reading-subtitle').textContent = [book.format.toUpperCase(), languageName(book.language)].join(' · ');
   $('#pdf-zoom').hidden = book.format !== 'pdf';
+  pinyinButton.refresh();
   const contentsButton = $('#contents-button');
   contentsButton.disabled = true;
   contentsButton.title = 'Book sections';
@@ -555,7 +566,7 @@ async function openBook(book) {
       contentsButton.title = 'Book sections';
       contentsButton.setAttribute('aria-label', contentsButton.title);
     }
-    if (!$('#settings').open) await renderer.apply?.(readingPreferences(settings));
+    await renderer.apply?.(readingPreferences(settings));
     if (signal.aborted) return;
     contentsButton.disabled = false;
     audio.apply();
@@ -568,7 +579,32 @@ async function openBook(book) {
   }
 }
 
+function openSettings(tab = 'reading') {
+  for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
+  if (!/^#settings(?:\/|$)/u.test(location.hash)) {
+    settingsReturnHash = location.hash || '#library'; settingsHistoryEntry = true;
+    location.hash = `#settings/${tab}`;
+  } else {
+    history.replaceState(null, '', `#settings/${tab}`); settingsUI.open(tab);
+  }
+}
+
+function leaveSettings() {
+  if (settingsHistoryEntry) { settingsHistoryEntry = false; history.back(); }
+  else location.hash = settingsReturnHash;
+}
+
 async function route() {
+  const settingsRoute = /^#settings(?:\/([^/]+))?$/u.exec(location.hash);
+  if (settingsRoute) {
+    if (activeBook) closeReader();
+    showScreen('settings'); document.title = 'Settings · Langy Reader';
+    const label = /^#read\//u.test(settingsReturnHash) ? 'Back to book' : 'Back to library';
+    $('#settings-back span').textContent = label;
+    settingsUI.open(settingsRoute[1] || 'reading'); $('#settings-title').focus({ preventScroll: true });
+    window.scrollTo(0, 0); return;
+  }
+  if (settingsUI.active) { settingsUI.leave(); void account.resume(); }
   if (location.hash === '#discover') {
     if (activeBook) { closeReader(); await vocabulary.flush(); }
     showScreen('discovery'); document.title = 'Discover books · Langy Reader';
@@ -652,9 +688,12 @@ async function zoomPDF(factor) {
   } catch (error) { reportError(error); }
 }
 
-const contentsUI = bookContents({ renderer: () => renderer, book: () => activeBook,
+const pageJump = bookPageJump({ renderer: () => renderer, book: () => activeBook,
   go: (target) => returnHistory.follow(target), focus: () => viewer.focus({ preventScroll: true }) });
+const contentsUI = bookContents({ renderer: () => renderer, book: () => activeBook,
+  go: (target) => returnHistory.follow(target), focus: () => viewer.focus({ preventScroll: true }), jumpPage: () => pageJump.open() });
 function contents() { words.clear(); contentsUI.open(); }
+for (const id of ['jump-page', 'page-label']) $(`#${id}`).addEventListener('click', () => { words.clear(); pageJump.open(); });
 
 function keydown(event) {
   if (!activeBook || !renderer || document.querySelector('dialog[open]') || event.defaultPrevented
@@ -701,6 +740,11 @@ function toggleAudioToolbar() {
   viewer.focus({ preventScroll: true });
   toast(visible ? 'Audio toolbar hidden' : 'Audio toolbar shown');
 }
+$('#narration-close').addEventListener('click', () => {
+  audioPeek.reset();
+  settings = saveSettings({ ...settings, audioToolbarHidden: true });
+  audio.apply(); syncFullscreen(); viewer.focus({ preventScroll: true });
+});
 function showTemporaryAudio() {
   words.clear();
   if (!settings.audioEnabled) settings = saveSettings({ ...settings, audioEnabled: true, audioToolbarHidden: true });
@@ -761,7 +805,6 @@ window.addEventListener('pagehide', () => { void readingSync.flush(); void accou
 window.addEventListener('online', () => { void account.resume(); void flushOfflineChanges(); void readingSync.flushSaved(); void refreshOfflineReader(); });
 window.addEventListener('langy-offline-synced', () => { if (!$('#library-screen').hidden) void library.refresh().catch((error) => message('#library-error', error.message)); });
 window.addEventListener('focus', () => void account.resume());
-$('#settings').addEventListener('close', () => void account.resume());
 setInterval(() => { if (!document.hidden) { void account.resume(); void flushOfflineChanges(); void readingSync.flushSaved(); } }, 30_000);
 
 drawIcons();

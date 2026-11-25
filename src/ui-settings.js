@@ -7,11 +7,10 @@ import { deviceSettings } from './ui-device-settings.js';
 import { readingLanguagesPicker } from './reading-languages.js';
 import { readingFontSize, fontSizeChange, touchReader } from './touch-preferences.js';
 
-export function settingsDialog({ preferences, apply }) {
+export function settingsPage({ preferences, apply, navigate, back }) {
   const narration = narrationSettings();
   const archive = archiveSettings();
   const devices = deviceSettings();
-  const dialog = $('#settings');
   const form = $('#settings-form');
   const fields = form.elements;
   const readingLanguages = readingLanguagesPicker({ host: $('#reading-language-list'), input: $('#reading-language-choice'), add: $('#reading-language-add'), error: (text) => message('#settings-error', text) });
@@ -36,6 +35,7 @@ export function settingsDialog({ preferences, apply }) {
   let shadowKeys = {}, recording, aiConfig, pending = false;
   let canConfigureAI = false;
   let renderingAI = false;
+  let active = false, visit = 0;
 
   function renderKeys() {
     const rows = Object.entries(shortcuts).map(([name, label]) => {
@@ -82,16 +82,17 @@ export function settingsDialog({ preferences, apply }) {
   async function loadAI() {
     if (renderingAI || aiConfig) return;
     renderingAI = true;
+    const epoch = visit;
     try {
       const settings = await api('/api/settings/ai');
-      if (!dialog.open) return;
+      if (!active || epoch !== visit) return;
       aiConfig = settings;
       fields.provider.value = settings.provider;
       fields.baseUrl.value = settings.baseUrl;
       fields.aiModel.value = settings.model;
       updateProvider();
     } catch (error) { message('#settings-error', error.message); }
-    finally { renderingAI = false; }
+    finally { if (epoch === visit) renderingAI = false; }
   }
 
   function aiDraft() {
@@ -103,7 +104,11 @@ export function settingsDialog({ preferences, apply }) {
   }
 
   function open(tab) {
-    if (dialog.open) return;
+    if (pending) { active = true; return; }
+    const allowed = $$('[data-settings-tab]').filter((button) => !button.hidden).map((button) => button.dataset.settingsTab);
+    if (!allowed.includes(tab)) tab = 'reading';
+    if (active) { select(tab); return; }
+    active = true; visit++; renderingAI = false;
     form.reset();
     narration.reset();
     archive.reset();
@@ -128,8 +133,11 @@ export function settingsDialog({ preferences, apply }) {
     fields.progressSyncEnabled.checked = current.progressSyncEnabled;
     fields.syncDeviceName.value = current.syncDeviceName;
     shadowKeys = { ...current.keys };
+    select(tab);
+  }
+
+  function select(tab) {
     section(tab);
-    dialog.showModal();
     if (tab === 'ai') void loadAI();
     if (tab === 'narration') void narration.load();
     if (tab === 'sources') void archive.load();
@@ -137,16 +145,13 @@ export function settingsDialog({ preferences, apply }) {
   }
 
   for (const tab of $$('[data-settings-tab]')) tab.addEventListener('click', () => {
-    section(tab.dataset.settingsTab);
-    if (tab === aiTab) void loadAI();
-    if (tab.dataset.settingsTab === 'narration') void narration.load();
-    if (tab.dataset.settingsTab === 'sources') void archive.load();
-    if (tab.dataset.settingsTab === 'devices') void devices.load();
+    navigate(tab.dataset.settingsTab);
   });
-  for (const button of $$('[data-settings]')) button.addEventListener('click', () => open(button.dataset.settings));
+  for (const button of $$('[data-settings]')) button.addEventListener('click', () => navigate(button.dataset.settings));
+  for (const button of $$('[data-settings-back]')) button.addEventListener('click', () => { if (!pending) back(); });
 
   document.addEventListener('keydown', (event) => {
-    if (!dialog.open || !recording) return;
+    if (!active || !recording) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     const name = recording;
@@ -193,7 +198,6 @@ export function settingsDialog({ preferences, apply }) {
     finally { button.disabled = false; }
   });
 
-  dialog.addEventListener('cancel', (event) => { if (pending) event.preventDefault(); });
   form.noValidate = true;
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -214,7 +218,25 @@ export function settingsDialog({ preferences, apply }) {
       return message('#settings-error', 'Choose a summary and translation language or enter valid language codes.');
     }
 
-    pending = true;
+    const updated = {
+      mode: fields.mode.value, summaryLanguage, translationLanguage, nativeLanguage, uiLanguage: fields.uiLanguage.value, theme: fields.theme.value,
+      readingLanguages: preferredLanguages,
+      synonymContextHelp: fields.synonymContextHelp.checked,
+      showPinyin: fields.showPinyin.checked,
+      cacheAI: fields.cacheAI.checked,
+      audioRecordings: preferences().audioRecordings || {},
+      audioHighlight: fields.audioHighlight.checked,
+      progressSyncEnabled: fields.progressSyncEnabled.checked,
+      syncDeviceName: fields.syncDeviceName.value.trim() || 'Langy browser',
+      background: fields.background.value, font: fields.font.value, width: fields.width.value,
+      ...fontSizeChange(fields.size.valueAsNumber), line: fields.line.valueAsNumber,
+      autoHideDocks: fields.autoHideDocks.checked,
+      doubleTapToTurn: fields.doubleTapToTurn.checked, swipeToTurn: fields.swipeToTurn.checked, tapCenterFullscreen: fields.tapCenterFullscreen.checked,
+      immersionMode: fields.immersionMode.checked, quietLibrary: fields.quietLibrary.checked,
+      pdfNight: fields.pdfNight.checked, keys: { ...shadowKeys },
+    };
+    const saveVisit = visit;
+    pending = true; form.inert = true;
     const saveButton = $('button[type="submit"]', form);
     saveButton.disabled = true;
     const draft = aiDraft();
@@ -234,29 +256,12 @@ export function settingsDialog({ preferences, apply }) {
       section(saveSection);
       return message('#settings-error', error.message);
     } finally {
-      pending = false;
+      pending = false; form.inert = false;
       saveButton.disabled = false;
     }
-    const updated = {
-      mode: fields.mode.value, summaryLanguage, translationLanguage, nativeLanguage, uiLanguage: fields.uiLanguage.value, theme: fields.theme.value,
-      readingLanguages: preferredLanguages,
-      synonymContextHelp: fields.synonymContextHelp.checked,
-      showPinyin: fields.showPinyin.checked,
-      cacheAI: fields.cacheAI.checked,
-      audioRecordings: preferences().audioRecordings || {},
-      audioHighlight: fields.audioHighlight.checked,
-      progressSyncEnabled: fields.progressSyncEnabled.checked,
-      syncDeviceName: fields.syncDeviceName.value.trim() || 'Langy browser',
-      background: fields.background.value, font: fields.font.value, width: fields.width.value,
-      ...fontSizeChange(fields.size.valueAsNumber), line: fields.line.valueAsNumber,
-      autoHideDocks: fields.autoHideDocks.checked,
-      doubleTapToTurn: fields.doubleTapToTurn.checked, swipeToTurn: fields.swipeToTurn.checked, tapCenterFullscreen: fields.tapCenterFullscreen.checked,
-      immersionMode: fields.immersionMode.checked, quietLibrary: fields.quietLibrary.checked,
-      pdfNight: fields.pdfNight.checked, keys: { ...shadowKeys },
-    };
-    dialog.close();
     apply(updated, aiChanged);
     toast('Settings saved');
+    if (active && saveVisit === visit) back();
   });
 
   $('#clear-ai-cache').addEventListener('click', async () => {
@@ -270,6 +275,9 @@ export function settingsDialog({ preferences, apply }) {
   });
 
   return {
+    open,
+    leave() { active = false; visit++; recording = undefined; },
+    get active() { return active; },
     setDemo(demo) {
       canConfigureAI = !demo;
       aiTab.hidden = demo;
