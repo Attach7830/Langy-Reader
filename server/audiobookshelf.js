@@ -219,7 +219,9 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
     for (const candidate of learning.readyAudiobooks?.() || []) {
       if ([...jobs.values()].filter((job) => ['queued', 'running'].includes(job.state)).length >= 5) break;
       try {
-        const book = library.getBook(candidate.book), destination = destinationFor(book, true);
+        const book = library.getBook(candidate.book);
+        if (book.owner) continue; // Private member books never export through the administrator's connection.
+        const destination = destinationFor(book, true);
         if (!identifier(destination.libraryId) || !identifier(destination.folderId) || getLink(book, candidate.recording)) continue;
         const handled = [...jobs.values()].some((job) => job.server === server() && job.kind === 'export' && job.state !== 'cancelled'
           && job.book === candidate.book && job.recording === candidate.recording
