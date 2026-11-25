@@ -837,3 +837,19 @@ html.focus-mode .process-queue-toggle, html:fullscreen .process-queue-toggle { d
 .phrase-help blockquote { margin:12px 0 0; padding-left:12px; border-left:2px solid var(--brand); max-height:5em; overflow:auto; font-size:.9rem; }
 .phrase-help [data-phrase-answer] { margin:12px 0 0; white-space:pre-wrap; font-size:.92rem; line-height:1.55; }
 .phrase-help .button-row { justify-content:space-between; }
+
+body[data-auth="loading"] > :not(#login-screen), body[data-auth="signed-out"] > :not(#login-screen) { display:none !important; }
+body[data-auth="loading"]::before { content:'Opening Langy…'; position:fixed; inset:45% 0 auto; text-align:center; color:var(--muted); }
+.auth-screen { min-height:100dvh; padding:24px; display:grid; place-items:center; background:var(--ground); }
+.auth-card { width:min(410px,100%); padding:32px; border:1px solid var(--border); border-radius:22px; background:var(--surface); box-shadow:var(--shadow); }
+.auth-card h1 { margin:26px 0 8px; font-size:2rem; letter-spacing:-.04em; }
+.auth-card .brand { font-size:1rem; }
+.auth-card form { margin-top:24px; }
+.account-user { display:grid; gap:8px; padding:16px; border:1px solid var(--border); border-radius:12px; }
+.account-user select { width:auto; max-width:180px; }
+#account-panel fieldset { border:1px solid var(--border); padding:18px; border-radius:12px; }
+#account-panel legend { padding:0 6px; font-weight:600; }
+#account-message { white-space:pre-wrap; }
+
+.shared-books-toggle { margin:0; font-size:.84rem; gap:7px; }
+.shared-book-badge { background:var(--well); color:var(--muted); }
