@@ -516,10 +516,29 @@ try {
     memberContext = await browser.newContext({ viewport: { width: 393, height: 851 }, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
     memberPage = await memberContext.newPage(); memberPage.on('pageerror', (error) => errors.push(error.message));
     await memberPage.goto(base + '/#library'); await memberPage.locator('#login-form').waitFor({ state: 'visible' });
+    assert.equal(await memberPage.locator('#login-form [name=rememberMe]').isChecked(), false);
     await memberPage.locator('#login-form [name=username]').fill('member'); await memberPage.locator('#login-form [name=password]').fill(memberPassword);
     await memberPage.locator('#login-form [type=submit]').click(); await memberPage.locator('#shared-books-control').waitFor({ state: 'visible' });
+    assert.equal((await memberContext.cookies()).find((cookie) => cookie.name === 'langy_session').expires, -1);
     assert.equal(await memberPage.locator('#books .book-card').count(), 0);
     assert.equal((await memberContext.request.get(base + '/api/books/' + book.id + '/file')).status(), 404);
+  });
+  await check('Remember me persists a secure session across browser reopening without saving the password locally', async () => {
+    await memberPage.goto(base + '/#settings/account'); await memberPage.locator('#account-panel').waitFor({ state: 'visible' });
+    memberPage.once('dialog', (dialog) => dialog.accept()); await memberPage.locator('#account-panel [data-switch-user]').click();
+    await memberPage.locator('#login-form').waitFor({ state: 'visible' }); await memberPage.locator('#login-form [name=rememberMe]').check();
+    await memberPage.locator('#login-form [name=username]').fill('member'); await memberPage.locator('#login-form [name=password]').fill(memberPassword);
+    await memberPage.screenshot({ path: output + '/remember-me-mobile.png' });
+    await memberPage.locator('#login-form [type=submit]').click(); await memberPage.locator('#shared-books-control').waitFor({ state: 'visible' });
+    const persisted = (await memberContext.cookies()).filter((cookie) => cookie.expires > Date.now() / 1000), session = persisted.find((cookie) => cookie.name === 'langy_session');
+    assert.equal(session.httpOnly, true); assert.equal(session.sameSite, 'Lax'); assert.ok(session.expires > Date.now() / 1000 + 29 * 86400);
+    assert.equal(await memberPage.evaluate((password) => Object.values(localStorage).some((value) => value.includes(password)), memberPassword), false);
+    const resumed = await browser.newContext({ viewport: { width: 393, height: 851 }, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
+    try {
+      await resumed.addCookies(persisted); const reopened = await resumed.newPage(); await reopened.goto(base + '/#library');
+      await reopened.locator('#shared-books-control').waitFor({ state: 'visible' });
+      assert.equal((await (await resumed.request.get(base + '/api/account')).json()).user.username, 'member');
+    } finally { await resumed.close(); }
   });
   await check('mobile readers can import privately and share an existing book from Edit', async () => {
     await memberPage.locator('#import-book').click(); await memberPage.locator('#book-dialog').waitFor({ state: 'visible' });
