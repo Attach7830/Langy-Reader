@@ -93,9 +93,10 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
     processTasks.setDownloads(jobs);
     message('#offline-status', active ? `${active.book.title} · ${downloadProgressLabel(active.progress)}${remaining.length > 1 ? ` · ${remaining.length - 1} queued` : ''}`
       : waiting ? 'Book downloads are waiting for a connection. Open Process queue to retry.' : jobs.some((job) => job.state === 'failed') ? 'A book download needs attention. Open Process queue to retry.' : '');
-    const version = JSON.stringify(jobs.map((job) => [job.id, job.state, job.error, job.book.title]));
+    const visibleJobs = jobs.filter((job) => pending(job) || job.state === 'failed');
+    const version = JSON.stringify(visibleJobs.map((job) => [job.id, job.state, job.error, job.book.title]));
     if (version !== listVersion) {
-    const cards = jobs.map((job) => {
+    const cards = visibleJobs.map((job) => {
       const card = element('article', 'download-card'); card.dataset.download = job.book.id;
       const title = element('h3', '', job.book.title); title.setAttribute('data-user-content', '');
       const status = element('p', 'field-note download-status', describe(job));
@@ -107,16 +108,15 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
         button.addEventListener('click', () => { void Promise.resolve().then(callback).catch((error) => message('#offline-download-error', error.message)); }); actions.append(button);
       }
       if (pending(job)) action('Cancel download', () => queue.cancel(job.id));
-      if (['waiting', 'failed', 'cancelled'].includes(job.state)) action('Retry download', () => queue.retry(job.id));
-      if (job.state === 'complete') action('Read book', () => { $('#downloads-dialog').close(); location.hash = `#read/${job.book.id}`; });
-      if (['complete', 'failed', 'cancelled'].includes(job.state)) action('Dismiss', () => queue.remove(job.id));
+      if (['waiting', 'failed'].includes(job.state)) action('Retry download', () => queue.retry(job.id));
+      if (job.state === 'failed') action('Dismiss', () => queue.remove(job.id));
       card.append(title, status, meter, actions); return card;
     });
     list.replaceChildren(...(cards.length ? cards : [element('p', 'field-note', 'No book downloads yet. Choose Save offline in a book’s options.')]));
     listVersion = version;
     } else {
       // Keep controls under the user's finger/focus while byte counts update.
-      jobs.forEach((job, index) => {
+      visibleJobs.forEach((job, index) => {
         const card = list.children[index], meter = card.querySelector('progress');
         card.querySelector('.download-status').textContent = describe(job);
         if (Number.isFinite(job.progress?.percent)) meter.value = job.progress.percent; else meter.removeAttribute('value');
