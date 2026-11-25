@@ -26,7 +26,7 @@ async function fixture(t, { words = [], timings = [], visible = () => true, roun
     markers: [{ time: 0, title: 'First chapter' }, { time: 1800, title: 'Second chapter' }],
     segments: [{ key: 'epub:0', start: 0, end: 1800, scale: 1 }, { key: 'epub:1', start: 1800, end: 3600, scale: 1 }] };
   let key = initialKey;
-  const local = { root, words, text: ' '.repeat(120), annotate() {}, match: () => new Map(timings.map((stamp, index) => [index, words.find((word) => word.from === stamp.from)])),
+  const local = { root, words, text: ' '.repeat(120), annotate() {}, at: (_node, offset) => ({ word: words.find((word) => word.from <= offset && word.to > offset) }), match: () => new Map(timings.map((stamp, index) => [index, words.find((word) => word.from === stamp.from)])),
     rangeFor: (word) => word ? { word } : null, visible };
   const view = { audioUnit: () => ({ key, root, track: () => local }), audioTarget: (target) => ({ key: target }),
     async revealWord(range, { valid = () => true } = {}) { await delay(0); if (valid()) reveals.push(range.word); } };
@@ -48,12 +48,32 @@ async function fixture(t, { words = [], timings = [], visible = () => true, roun
   function metadata() { audio.currentTime = 0; audio.onloadedmetadata?.(); }
   player.apply(); await player.refresh(); if (!delayMetadata) metadata();
   const clock = document.querySelector('#narration-time'), seek = document.querySelector('#narration-seek'), rate = document.querySelector('#narration-rate');
-  return { dom, player, audio, clock, seek, prefs, positions, navigations, reveals, metadata,
+  return { dom, player, audio, root, clock, seek, prefs, positions, navigations, reveals, metadata,
     rendered(value) { rendered = value; },
     page(value) { key = value; },
     speed(value) { rate.value = String(value); rate.dispatchEvent(new dom.window.Event('change')); },
     tick(time) { audio.currentTime = time; audio.dispatchEvent(new dom.window.Event('timeupdate')); } };
 }
+
+test('playing from a word seeks to its chapter timestamp and starts rather than toggles playback', async (t) => {
+  const words = [{ word: 'primero', from: 0, to: 7 }, { word: 'segundo', from: 20, to: 27 }];
+  const f = await fixture(t, { words, initialKey: 'epub:1', timings: [{ word: 'primero', from: 0, start: 0, end: 2 }, { word: 'segundo', from: 20, start: 40, end: 42 }] });
+  let plays = 0; f.audio.play = async () => { plays++; };
+  const node = f.root.appendChild(document.createTextNode('primero segundo'));
+  f.audio.currentTime = 2700;
+  assert.equal(await f.player.playWord(node, 21), true); assert.equal(f.audio.currentTime, 1840); assert.equal(plays, 1);
+  assert.equal(await f.player.playWord(node, 21), true); assert.equal(plays, 2, 'a repeated word request must play, never pause');
+  node.remove(); assert.equal(await f.player.playWord(node, 21), false); assert.equal(plays, 2);
+});
+
+test('a word playback request survives delayed metadata and missing word timing uses nearby source anchors', async (t) => {
+  const words = [{ word: 'first', from: 0, to: 5 }, { word: 'middle', from: 50, to: 56 }, { word: 'last', from: 100, to: 104 }];
+  const f = await fixture(t, { words, delayMetadata: true, timings: [{ word: 'first', from: 0, start: 0, end: 2 }, { word: 'last', from: 100, start: 1000, end: 1002 }] });
+  let plays = 0; f.audio.play = async () => { plays++; };
+  const node = f.root.appendChild(document.createTextNode('middle'));
+  assert.equal(await f.player.playWord(node, 51), true); assert.equal(plays, 0);
+  f.metadata(); assert.equal(f.audio.currentTime, 500); assert.equal(plays, 1);
+});
 
 test('manual page turns cannot be pulled back by old audio timeupdates before the new page audio has loaded', async (t) => {
   const f = await fixture(t);
