@@ -7,7 +7,7 @@ import '@fontsource/noto-sans-sc/400.css';
 import '@fontsource/noto-sans-tc/400.css';
 import './styles.css';
 import { readerDocks } from './reader-docks.js';
-import { $, $$, api, drawIcons, element, message, toast } from './ui.js';
+import { $, $$, api, bookFormatLabel, drawIcons, element, message, toast } from './ui.js';
 import { libraryScreen } from './ui-library.js';
 import { settingsPage } from './ui-settings.js';
 import { phraseHelp } from './phrase-help.js';
@@ -235,11 +235,13 @@ function applySettings(updated, aiChanged, notify = true) {
   const libraryChanged = settings.nativeLanguage !== updated.nativeLanguage || settings.quietLibrary !== updated.quietLibrary || settings.showSharedBooks !== updated.showSharedBooks
     || settings.libraryLayout !== updated.libraryLayout || settings.coversOnly !== updated.coversOnly || settings.cacheCovers !== updated.cacheCovers;
   const cacheChanged = settings.cacheAI !== updated.cacheAI;
+  const libraryFormatChanged = settings.libraryFormat !== updated.libraryFormat;
   settings = saveSettings(updated, { notify });
   if (settings.cacheCovers === false) void coverCache.clear().catch(() => {});
   document.documentElement.dataset.immersion = String(settings.immersionMode);
   $('#immersion-toggle').setAttribute('aria-pressed', String(settings.immersionMode));
   if (libraryChanged && !activeBook) void library.refresh().catch((error) => message('#library-error', error.message));
+  else if (libraryFormatChanged) library.render();
   words.clear(); phrases.clear();
   applyAppearance();
   syncFullscreen();
@@ -577,7 +579,7 @@ async function openBook(book) {
   audio.apply();
   document.title = `${book.title} · Langy Reader`;
   $('#reading-title').textContent = book.title;
-  $('#reading-subtitle').textContent = [book.format.toUpperCase(), languageName(book.language)].join(' · ');
+  $('#reading-subtitle').textContent = [bookFormatLabel(book), languageName(book.language)].join(' · ');
   $('#reading-subtitle').title = '';
   $('#pdf-zoom').hidden = book.format !== 'pdf';
   pinyinButton.refresh();
