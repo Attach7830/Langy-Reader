@@ -6,6 +6,7 @@ import re
 import time
 from pathlib import Path
 from contextlib import contextmanager
+from ctypes import byref, c_int
 import socket
 
 from pypdf import PdfReader, PdfWriter
@@ -62,7 +63,7 @@ def remove_hidden_text(page):
     stream.operations = operations; page.replace_contents(stream)
 
 
-def text_layer(width, height, pixels, results, vertical=False):
+def text_layer(width, height, pixels, results, vertical=False, diagnostics=None):
     """Map detected polygons back to PDF points, including vertical Han columns."""
     pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
     pdfmetrics.registerFont(UnicodeCIDFont('HeiseiMin-W3'))
@@ -70,15 +71,16 @@ def text_layer(width, height, pixels, results, vertical=False):
     boxes = []
     for text, score, polygon in zip(results.get('rec_texts', []), results.get('rec_scores', []), results.get('rec_polys', [])):
         if not isinstance(text, str) or not text.strip() or not math.isfinite(float(score)) or float(score) < .35: continue
+        text = re.sub(r'[\x00-\x1f]', '', text).strip()
+        if not text: continue
         if len(polygon) != 4 or any(len(point) != 2 or any(not math.isfinite(float(n)) for n in point) for point in polygon): continue
         xs, ys = [float(point[0]) for point in polygon], [float(point[1]) for point in polygon]
         left, right = max(0, min(xs)), min(pixels[0], max(xs)); top, bottom = max(0, min(ys)), min(pixels[1], max(ys))
         if right <= left or bottom <= top: continue
         boxes.append((text, left * width / pixels[0], top * height / pixels[1], right * width / pixels[0], bottom * height / pixels[1]))
     if vertical: boxes.sort(key=lambda item: (-round(item[3] / 6), item[2]))
+    if diagnostics is not None: diagnostics['recognizedCharacters'] += sum(len(item[0]) for item in boxes)
     for text, left, top, right, bottom in boxes:
-        text = re.sub(r'[\x00-\x1f]', '', text)
-        if not text: continue
         font = 'HeiseiMin-W3' if re.search(r'[\u3040-\u30ff]', text) else 'STSong-Light'
         han_column = bottom - top > (right - left) * 1.6 and bool(re.search(r'[\u3400-\u9fff]', text))
         if han_column:
@@ -95,7 +97,36 @@ def text_layer(width, height, pixels, results, vertical=False):
     return PdfReader(output).pages[0], len(boxes)
 
 
-def convert_pdf(source, output, languages, mode='redo', rotate=True, recognize=None):
+def mask_digital_text(image, page):
+    """Exclude retained text from recognition without changing the source PDF.
+
+    Page numbers and headings must not cause an image-based page to be skipped.
+    PDFium's coordinate transform accounts for crop boxes and page rotation.
+    """
+    import pypdfium2.raw as raw
+    from PIL import ImageDraw
+    text = page.get_textpage(); drawing = ImageDraw.Draw(image)
+    def pixel(x, y):
+        a, b = c_int(), c_int()
+        if not raw.FPDF_PageToDevice(page.raw, 0, 0, image.width, image.height, 0, x, y, byref(a), byref(b)):
+            raise ValueError('Could not locate existing PDF text safely for OCR.')
+        return a.value, b.value
+    try:
+        for index in range(text.count_chars()):
+            if not text.get_text_range(index, 1).strip(): continue
+            left, bottom, right, top = text.get_charbox(index)
+            if not all(math.isfinite(value) for value in (left, bottom, right, top)) or right <= left or top <= bottom: continue
+            points = [pixel(x, y) for x, y in [(left, bottom), (left, top), (right, bottom), (right, top)]]
+            x0 = max(0, min(point[0] for point in points) - 2); x1 = min(image.width - 1, max(point[0] for point in points) + 2)
+            y0 = max(0, min(point[1] for point in points) - 2); y1 = min(image.height - 1, max(point[1] for point in points) + 2)
+            if x1 <= x0 or y1 <= y0: continue
+            samples = [image.getpixel(point) for point in [(x0, y0), (x0, y1), (x1, y0), (x1, y1)]]
+            background = tuple(sorted(sample[channel] for sample in samples)[len(samples) // 2] for channel in range(3))
+            drawing.rectangle((x0, y0, x1, y1), fill=background)
+    finally: text.close()
+
+
+def convert_pdf(source, output, languages, mode='redo', rotate=True, recognize=None, diagnostics=None):
     if mode not in {'redo', 'skip'} or not languages or any(code not in LANGUAGES for code in languages): raise ValueError('Choose supported PaddleOCR languages and an OCR mode.')
     source, output = Path(source), Path(output)
     with source.open('rb') as stream: header = stream.read(5)
@@ -110,25 +141,33 @@ def convert_pdf(source, output, languages, mode='redo', rotate=True, recognize=N
     prepared = output.with_suffix('.source.pdf'); writer.write(prepared)
     import pypdfium2 as pdfium
     document = pdfium.PdfDocument(str(prepared)); engine = None
-    if recognize is None: engine = pipeline()
+    stats = diagnostics if diagnostics is not None else {}
+    stats.update(scannedPages=0, skippedPages=0, recognizedCharacters=0)
     deadline = time.monotonic() + 3500
     try:
         for index, page in enumerate(writer.pages):
             if time.monotonic() > deadline: raise ValueError('OCR exceeded one hour. Scan a smaller volume.')
-            # Never duplicate visible digital text. Redo removes an old hidden
-            # OCR layer first; skip retains any existing selectable text.
-            if (page.extract_text() or '').strip(): continue
+            retained_text = bool((page.extract_text() or '').strip())
+            if mode == 'skip' and retained_text:
+                stats['skippedPages'] += 1
+                print(f'OCR page {index + 1}/{len(writer.pages)}: retained existing text (skip mode)', flush=True)
+                continue
             raster = document[index]; width, height = raster.get_size()
             scale = min(400 / 72, math.sqrt(24_000_000 / max(1, width * height)))
             bitmap = raster.render(scale=scale); image = bitmap.to_pil().convert('RGB')
             try:
+                if retained_text: mask_digital_text(image, raster)
+                before = stats['recognizedCharacters']
                 if recognize is not None: result = recognize(image)
                 else:
                     import numpy as np
+                    if engine is None: engine = pipeline()
                     prediction = next(iter(engine.predict(np.asarray(image)[:, :, ::-1].copy(), use_doc_orientation_classify=False,
                         use_doc_unwarping=False, use_textline_orientation=rotate, text_det_limit_side_len=1280, text_det_limit_type='max')))
                     result = prediction.json['res']
-                layer, count = text_layer(width, height, image.size, result, vertical=any(code.endswith('_vert') for code in languages))
+                layer, count = text_layer(width, height, image.size, result, vertical=any(code.endswith('_vert') for code in languages), diagnostics=stats)
+                stats['scannedPages'] += 1
+                print(f'OCR page {index + 1}/{len(writer.pages)}: {count} regions, {stats["recognizedCharacters"] - before} new characters', flush=True)
                 if count: page.merge_translated_page(layer, float(page.cropbox.left), float(page.cropbox.bottom), over=True)
             finally: image.close(); bitmap.close(); raster.close()
         writer.write(output)

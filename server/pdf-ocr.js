@@ -23,7 +23,7 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
     if (['running', 'importing'].includes(job.state)) { job.state = 'queued'; persist(job); }
   }
   const publicJob = (job) => { if (!job) return null; const { owner, expires, bytes, ...book } = job.result || {};
-    return { id: job.id, state: job.state, languages: job.languages, error: job.error, notice: job.notice, retryAt: job.retryAt, book: job.result ? book : undefined, inPlace: job.result?.id === job.source, pages: job.pages, textPages: job.textPages }; };
+    return { id: job.id, state: job.state, languages: job.languages, error: job.error, notice: job.notice, retryAt: job.retryAt, book: job.result ? book : undefined, inPlace: job.result?.id === job.source, pages: job.pages, textPages: job.textPages, recognizedCharacters: job.recognizedCharacters, scannedPages: job.scannedPages, skippedPages: job.skippedPages }; };
   const status = (book) => publicJob([...jobs.values()].filter((job) => job.source === book.id).at(-1));
   const languages = () => connection.languages();
   async function pump() {
@@ -60,8 +60,10 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
           await pipeline(response.body, meter, createWriteStream(temporary, { flags: 'wx', mode: 0o600 }), {signal:controller.signal});
           controller.signal.throwIfAborted();
           library.getBook(book.id);
-          job.pages = Number(response.headers.get('X-Langy-OCR-Pages')) || null;
-          job.textPages = Number(response.headers.get('X-Langy-OCR-Text-Pages')) || null;
+          for (const [field, header] of [['pages', 'Pages'], ['textPages', 'Text-Pages'], ['recognizedCharacters', 'Characters'], ['scannedPages', 'Scanned-Pages'], ['skippedPages', 'Skipped-Pages']]) {
+            const raw = response.headers.get('X-Langy-OCR-' + header), value = Number(raw);
+            job[field] = raw !== null && Number.isSafeInteger(value) && value >= 0 ? value : null;
+          }
           job.state = 'importing'; persist(job);
           const current = library.getBook(book.id);
           job.result = await library.replacePDF(book.id, { path: temporary, size }, {

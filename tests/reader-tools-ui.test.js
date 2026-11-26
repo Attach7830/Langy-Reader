@@ -25,13 +25,13 @@ async function browser(t) {
 }
 
 test('Analysis & audio reveals ready controls while an unrelated iVoox request remains pending; empty Uncategorized is hidden', async (t) => {
-  const dom = await browser(t); let release, books = [{ id: 'book', title: 'My book', author: '', language: 'es', format: 'epub', categoryId: 'folder', addedAt: 1 }];
+  const dom = await browser(t); let release, books = [{ id: 'book', title: 'My book', author: '', language: 'es', format: 'epub', categoryId: 'folder', addedAt: 1 }], ocrJob = { state: 'queued', notice: 'Waiting for the OCR worker' };
   const held = new Promise((resolve) => { release = resolve; });
   globalThis.fetch = async (path) => {
     if (path === '/api/library') return Response.json({ books, categories: [{ id: 'folder', name: 'Spanish' }], maxUpload: 1000000, demo: false, storage: { available: false }, vocabulary: { byLanguage: [] } });
     if (path === '/api/books/book/learning') return Response.json({ analysis: { state: 'ready', wordCount: 20, lemmaCount: 5, reading: { state: 'ready', band: 'Intermediate' }, counts: { words: 20 } }, chapters: [], narration: { audio: { state: 'missing' } } });
     if (path === '/api/books/book/recordings') return Response.json({ available: true, recordings: [] });
-    if (path === '/api/books/book/ocr') return Response.json({ available: true, languages: ['spa'], job: { state: 'queued', notice: 'Waiting for the OCR worker' } });
+    if (path === '/api/books/book/ocr') return Response.json({ available: true, languages: ['spa'], job: ocrJob });
     if (path === '/api/books/book/ivoox') { await held; return Response.json({ job: null }); }
     if (path === '/api/settings/audiobookshelf') return Response.json({ connected: false });
     throw new Error('Unexpected path ' + path);
@@ -49,6 +49,11 @@ test('Analysis & audio reveals ready controls while an unrelated iVoox request r
   await until(() => document.querySelector('#ocr-dialog').open && document.querySelector('#ocr-progress').textContent.includes('Waiting for the OCR worker'));
   assert.equal(document.querySelector('#learning-dialog').open, false, 'OCR Details opens the scan status instead of unrelated audio tools');
   document.querySelector('#ocr-dialog').close();
+  ocrJob = { state: 'ready', inPlace: true, book: { id: 'book' }, pages: 51, textPages: 51, recognizedCharacters: 0, scannedPages: 51, skippedPages: 0 };
+  window.dispatchEvent(new dom.window.CustomEvent('langy-open-process', { detail: { kind: 'ocr', bookId: 'book' } }));
+  await until(() => document.querySelector('#ocr-progress').textContent.includes('0 new characters recognized'));
+  assert.match(document.querySelector('#ocr-progress').textContent, /51\/51 pages have text.*0 new characters recognized.*51 pages scanned/u);
+  await delay(0); document.querySelector('#ocr-dialog').close();
 });
 
 test('Devices displays OPDS connection independently of slow progress sync', async (t) => {

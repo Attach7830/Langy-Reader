@@ -4,9 +4,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 libgli
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-COPY paddle_pdf.py app.py install_models.py model-sources.json ./
+COPY install_models.py model-sources.json ./
 # Fetch the recognition models during the build; scans then run offline.
 RUN python install_models.py && useradd --system --uid 10001 --create-home langy && mkdir /opt/ocr-cache && chown -R langy:langy /opt/ocr-models /opt/ocr-cache
+COPY paddle_pdf.py app.py ./
 USER langy
 EXPOSE 8000
 CMD ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

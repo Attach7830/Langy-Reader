@@ -41,14 +41,26 @@ class PDFTests(unittest.TestCase):
                 self.assertEqual(result.metadata.title, 'Reading scan'); self.assertEqual(result.outline[0]['/Title'], 'First page'); self.assertEqual(source.read_bytes(), original)
                 self.assertEqual(self.pixels(output), before, 'a hidden text layer must not alter the visible page')
 
-    def test_skip_retains_existing_text_and_redo_preserves_digital_pages(self):
+    def test_skip_retains_existing_text(self):
         with tempfile.TemporaryDirectory() as value:
             folder = Path(value); source = self.fixture(folder, hidden=True)
             def unexpected(image): self.fail('A page with retained text must not be OCRed twice')
             output = folder / 'skip.pdf'; convert_pdf(source, output, ['chi_sim'], mode='skip', recognize=unexpected)
             self.assertIn('旧的错误文字', PdfReader(output).pages[0].extract_text())
-            source = self.fixture(folder, digital=True); before = self.pixels(source); convert_pdf(source, output, ['eng'], recognize=unexpected)
-            self.assertIn('Visible digital text', PdfReader(output).pages[0].extract_text()); self.assertEqual(self.pixels(output), before)
+
+    def test_redo_recognizes_images_even_with_visible_digital_text_without_duplicate_glyphs(self):
+        for rotated in [False, True]:
+            with self.subTest(rotated=rotated), tempfile.TemporaryDirectory() as value:
+                folder = Path(value); source = self.fixture(folder, digital=True, rotated=rotated); before = self.pixels(source); details = {}; calls = []
+                def recognize(image):
+                    calls.append(image.size)
+                    self.assertGreater(min(min(channel) for channel in image.getextrema()), 120, 'existing dark digital glyphs must be masked in the recognition input')
+                    width, height = image.size
+                    return {'rec_texts': ['中文阅读'], 'rec_scores': [.99], 'rec_polys': [[[width*.1,height*.2],[width*.8,height*.2],[width*.8,height*.3],[width*.1,height*.3]]]}
+                output = folder / 'mixed.pdf'; convert_pdf(source, output, ['chi_sim', 'eng'], recognize=recognize, diagnostics=details)
+                text = PdfReader(output).pages[0].extract_text(); self.assertIn('中文阅读', text); self.assertEqual(text.count('Visible digital text'), 1)
+                self.assertEqual(len(calls), 1); self.assertEqual(details, {'scannedPages': 1, 'skippedPages': 0, 'recognizedCharacters': 4})
+                self.assertEqual(self.pixels(output), before, 'recognition masking must not alter the saved visible page')
 
     def test_vertical_chinese_and_untrusted_model_destinations(self):
         page, count = text_layer(100, 200, (100, 200), {'rec_texts': ['中文阅读'], 'rec_scores': [.99], 'rec_polys': [[[30,20],[50,20],[50,160],[30,160]]] }, vertical=True)

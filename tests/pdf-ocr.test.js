@@ -23,20 +23,21 @@ test('PDF OCR updates the same book, keeps metadata and original bytes, and expo
     if (url.pathname === '/ocr/languages') return Response.json({ languages: ['eng', 'spa', 'chi_sim', 'chi_tra'] });
     calls++; assert.equal(url.searchParams.get('languages'), 'chi_sim+eng');
     const chunks = []; for await (const chunk of options.body) chunks.push(chunk); assert.deepEqual(Buffer.concat(chunks), source);
-    return new Response(output, { headers: { 'X-Langy-OCR-Pages': '2', 'X-Langy-OCR-Text-Pages': '2' } });
+    return new Response(output, { headers: { 'X-Langy-OCR-Pages': '2', 'X-Langy-OCR-Text-Pages': '2', 'X-Langy-OCR-Characters': '24', 'X-Langy-OCR-Scanned-Pages': '2', 'X-Langy-OCR-Skipped-Pages': '0' } });
   } }); t.after(() => service.close());
   assert.deepEqual(await service.languages(), ['eng', 'spa', 'chi_sim', 'chi_tra']);
   service.queue(book, { languages: ['chi_sim', 'eng'] });
   const job = await until(() => { const job = service.status(book); return ['ready', 'error'].includes(job?.state) && job; });
   assert.equal(job.state, 'ready', job.error); assert.equal(calls, 1); assert.equal(job.book.id, book.id); assert.equal(job.inPlace, true); assert.equal(analyzed, job.book.id);
   assert.equal(job.book.ocrComplete, true); assert.equal(library.getBook(book.id).ocrComplete, true); assert.equal(library.snapshot().books.find((item) => item.id === book.id).ocrComplete, true);
+  assert.equal(job.recognizedCharacters, 24); assert.equal(job.scannedPages, 2); assert.equal(job.skippedPages, 0);
   assert.equal(job.book.title, 'Scanned book'); assert.equal(job.book.author, 'Author'); assert.equal(job.book.coverStyle, 'forest');
   assert.deepEqual(job.book.languages, ['zh', 'en']); assert.equal(job.book.categoryId, 'spanish'); assert.equal(job.pages, 2);
   assert.deepEqual(library.bookmarks(book.id).map(({ target, note }) => ({ target, note })), [{ target: 2, note: 'Saved before OCR' }]);
   assert.ok(library.getBook(book.id).starredAt); assert.equal(library.snapshot().books.length, originalCount);
   assert.deepEqual(await readFile(library.filePath(book)), source); assert.deepEqual(await readFile(library.filePath(library.getBook(book.id))), output); assert.equal(library.snapshot().books.length, 2);
   service.close(); const reopened = await openPDFOCR(dir, { library, request() { assert.fail('Ready OCR copies do not get scanned again'); } });
-  t.after(() => reopened.close()); assert.equal(reopened.status(book).book.id, job.book.id);
+  t.after(() => reopened.close()); assert.equal(reopened.status(book).book.id, job.book.id); assert.equal(reopened.status(book).recognizedCharacters, 24);
   assert.throws(() => reopened.queue(book, { languages: ['eng;evil'] }), { status: 422 });
 });
 

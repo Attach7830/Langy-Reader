@@ -19,11 +19,12 @@ class ServiceTests(unittest.TestCase):
             def scan(folder, codes, mode, rotate):
                 folders.append(folder); self.assertEqual(codes, ['chi_tra_vert', 'eng']); self.assertEqual(mode, 'redo'); self.assertFalse(rotate)
                 (folder / 'output.pdf').write_bytes(b'%PDF-1.4\nsearchable output\n%%EOF')
-                return {'pages': 2, 'textPages': 1}
+                return {'pages': 2, 'textPages': 1, 'recognizedCharacters': 0, 'scannedPages': 1, 'skippedPages': 1}
             with patch.object(service, 'scan', side_effect=scan):
                 response = client.post('/ocr?languages=chi_tra_vert%2Beng&rotate=0', headers=headers, content=b'%PDF-1.4\nscanned source')
             self.assertEqual(response.status_code, 200); self.assertEqual(response.headers['content-type'], 'application/pdf')
             self.assertEqual(response.headers['x-langy-ocr-pages'], '2'); self.assertEqual(response.headers['x-langy-ocr-text-pages'], '1')
+            self.assertEqual(response.headers['x-langy-ocr-characters'], '0'); self.assertEqual(response.headers['x-langy-ocr-scanned-pages'], '1'); self.assertEqual(response.headers['x-langy-ocr-skipped-pages'], '1')
             self.assertTrue(response.content.startswith(b'%PDF-')); self.assertFalse(folders[0].exists())
             service.lock.acquire()
             try: self.assertEqual(client.post('/ocr', headers=headers, content=b'%PDF-1.4').status_code, 409)
