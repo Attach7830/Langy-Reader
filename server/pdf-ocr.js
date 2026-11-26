@@ -11,7 +11,7 @@ import { ocrSettings } from './ocr-settings.js';
 import { ocrHTTP, ocrRequestTimeout } from './ocr-http.js';
 
 export async function openPDFOCR(dir, { library, demo = false, onImport = () => {}, request,
-  workerURL = process.env.READER_LANGUAGE_URL || 'http://127.0.0.1:8091', now = Date.now }) {
+  workerURL = process.env.READER_LANGUAGE_URL || 'http://127.0.0.1:8091', now = Date.now, progressInterval = 2000 }) {
   const transport = request ? null : ocrHTTP();
   request ||= transport.request;
   const db = new DatabaseSync(join(dir, 'pdf-ocr.sqlite'));
@@ -26,9 +26,32 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
     if (['running', 'importing'].includes(job.state)) { job.state = 'queued'; persist(job); }
   }
   const publicJob = (job) => { if (!job) return null; const { owner, expires, bytes, ...book } = job.result || {};
-    return { id: job.id, state: job.state, languages: job.languages, error: job.error, errorCode: job.errorCode, notice: job.notice, retryAt: job.retryAt, book: job.result ? book : undefined, inPlace: job.result?.id === job.source, pages: job.pages, textPages: job.textPages, recognizedCharacters: job.recognizedCharacters, scannedPages: job.scannedPages, skippedPages: job.skippedPages }; };
+    return { id: job.id, state: job.state, languages: job.languages, error: job.error, errorCode: job.errorCode, notice: job.notice, retryAt: job.retryAt, startedAt: job.startedAt, updatedAt: job.updatedAt, scanProgress: job.scanProgress, book: job.result ? book : undefined, inPlace: job.result?.id === job.source, pages: job.pages, textPages: job.textPages, recognizedCharacters: job.recognizedCharacters, scannedPages: job.scannedPages, skippedPages: job.skippedPages }; };
   const status = (book) => publicJob([...jobs.values()].filter((job) => job.source === book.id).at(-1));
   const languages = () => connection.languages();
+  function watchProgress(job, selected, signal) {
+    const controller = new AbortController(); let timer, missing = 0;
+    async function poll() {
+      if (closed || controller.signal.aborted || job.state !== 'running') return;
+      try {
+        const url = new URL(selected.baseUrl.replace(/\/+$/u, '') + '/ocr/progress/' + encodeURIComponent(job.id));
+        const response = await request(url, { redirect: 'error', headers: selected.apiKey ? { Authorization: `Bearer ${selected.apiKey}` } : {},
+          signal: AbortSignal.any([signal, controller.signal, AbortSignal.timeout(8000)]) });
+        const value = response.ok ? await response.json() : null;
+        if (!response.ok) await response.body?.cancel?.();
+        if ([404, 405, 501].includes(response.status) && ++missing >= 3) return; // Older services remain usable.
+        if (!closed && !controller.signal.aborted && job.state === 'running' && value?.job === job.id
+          && Number.isSafeInteger(value.complete) && Number.isSafeInteger(value.total) && value.total > 0 && value.total <= 2000
+          && value.complete >= 0 && value.complete <= value.total && ['preparing', 'scanning', 'saving'].includes(value.phase)) {
+          const next = { phase: value.phase, complete: value.complete, total: value.total };
+          if (JSON.stringify(next) !== JSON.stringify(job.scanProgress)) { job.scanProgress = next; job.updatedAt = now(); persist(job); }
+        }
+      } catch { /* An unavailable progress endpoint must never interrupt OCR. */ }
+      if (!closed && !controller.signal.aborted && job.state === 'running') { timer = setTimeout(poll, progressInterval); timer.unref?.(); }
+    }
+    timer = setTimeout(poll, progressInterval); timer.unref?.();
+    return () => { clearTimeout(timer); controller.abort(); };
+  }
   async function pump() {
     if (running || closed || demo) return;
     clearTimeout(retryTimer);
@@ -39,14 +62,16 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
         if (job.retryAt > now()) break;
         const temporary = join(library.uploads, `ocr-${job.id}.pdf`);
         const controller = new AbortController(); controllers.set(job.id, controller);
+        let stopProgress = () => {};
         try {
-          job.state = 'running'; job.error = null; job.errorCode = null; job.notice = null; job.retryAt = null; persist(job);
+          job.state = 'running'; job.startedAt = job.updatedAt = now(); job.scanProgress = null; job.error = null; job.errorCode = null; job.notice = null; job.retryAt = null; persist(job);
           const book = library.getBook(job.source);
           if (book.contentRevision === job.id) { job.result = book; job.state = 'ready'; persist(job); try { onImport(book); } catch {} continue; }
           if (job.connection && job.connection !== connection.fingerprint()) throw new RequestError(409, 'The OCR connection changed while this scan was queued. Queue the PDF again to use the new connection.');
           const selected = connection.connection(job.provider || 'builtin');
+          if (selected.provider === 'paddle') stopProgress = watchProgress(job, selected, controller.signal);
           const url = new URL(selected.baseUrl.replace(/\/+$/u, '') + '/ocr'); url.search = new URLSearchParams({ languages: job.languages.join('+'), rotate: job.rotate ? '1' : '0', mode: job.mode || 'redo' });
-          const response = await request(url, { method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/pdf', ...(selected.apiKey ? { Authorization: `Bearer ${selected.apiKey}` } : {}) },
+          const response = await request(url, { method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/pdf', 'X-Langy-OCR-Job': job.id, ...(selected.apiKey ? { Authorization: `Bearer ${selected.apiKey}` } : {}) },
             body: createReadStream(library.filePath(book)), duplex: 'half', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(ocrRequestTimeout)]) });
           if (!response.ok) {
             let body; try { body = await response.json(); } catch {}
@@ -67,7 +92,8 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
             const raw = response.headers.get('X-Langy-OCR-' + header), value = Number(raw);
             job[field] = raw !== null && Number.isSafeInteger(value) && value >= 0 ? value : null;
           }
-          job.state = 'importing'; persist(job);
+          if (job.pages > 0) job.scanProgress = { phase: 'saving', complete: job.pages, total: job.pages };
+          job.state = 'importing'; job.updatedAt = now(); persist(job);
           const current = library.getBook(book.id);
           job.result = await library.replacePDF(book.id, { path: temporary, size }, {
             revision: job.id, expectedRevision: book.contentRevision, ...ocrBookLanguages(current, job.languages),
@@ -80,7 +106,7 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
           job.error = error instanceof RequestError ? error.message : 'PDF OCR ended before the result was saved. Check the reader and OCR service logs, then retry.';
           if (!(error instanceof RequestError)) console.error('PDF OCR request failed', { code: job.errorCode });
         } persist(job); }
-        finally { controllers.delete(job.id); await rm(temporary, { force: true }); }
+        finally { stopProgress(); controllers.delete(job.id); await rm(temporary, { force: true }); }
       }
     } finally {
       running = false;
