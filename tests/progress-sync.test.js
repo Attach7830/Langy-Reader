@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { once } from 'node:events';
 import { mkdtemp, open, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
+import { createServer as createHTTPServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -25,7 +26,7 @@ const deviceHeaders = (user = 'reader', password = 'test-reader-password') => ({
   'Content-Type': 'application/json',
 });
 
-async function fixture(t, { demo = false, password = 'test-reader-password', syncUser = '', syncPassword = '' } = {}) {
+async function fixture(t, { demo = false, password = 'test-reader-password', syncUser = '', syncPassword = '', languageURL = 'http://127.0.0.1:1' } = {}) {
   const folder = await mkdtemp(join(tmpdir(), 'langy-progress-'));
   const library = await openLibrary(folder);
   const bytes = await sampleBook();
@@ -45,7 +46,7 @@ async function fixture(t, { demo = false, password = 'test-reader-password', syn
     child = spawn(process.execPath, ['server/index.js'], { cwd: root, env: { ...process.env,
       PORT: String(port), READER_DATA: folder, READER_DEMO: demo ? '1' : '0',
       READER_USER: 'reader', READER_PASSWORD: password, READER_SYNC_USER: syncUser, READER_SYNC_PASSWORD: syncPassword,
-      READER_LANGUAGE_URL: 'http://127.0.0.1:1', READER_KOKORO_URL: '',
+      READER_LANGUAGE_URL: languageURL, READER_KOKORO_URL: '',
     }, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout.on('data', (value) => { output = (output + value).slice(-12000); });
     child.stderr.on('data', (value) => { output = (output + value).slice(-12000); });
@@ -462,4 +463,42 @@ test('process overview and book pinyin require login and keep book data persiste
   const db = new DatabaseSync(join(f.folder, 'book-pinyin.sqlite')); assert.equal(db.prepare('SELECT count(*) AS n FROM passages').get().n, 1); db.close();
   base = await f.start();
   assert.deepEqual(await response(base, '/api/books/sync-book/pinyin', { method: 'POST', headers: json, body: JSON.stringify({ text: '有意思' }) }), data);
+});
+
+test('the priority API keeps one active task and permits only the owner to promote queued work', async (t) => {
+  let release, entered;
+  const held = new Promise((resolve) => { release = resolve; }), requested = new Promise((resolve) => { entered = resolve; });
+  const engine = createHTTPServer(async (request, result) => {
+    for await (const chunk of request) void chunk;
+    if (request.url === '/analyze') { entered(); await held; }
+    result.setHeader('Content-Type', 'application/json'); result.end(JSON.stringify({ tokens: [], lemmas: [], method: 'contextual' }));
+  });
+  engine.listen(0, '127.0.0.1'); await once(engine, 'listening');
+  t.after(async () => { release(); engine.closeAllConnections(); await new Promise((resolve) => engine.close(resolve)); });
+  const f = await fixture(t, { languageURL: `http://127.0.0.1:${engine.address().port}` });
+  const path = join(f.library.uploads, 'second-book'); await writeFile(path, f.bytes);
+  await f.library.importBook('other-book', { originalname: 'Other.epub', path, size: f.bytes.length }, { title: 'Other book', language: 'es' });
+  const base = await f.start(); await response(base, '/api/library', { headers: json });
+  await Promise.race([requested, delay(10000).then(() => { throw new Error('Vocabulary worker did not start'); })]);
+  const before = await response(base, '/api/processes', { headers: json });
+  assert.equal(before.sequential, true); assert.equal(before.jobs.filter((job) => job.state === 'running').length, 1);
+  const active = before.jobs.find((job) => job.state === 'running');
+  const queued = before.jobs.find((job) => job.kind === 'analysis' && job.state === 'queued' && job.canPrioritize);
+  assert.ok(queued, JSON.stringify(before.jobs));
+  const priority = `/api/processes/${encodeURIComponent(queued.id)}/priority`;
+  assert.equal((await fetch(base + priority, { method: 'POST' })).status, 401);
+  await response(base, priority, { method: 'POST', headers: { ...json, Origin: 'https://untrusted.invalid' }, status: 403 });
+  await response(base, '/api/admin/users', { method: 'POST', headers: json, status: 201,
+    body: JSON.stringify({ username: 'queue-member', password: 'queue-member-test-password' }) });
+  const member = { Authorization: 'Basic ' + Buffer.from('queue-member:queue-member-test-password').toString('base64'), 'Content-Type': 'application/json' };
+  await response(base, priority, { method: 'POST', headers: member, status: 404 });
+  const raised = await response(base, priority, { method: 'POST', headers: json, status: 202 }); assert.ok(raised.priority > 0);
+  const after = await response(base, '/api/processes', { headers: json });
+  assert.equal(after.jobs.find((job) => job.state === 'running').id, active.id, 'raising priority must not interrupt the current task');
+  assert.ok(after.jobs.find((job) => job.id === queued.id).priority > 0);
+  await response(base, `/api/books/${queued.bookId}`, { method: 'PATCH', headers: json, body: JSON.stringify({ shared: true }) });
+  const shared = await response(base, '/api/processes', { headers: member });
+  assert.equal(shared.jobs.find((job) => job.id === queued.id).canPrioritize, false);
+  await response(base, priority, { method: 'POST', headers: member, status: 403 });
+  release();
 });
