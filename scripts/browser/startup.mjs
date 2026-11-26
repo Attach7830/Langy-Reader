@@ -59,6 +59,17 @@ try {
     await navigating; await page.locator('#startup-loading').waitFor({ state: 'hidden' });
     await page.locator(`[data-book="${books[0].id}"]`).waitFor(); await page.unroute('**/api/library', hold);
     results.push({ name: `${mode} shows startup until the library is ready`, pass: true });
+    const syncedLibrary = await (await context.request.get(base + '/api/library')).json();
+    const syncedBooks = async (route) => route.fulfill({ json: { ...syncedLibrary, books: syncedLibrary.books.map((book) => ({ ...book, audioSynced: book.id === books[0].id })) } });
+    await page.route('**/api/library', syncedBooks);
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('langy-audio-updated')));
+    const syncedBadge = page.locator(`[data-book="${books[0].id}"] .book-audio-badge`); await syncedBadge.waitFor();
+    assert.equal(await syncedBadge.innerText(), 'Audio synced');
+    assert.equal(await page.locator(`[data-book="${books[1].id}"] .book-audio-badge`).count(), 0);
+    assert.equal(await syncedBadge.isVisible(), true);
+    await page.screenshot({ path: `browser-results/audio-synced-${mode}.png` });
+    await page.unroute('**/api/library', syncedBooks);
+    results.push({ name: `${mode} refreshes the library’s Audio synced label after an audio update`, pass: true });
     if (mode === 'desktop') {
       const refreshing = gate(), refreshArrived = gate(), patching = gate(), patchArrived = gate();
       const holdRefresh = async (route) => { refreshArrived.release(); await refreshing.promise; await route.continue(); };
