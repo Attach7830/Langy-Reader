@@ -76,3 +76,11 @@ test('cancelling active EPUB conversion aborts its worker and removes temporary 
   assert.equal(service.list(visitor)[0].state,'converting');assert.throws(()=>service.cancel(job.id,{id:'other'}),{status:404});service.cancel(job.id,visitor);await running;
   assert.equal(service.list(visitor)[0].state,'cancelled');assert.deepEqual(await readdir(library.uploads),[]);assert.equal(library.snapshot(visitor).books.length,0);
 });
+
+
+test('converted documents infer their actual language rather than inheriting the converter English default',async(t)=>{
+  const dir=await setup(t),library=await openLibrary(dir),text='As crianças caminhavam pelas ruas da cidade e ouviam as histórias que a avó contava. Todas as tardes elas se sentavam perto da janela para ler um livro. A casa ficava perto do rio e dali podiam ver as montanhas e as árvores da floresta. Ninguém sabia o que aconteceria no dia seguinte.';
+  const path=join(library.uploads,'source.txt');await writeFile(path,text);const metadata=await detectBookMetadata(new File([text],'A Portuguese story.txt'));assert.equal(metadata.title,'A Portuguese story');assert.equal(metadata.language,'pt');
+  const convert=bookConverter({binary}),file=await convert({path,originalname:'A Portuguese story.txt'}),book=await library.importBook('automatic-language',file,{});await file.cleanup();assert.equal(book.language,'pt');assert.equal(book.title,'A Portuguese story');
+  const manual=await convert({path,originalname:'A Portuguese story.txt'},{details:{language:'es',title:'My title'}}),overridden=await library.importBook('manual-language',manual,{});await manual.cleanup();assert.equal(overridden.language,'es');assert.equal(overridden.title,'My title');
+});
