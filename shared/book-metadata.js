@@ -98,5 +98,5 @@ export function pdfMetadataValues({ info = {}, metadata } = {}) {
 }
 
 export function filenameTitle(name) {
-  return cleanMetadata(String(name).replace(/\.(?:epub|pdf)$/iu, '').replaceAll('_', ' '));
+  return cleanMetadata(String(name).replace(/\.(?:epub|pdf|txt|md|markdown|html|htm|xhtml|docx|odt|rtf|fb2)$/iu, '').replaceAll('_', ' '));
 }
