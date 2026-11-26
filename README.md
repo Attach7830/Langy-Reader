@@ -4,6 +4,26 @@ Langy Reader is a self-hosted EPUB and PDF library for language learning. Organi
 
 See it in action at https://langy.srtw.win | Screenshots at https://imgur.com/a/wzt5KDB
 
+## Series, document conversion and connected libraries
+
+Import or edit a book to set its **Series** and optional **Book number** (fractional numbers such as 1.5 are supported). Filter by series or choose **Series order** to read in sequence. Series metadata survives OCR replacement.
+
+EPUB and PDF open directly, up to the existing 120 MiB self-hosted limit. **TXT (UTF-8), Markdown, HTML/XHTML, DOCX, ODT, RTF and FB2** can be uploaded for background conversion to EPUB, up to **30 MiB** (20 MiB in the public demo). Conversion preserves text, headings and supported embedded raster images; complex layouts can change. External/local linked images, active content and source-provided converter options are removed. PDF stays PDF; use OCR for scanned PDFs. MOBI, AZW/KFX, DRM, spreadsheets, presentations and image archives are not offered as automatic conversions. Only upload documents you are entitled to use.
+
+The reader image includes a checksum-pinned official **Pandoc 3.14** static binary for amd64/arm64. It runs separately with sandboxing, a 512 MiB managed-heap cap, a two-minute timeout, compressed-container expansion limits and no inherited provider credentials. Native Node installations should run `sudo sh scripts/install-pandoc.sh` first, or set `LANGY_PANDOC_BIN` to that static binary. The converter is GPL v2 or later; its license is in [licenses/pandoc-GPL-2.txt](licenses/pandoc-GPL-2.txt), and the image includes upstream copying conditions and corresponding-source links in `/usr/local/share/doc/langy-pandoc/`.
+
+In **Settings → Book sources → Kavita**, paste your personal OPDS URL from Kavita's **User settings → 3rd Party Clients**. The URL must be reachable from the Langy container; use a LAN address or a shared Docker-network service name rather than `localhost` for another container. Optional HTTP Basic credentials are supported. Save and test, then **Browse Kavita** from settings or Import book. Browse collections, search when the feed provides OpenSearch, and queue EPUB/PDF acquisitions into your own folder. This connection only browses and imports; it does not change Kavita or synchronize reading progress. Each Langy account has its own private connection. Feed keys and credentials are stored server-side with restricted file permissions, never returned in catalogue JSON, and never forwarded to another origin. Configure Kavita's hostname so its feed links use the same origin as the URL you saved.
+
+Cover imports and accepted OCR scans close their dialogs immediately; follow progress, retry errors, or reopen Details in **Process queue**. Conversions and Kavita downloads also run there, continue when their dialogs close, and refresh the library when finished. Conversion source files are removed after success, failure or cancellation; upload the original again to retry a failed conversion. Web/Kavita downloads can be retried from the queue.
+
+## Optional reading profile
+
+Open **Reading profile** in the library sidebar or the mobile library menu. Its responsive graph shows actual vocabulary first encounters, daily familiar-vocabulary observations, or input-hour observations. Mandarin uses **Han characters**; other languages use **lemmas**. Counts are kept separate by language, and your configured **L1 is excluded from all profile API results, graphs, estimates and selectors**, including regional/script variants.
+
+Add estimated **input hours outside Langy**, excluding time already tracked in the app, and optional reading/listening comprehension checks. The page combines this context with repeated exposure, your familiarity threshold, books encountered and active reading hours. The broad ACTFL-inspired ranges come from the comprehension checks; vocabulary counts and hours do not automatically award a level. There is no validated universal conversion from hours or lemma/Han-character counts to OPI/CEFR proficiency. Reading/listening self-estimates do not measure speaking or writing. The page links to the [ACTFL overview](https://www.actfl.org/proficiency-guidelines-overview) and [Nation's English coverage research](https://www.lextutor.ca/cover/papers/nation_2006.pdf); English word families are not equated to lemmas or Han characters. No AI calls or paid tokens are needed for this page.
+
+First-encounter history can be reconstructed from saved exposure records. Familiar-vocabulary and input-hour observations begin when you first use the profile, without inventing an earlier curve. They are saved to your account and survive restarts; demo data expires with the session. Changing L1 hides its stored history without erasing it, and changing the exposure threshold filters the familiar-vocabulary graph to matching observations. This optional page adds no streaks, scores or ranking to the library.
+
 ## Run it on your server
 
 On a Docker host with Docker Compose installed:
