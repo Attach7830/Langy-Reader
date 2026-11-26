@@ -303,8 +303,10 @@ test('reading profile renders one language at a time, removes L1 even from stale
   const language = (code) => ({ language:code, unit:code==='zh'?'characters':'lemmas', seen:30, likelyKnown:5, exposures:120, trackedExposures:100, completionExposures:20, books:2, authors:1, trackedHours:1, outsideHours:2, totalHours:3, readingCheck:2, listeningCheck:1, readingEstimate:{range:'Novice–Intermediate',evidence:'Partial exposure record'}, listeningEstimate:{range:'Novice',evidence:'Partial exposure record'}, history:{seen:[{date:'2026-11-20',seen:20},{date:'2026-11-26',seen:30}],observations:[{date:'2026-11-26',known:5,threshold:20,hours:3}]} });
   const data={accountId:'reader-account',threshold:20,languages:['en','es','zh'].map(language)};
   globalThis.fetch=async(_path,options={})=>{if(options.method==='PUT')saved=JSON.parse(options.body);return Response.json(data);};
+  document.querySelector('#proficiency-chart').getBoundingClientRect=()=>({width:340});
   ui=proficiencyPage({preferences:()=>({nativeLanguage:l1})});await ui.open();
   assert.deepEqual([...document.querySelector('#proficiency-language').options].map((item)=>item.value),['es','zh']);
+  assert.equal(document.querySelector('#proficiency-chart svg').getAttribute('viewBox'),'0 0 340 260');
   assert.equal(document.querySelectorAll('#proficiency-chart svg').length,1);assert.match(document.querySelector('#proficiency-reading-range').textContent,/Novice/u);
   document.querySelector('#proficiency-input-hours').value='150';document.querySelector('#proficiency-form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));await until(()=>Boolean(saved));assert.equal(saved.accountId,'reader-account');assert.equal(saved.hours,150);assert.equal(saved.language,'es');
   l1='zh-Hant';await ui.open();assert.ok(![...document.querySelector('#proficiency-language').options].some((item)=>item.value==='zh'));
