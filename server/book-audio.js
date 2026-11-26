@@ -187,6 +187,12 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
 
   return {
     status, queue, segment, assemble, cancel, files,
+    isSynced(book) {
+      const ready = db.prepare("SELECT digest FROM book_audio WHERE book=? AND state='ready' AND duration>0 AND json_array_length(segments)>0").all(book.id);
+      if (!ready.length) return false;
+      const current = db.prepare('SELECT key,digest,markers FROM chapters WHERE book=? ORDER BY ordinal').all(book.id);
+      return current.length > 0 && ready.some((row) => row.digest === digest(current));
+    },
     next: () => db.prepare(`SELECT * FROM book_audio WHERE state='queued' AND kind='generated'
       AND NOT EXISTS (SELECT 1 FROM json_each(book_audio.parts) part JOIN audio a ON a.id=json_extract(part.value,'$.id')
         WHERE a.state IN ('queued','generating','aligning')) ORDER BY created,rowid LIMIT 1`).get(),
