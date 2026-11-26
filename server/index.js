@@ -16,6 +16,7 @@ import { openFonts, fontUploadLimit } from './fonts.js';
 import { openAIProfiles } from './ai-profiles.js';
 import { openAISettings } from './ai.js';
 import { openProcesses } from './processes.js';
+import { openProcessScheduler } from './process-scheduler.js';
 import { openAICache } from './ai-cache.js';
 import { openThesaurus } from './thesaurus.js';
 import { vocabularyMeanings } from './vocabulary-meanings.js';
@@ -49,6 +50,7 @@ const limits = demo ? { upload: demoUploadLimit, books: demoBookLimit, storage: 
 let accountStorage;
 const reserveStorage = (owner, bytes) => accountStorage ? accountStorage.reserve(owner, bytes) : Promise.resolve(() => {});
 const library = await openLibrary(dir, limits, { reserveStorage });
+const scheduler = openProcessScheduler(dir, { paused: true });
 const password = process.env.READER_PASSWORD || '';
 const accounts = await openAccounts(dir, { demo, username: process.env.READER_USER || 'reader', password, reservedUsernames: [process.env.READER_SYNC_USER] });
 const readerSettings = openReaderSettings(dir, { demo, username: process.env.READER_USER || 'reader', ownerFor: accounts.preferenceOwner });
@@ -76,12 +78,12 @@ const aiCache = openAICache(dir, { identity: aiProfiles.cacheIdentity,
   },
 });
 const ai = aiCache.wrap(aiProfiles), withAI = (visitor, task) => aiProfiles.run(visitor, () => aiCache.run(visitor, task));
-const discovery = openBookDiscovery(dir, { library, ai, demo, withAI, visitorForOwner: accounts.visitorForOwner });
+const discovery = openBookDiscovery(dir, { library, ai, demo, withAI, visitorForOwner: accounts.visitorForOwner, scheduler });
 const lookupSynonyms = openThesaurus();
 const mandarin = openMandarin();
 const bookPinyin = openBookPinyin(dir, mandarin, { demo });
 const nativeLanguage = (visitor) => readerSettings.get(visitor).preferences.nativeLanguage || '';
-const learning = await openLearning(dir, library, demo, ai, { nativeLanguage, withAI, reserveStorage });
+const learning = await openLearning(dir, library, demo, ai, { nativeLanguage, withAI, reserveStorage, scheduler });
 const readingTime = openReadingTime(dir, { section: (book, key) => learning.vocabulary.section(book, key) });
 const toolsForBook = bookTools({ learning, ai });
 const offlinePack = offlinePacks({ learning, mandarin, lookupSynonyms });
@@ -97,12 +99,13 @@ const storageFor = (visitor) => demo ? library.storage(visitor) : accountStorage
 const covers = await openCoverSearch(dir,{demo});
 const freeFonts = fontDownloads({fonts:userFonts,uploads:library.uploads});
 const vocabularyMeaning = vocabularyMeanings({ vocabulary: learning.vocabulary, ai, lookupSynonyms });
-const archive = await openArchive(dir, { library, demo, canUseShared: accounts.canUseArchiveKey, visitorForOwner: accounts.visitorForOwner, activeOwner: (owner) => accounts.policyForOwner(owner).active, onImport: (book, details) => learning.scheduleAudiobook(library.getBook(book.id), details) });
-const ocr = await openPDFOCR(dir, { library, demo, onImport: (book) => learning.ensure(library.getBook(book.id)) });
-const audiobookshelf = await openAudiobookshelf(dir, { library, learning, demo });
+const archive = await openArchive(dir, { library, demo, scheduler, canUseShared: accounts.canUseArchiveKey, visitorForOwner: accounts.visitorForOwner, activeOwner: (owner) => accounts.policyForOwner(owner).active, onImport: (book, details) => scheduler.outside(() => learning.scheduleAudiobook(library.getBook(book.id), details)) });
+const ocr = await openPDFOCR(dir, { library, demo, scheduler, onImport: (book) => scheduler.outside(() => learning.ensure(library.getBook(book.id))) });
+const audiobookshelf = await openAudiobookshelf(dir, { library, learning, demo, scheduler });
 const kavita = await openKavita(dir, { demo });
-const webImports = await openBookImports(dir,{library,demo,connector:kavita,reserveStorage,visitorForOwner:accounts.visitorForOwner,activeOwner:(owner)=>demo||accounts.policyForOwner(owner).active,onImport:(book,details)=>{learning.ensure(library.getBook(book.id));learning.scheduleAudiobook(library.getBook(book.id),details);}});
-const processes = openProcesses(dir, { library, webImports, archive, discovery, learning, demo, account: readingAccount });
+const webImports = await openBookImports(dir,{library,demo,scheduler,connector:kavita,reserveStorage,visitorForOwner:accounts.visitorForOwner,activeOwner:(owner)=>demo||accounts.policyForOwner(owner).active,onImport:(book,details)=>scheduler.outside(()=>{learning.ensure(library.getBook(book.id));learning.scheduleAudiobook(library.getBook(book.id),details);})});
+const processes = openProcesses(dir, { library, webImports, archive, discovery, learning, demo, account: readingAccount, scheduler });
+scheduler.resume();
 const uploadLimit = limits?.upload ?? maxUpload;
 const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 12, fieldSize: 4096 } });
 const audioUpload = multer({ dest: library.uploads, limits: { fileSize: maxAudioUpload, files: 1, fields: 1, fieldSize: 1024 } });
@@ -337,6 +340,13 @@ app.post('/api/imports/convert', ...demoUploads, (req,res,next)=>{req.conversion
 app.get('/api/imports/web', (req,res)=>res.json({jobs:webImports.list(req.visitor)}));
 app.post('/api/imports/web/:id/retry',(req,res)=>res.status(202).json(webImports.retry(req.params.id,req.visitor)));
 app.get('/api/processes', (req, res) => res.json(processes.list(req.visitor)));
+app.post('/api/processes/:id/priority', (req, res) => {
+  const job = processes.list(req.visitor).jobs.find((item) => item.id === req.params.id);
+  if (!job) throw new RequestError(404, 'Process not found.');
+  if (!job.canPrioritize) throw new RequestError(403, 'Only the owner can raise the priority of a queued task.');
+  if (job.kind === 'audiobookshelf' && !usesOwnerAudiobookshelf(req)) throw new RequestError(403, 'This Audiobookshelf connection belongs to the instance owner.');
+  res.status(202).json(scheduler.raise(job.id));
+});
 app.delete('/api/processes/:id', async (req,res) => {
   const job=processes.list(req.visitor).jobs.find((item) => item.id === req.params.id);
   if (!job) throw new RequestError(404,'Process not found.');
@@ -349,7 +359,7 @@ app.delete('/api/processes/:id', async (req,res) => {
   else if (job.kind === 'audiobookshelf') { if (!usesOwnerAudiobookshelf(req)) throw new RequestError(403,'This Audiobookshelf connection belongs to the instance owner.'); audiobookshelf.cancel(book,id); }
   else if (job.kind === 'ivoox') learning.ivoox.cancel(book);
   else learning.cancelProcess(job.kind,book,id);
-  res.json({cancelled:true});
+  scheduler.wake(true); res.json({cancelled:true});
 });
 app.post('/api/discovery', ...(demo ? [limitJobs({ perMinute: 6, perVisitor: 2 })] : []), (req, res) => res.status(202).json(discovery.queue(req.body ?? {}, req.visitor)));
 app.delete('/api/discovery', (req, res) => res.json(discovery.cancel(req.visitor)));
