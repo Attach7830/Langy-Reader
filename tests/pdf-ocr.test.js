@@ -7,7 +7,55 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { openLibrary } from '../server/books.js';
 import { openPDFOCR } from '../server/pdf-ocr.js';
 import { DatabaseSync } from 'node:sqlite';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 async function until(check) { for (let i = 0; i < 250; i++) { const value = check(); if (value) return value; await delay(10); } throw new Error('OCR job timed out'); }
+
+test('the real OCR HTTP transport saves the complete PDF and keeps language probes responsive during processing', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'langy-ocr-http-save-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const library = await openLibrary(dir), source = Buffer.from('%PDF-1.4\noriginal scan\n%%EOF'), output = Buffer.from('%PDF-1.4\ncomplete searchable result\n%%EOF');
+  const path = join(library.uploads, 'scan.pdf'); await writeFile(path, source);
+  const book = await library.importBook('http-scan', { path, originalname: 'scan.pdf', size: source.length }, { language: 'zh' });
+  let receive, release;
+  const received = new Promise((resolve) => { receive = resolve; }), ready = new Promise((resolve) => { release = resolve; });
+  const server = createServer(async (request, response) => {
+    assert.equal(request.headers.authorization, 'Bearer synthetic-ocr-key');
+    if (request.url === '/ocr/languages') {
+      response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ engine: 'paddleocr', protocol: 1, languages: ['chi_sim', 'eng'] })); return;
+    }
+    const parts = []; for await (const part of request) parts.push(part);
+    assert.deepEqual(Buffer.concat(parts), source); receive(); await ready;
+    response.writeHead(200, { 'Content-Type': 'application/pdf', 'X-Langy-OCR-Pages': '1', 'X-Langy-OCR-Text-Pages': '1', 'X-Langy-OCR-Characters': '28' });
+    response.end(output);
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => { release(); server.closeAllConnections(); return new Promise((resolve) => server.close(resolve)); });
+  const service = await openPDFOCR(dir, { library }); t.after(() => service.close());
+  await service.save({ provider: 'paddle', baseUrl: `http://127.0.0.1:${server.address().port}`, apiKey: 'synthetic-ocr-key' });
+  service.queue(book, { languages: ['chi_sim'] }); await received;
+  assert.deepEqual(await service.languages(), ['chi_sim', 'eng'], 'a scan waiting for response headers must not block connection checks');
+  assert.equal(service.status(book).state, 'running'); release();
+  const job = await until(() => ['ready', 'error'].includes(service.status(book)?.state) && service.status(book));
+  assert.equal(job.state, 'ready', job.error); assert.equal(job.book.id, book.id); assert.equal(job.recognizedCharacters, 28);
+  assert.deepEqual(await readFile(library.filePath(library.getBook(book.id))), output);
+  assert.deepEqual(await readFile(library.filePath(book)), source);
+});
+
+test('OCR transport failure records a diagnostic code without exposing credentials or replacing the source PDF', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'langy-ocr-http-error-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const library = await openLibrary(dir), source = Buffer.from('%PDF-1.4\noriginal\n%%EOF'), path = join(library.uploads, 'scan.pdf'); await writeFile(path, source);
+  const book = await library.importBook('failed-http-scan', { path, originalname: 'scan.pdf', size: source.length }, {});
+  const service = await openPDFOCR(dir, { library, request: async (_url, options) => {
+    for await (const _part of options.body) {}
+    throw new TypeError('fetch failed for a URL containing synthetic-private-key', { cause: Object.assign(new Error('private connection details'), { code: 'UND_ERR_HEADERS_TIMEOUT' }) });
+  } }); t.after(() => service.close());
+  service.queue(book, { languages: ['eng'] });
+  const job = await until(() => service.status(book)?.state === 'error' && service.status(book));
+  assert.equal(job.errorCode, 'UND_ERR_HEADERS_TIMEOUT'); assert.match(job.error, /before the result was saved/u);
+  assert.equal(JSON.stringify(job).includes('synthetic-private-key'), false);
+  assert.deepEqual(await readFile(library.filePath(library.getBook(book.id))), source);
+  assert.equal(library.getBook(book.id).ocrComplete, false);
+});
 
 test('PDF OCR updates the same book, keeps metadata and original bytes, and exposes installed languages', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'langy-pdf-ocr-')); t.after(() => rm(dir, { recursive: true, force: true }));
