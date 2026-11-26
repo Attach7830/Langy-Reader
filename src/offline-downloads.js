@@ -168,7 +168,7 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
       message('#offline-progress', 'Offline copy removed from this device. The server’s copy is unchanged.');
     } catch (error) { message('#offline-error', error.message); }
   });
-  const unwatch = watchAppCapability(() => { renderJobs(queue.snapshot()); void resume(); });
+  const unwatch = watchAppCapability((enabled) => { renderJobs(queue.snapshot()); void resume(); if (enabled) void refreshOfflineReader(); });
   return { dispose() { unwatch(); unsubscribe(); unsubscribeSettings(); clearTimeout(expiry); surface.removeEventListener('langy-clear-finished-downloads', clearFinished); queue.close(); surface.removeEventListener('langy-offline-account', accountReady); surface.removeEventListener('online', resume); surface.removeEventListener('focus', resume); }, async open(book) {
     if (!androidApp()) throw new Error('Offline book downloads are available in the Langy Android app.');
     selected = book; const version = ++epoch; message('#offline-error'); message('#offline-progress'); $('#offline-book-title').textContent = book.title;
