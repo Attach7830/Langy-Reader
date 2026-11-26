@@ -341,7 +341,7 @@ function positionChanged(position) {
   if (changed && !position.reflowed) readingSync.changed();
   if (changed && !position.reflowed) absProgress.changed();
   $('#page-label').textContent = position.label;
-  const heading = position.heading || position.label;
+  const heading = [activeBook.format === 'pdf' && activeBook.ocrComplete ? bookFormatLabel(activeBook) : '', position.heading || position.label].filter(Boolean).join(' · ');
   $('#reading-subtitle').textContent = heading; $('#reading-subtitle').title = heading;
   $('#position-detail').textContent = position.detail;
   $('#previous').disabled = !position.previous;
