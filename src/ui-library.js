@@ -1,3 +1,4 @@
+import { importExtensions, importAccept, fileExtension, convertsToEPUB, conversionLimit } from '../shared/import-formats.js';
 import { $, api, bookFormatLabel, drawIcons, element, icon, message, toast } from './ui.js';
 import { languageName } from './settings.js';
 import { parseLanguage } from './languages.js';
@@ -296,7 +297,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     $('#empty-library').hidden = visible.length > 0;
     const filtering = filter || $('#book-format-filter').value || $('#book-series-filter').value || $('#reading-filter').value || !['', 'shelf'].includes($('#book-status-filter').value);
     $('#empty-title').textContent = filtering ? 'No matching books' : 'No books here yet';
-    $('#empty-detail').textContent = filtering ? 'Try a different search or filter.' : 'Import an EPUB or PDF to get started.';
+    $('#empty-detail').textContent = filtering ? 'Try a different search or filter.' : 'Import a book or document to get started.';
     drawIcons();
     message('#archive-import-status', importProgress(snapshot.archive?.job));
     $('#resume-slow-import').hidden = snapshot.archive?.job?.state !== 'needs_action';
@@ -575,15 +576,16 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   function stageFile(file) {
     metadataFields.start();
     selectedFile = file;
-    $('#file-label').textContent = selectedFile?.name || 'Choose an EPUB or PDF';
+    $('#file-label').textContent = selectedFile?.name || 'Choose a book or document';
     if (!file) return message('#book-error');
-    if (!/\.(epub|pdf)$/iu.test(file.name)) {
+    if (slowImport && !['epub','pdf'].includes(fileExtension(file.name))) { selectedFile=undefined; return message('#book-error','Choose the EPUB or PDF from the slow download. Documents can be converted with Upload file instead.'); }
+    if (!importExtensions.includes(fileExtension(file.name))) {
       selectedFile = undefined;
-      return message('#book-error', 'Choose an EPUB or PDF.');
+      return message('#book-error', 'Choose EPUB, PDF, TXT, Markdown, HTML, DOCX, ODT, RTF or FB2.');
     }
-    if (file.size > snapshot.maxUpload) {
+    if (file.size > Math.min(snapshot.maxUpload,convertsToEPUB(file.name)?conversionLimit:Infinity)) {
       selectedFile = undefined;
-      return message('#book-error', `Books must be ${snapshot.maxUpload / 1024 ** 2} MiB or smaller.`);
+      return message('#book-error', `Books must be ${Math.min(snapshot.maxUpload,convertsToEPUB(file.name)?conversionLimit:Infinity) / 1024 ** 2} MiB or smaller.`);
     }
     message('#book-error');
     metadataFields.start(file);
@@ -609,6 +611,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     $('#book-submit').textContent = isEdit ? 'Save book' : 'Import book';
     $('#remove-book').hidden = !isEdit;
     $('#file-field').hidden = isEdit;
+    $('#kavita-import-source').hidden = isEdit;
     $('#import-source-field').hidden = isEdit;
     $('#book-auto-audio').hidden = isEdit || snapshot.demo;
     bookForm.elements.autoAudiobook.disabled = isEdit || snapshot.demo;
@@ -618,7 +621,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     $('#archive-book-fields').hidden = true; $('#web-book-fields').hidden = true; $('#book-web-url').disabled=true; $('#gutenberg-results').replaceChildren(); $('#gutenberg-more').hidden=true;
     $('#book-source option[value=web]').disabled=snapshot.demo;
     message('#book-import-progress');
-    $('#file-limit').textContent = `Maximum ${snapshot.maxUpload / 1024 ** 2} MiB`;
+    $('#file-limit').textContent = `EPUB/PDF: ${snapshot.maxUpload / 1024 ** 2} MiB. Conversion: ${Math.min(snapshot.maxUpload,conversionLimit)/1024**2} MiB.`;
     const choices = [new Option('Uncategorized', ''), ...snapshot.categories.map(({ id, name, language }) => new Option(language ? `${name} · ${languageName(language)}` : name, id))];
     $('#book-categories').replaceChildren(...choices);
     const fields = bookForm.elements;
@@ -752,6 +755,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   $('#book-status-filter').addEventListener('change', render);
   $('#book-categories').addEventListener('change', showFolderLanguage);
   bookForm.elements.autoAudiobook.addEventListener('change', () => { bookForm.elements.audiobookDelayMinutes.disabled = !bookForm.elements.autoAudiobook.checked; });
+  $('#book-file').accept=importAccept;
   $('#book-file').addEventListener('change', (event) => stageFile(event.target.files[0]));
   bookForm.elements.coverUrl.addEventListener('input', () => { if (bookForm.elements.coverUrl.value.trim()) { bookForm.elements.coverStyle.value = 'auto'; coverPicker.refresh(); } });
   bookForm.elements.series.addEventListener('input', () => { bookForm.elements.seriesIndex.disabled = !bookForm.elements.series.value.trim(); });
@@ -817,7 +821,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     data.delete('archiveQueueUnavailable');
     if (archiveImport && !bulkImport.enabled() && !reference) return message('#book-error', 'Paste an Anna’s Archive book link or MD5.');
     if (webImport && !webURL) return message('#book-error','Paste a direct EPUB or PDF download link first.');
-    if (!editingBook && !archiveImport && !webImport && !selectedFile) return message('#book-error', 'Choose an EPUB or PDF within the upload limit.');
+    if (!editingBook && !archiveImport && !webImport && !selectedFile) return message('#book-error', 'Choose a supported book or document within the upload limit.');
     bookPending = true;
     $('#book-submit').disabled = true;
     $('#book-submit').textContent = editingBook ? 'Saving…' : 'Importing…';
@@ -849,6 +853,10 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
       } else {
         data.set('file', selectedFile);
         const coverUrl = data.get('coverUrl'); data.delete('coverUrl');
+        if(convertsToEPUB(selectedFile.name)){
+          if(coverUrl)data.set('coverUrl',coverUrl);
+          await api('/api/imports/convert',{method:'POST',body:data});bookDialog.close();toast('EPUB conversion queued');await refresh();return;
+        }
         const imported = await api('/api/books', { method: 'POST', body: data });
         if (coverUrl) { importBookCover(imported, String(coverUrl).trim()); void refresh().catch((error) => message('#library-error', error.message)); return; }
       }
