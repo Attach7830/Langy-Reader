@@ -22,6 +22,17 @@ export class RequestError extends Error {
 const covers = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif']);
 const list = (value) => value == null ? [] : [value].flat();
 const asText = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
+function seriesDetails(body, previous = {}) {
+  const value = body.series === undefined ? previous.series || '' : body.series;
+  if (typeof value !== 'string' || value.length > 200 || /[\x00-\x1f]/u.test(value)) throw new RequestError(422, 'Enter a series name of up to 200 characters.');
+  const series = value.trim().replace(/\s+/gu, ' ');
+  if (!series) return { series: '', seriesIndex: null };
+  const raw = body.seriesIndex === undefined ? previous.seriesIndex : body.seriesIndex;
+  if (raw == null || typeof raw === 'string' && !raw.trim()) return { series, seriesIndex: null };
+  const seriesIndex = Number(raw);
+  if (!['string', 'number'].includes(typeof raw) || !Number.isFinite(seriesIndex) || seriesIndex < 0 || seriesIndex > 1000000) throw new RequestError(422, 'Enter a series book number from 0 to 1,000,000, or leave it blank.');
+  return { series, seriesIndex };
+}
 
 export function normalizeLanguage(value) {
   try {
@@ -183,6 +194,8 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
   if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'coverRevision')) db.exec("ALTER TABLE books ADD COLUMN coverRevision TEXT NOT NULL DEFAULT ''");
   if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'contentRevision')) db.exec("ALTER TABLE books ADD COLUMN contentRevision TEXT NOT NULL DEFAULT ''");
   if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'ocrComplete')) db.exec('ALTER TABLE books ADD COLUMN ocrComplete INTEGER NOT NULL DEFAULT 0');
+  if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'series')) db.exec("ALTER TABLE books ADD COLUMN series TEXT NOT NULL DEFAULT ''");
+  if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'seriesIndex')) db.exec('ALTER TABLE books ADD COLUMN seriesIndex REAL');
   if (!db.prepare('PRAGMA table_info(categories)').all().some(({ name }) => name === 'language')) {
     db.exec('ALTER TABLE categories ADD COLUMN language TEXT');
   }
@@ -410,6 +423,7 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
         const sharedBook = sharing(body.shared);
         const coverStyle = body.coverStyle ?? 'auto';
         if (!validCoverStyle(coverStyle)) throw new RequestError(422, 'Choose one of the available book covers.');
+        const series = seriesDetails(body);
         const metadata = await readMetadata(file.path, format);
         if (body.coverUrl !== undefined && typeof body.coverUrl !== 'string') throw new RequestError(422, 'Paste a valid cover image URL.');
         if (body.coverUrl?.trim()) Object.assign(metadata, await coverDownload(body.coverUrl));
@@ -435,9 +449,9 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
           if (used + file.size > limits.storage) throw new RequestError(507, 'Demo storage is full. Try later.');
         }
         const assignment = folderAssignment(body.categoryId, language, languages, visitor);
-        db.prepare('INSERT INTO books(id,title,author,language,format,categoryId,thumbnailType,addedAt,owner,expires,bytes,updatedAt,languages,coverStyle) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+        db.prepare('INSERT INTO books(id,title,author,language,format,categoryId,thumbnailType,addedAt,owner,expires,bytes,updatedAt,languages,coverStyle,series,seriesIndex) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
           id, title, author, assignment.language, format, assignment.categoryId,
-          metadata.thumbnail ? metadata.thumbnailType : null, Date.now(), owner, visitor?.expires ?? null, file.size, Date.now(), JSON.stringify(assignment.languages), coverStyle,
+          metadata.thumbnail ? metadata.thumbnailType : null, Date.now(), owner, visitor?.expires ?? null, file.size, Date.now(), JSON.stringify(assignment.languages), coverStyle, series.series, series.seriesIndex,
         );
         db.prepare('UPDATE books SET shared=? WHERE id=?').run(sharedBook, id);
         saved = true;
@@ -525,13 +539,14 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
       const title = asText(body.title, 250);
       const coverStyle = body.coverStyle ?? book.coverStyle;
       if (!validCoverStyle(coverStyle)) throw new RequestError(422, 'Choose one of the available book covers.');
+      const series = seriesDetails(body, book);
       const languages = normalizeBookLanguages(body.languages, book.languages);
       const requestedLanguage = normalizeLanguage(body.language);
       if (!title || !requestedLanguage) throw new RequestError(422, 'Enter a title and a valid language code.');
       const language = primaryLanguage(requestedLanguage, languages);
       const assignment = folderAssignment(body.categoryId, language, languages, visitor);
-      db.prepare('UPDATE books SET title = ?, author = ?, language = ?, categoryId = ?, updatedAt = ?, languages = ?, coverStyle = ? WHERE id = ?')
-        .run(title, asText(body.author, 200), assignment.language, assignment.categoryId, Date.now(), JSON.stringify(assignment.languages), coverStyle, id);
+      db.prepare('UPDATE books SET title = ?, author = ?, language = ?, categoryId = ?, updatedAt = ?, languages = ?, coverStyle = ?, series = ?, seriesIndex = ? WHERE id = ?')
+        .run(title, asText(body.author, 200), assignment.language, assignment.categoryId, Date.now(), JSON.stringify(assignment.languages), coverStyle, series.series, series.seriesIndex, id);
       db.prepare('UPDATE books SET shared=? WHERE id=?').run(sharedBook, id);
       touch();
       return publicBook(getBook(id, visitor), visitor);
