@@ -16,7 +16,7 @@ test('cover search uses server-side credentials, private expiring previews and t
     assert.equal(JSON.parse(options.body).searchIndex,'Books');assert.equal(JSON.parse(options.body).partnerTag,'reader-20');
     return Response.json({searchResult:{items:[{asin:'B012345678',detailPageURL:'https://www.amazon.com/dp/B012345678?tag=reader-20',images:{primary:{large:{url:'https://m.media-amazon.com/images/I/book.jpg'}}},itemInfo:{title:{displayValue:'Amazon edition'}}}]}});
   }});
-  await assert.rejects(service.search({provider:'google',title:'Test'},'one'),{status:422});
+  await assert.rejects(service.search({provider:'amazon',title:'Test'},'one'),{status:422});
   await service.save({googleKey:'synthetic-google-key',amazonId:'test-client',amazonSecret:'synthetic-amazon-secret',amazonTag:'reader-20'});
   assert.equal((await stat(join(dir,'cover-search-settings.json'))).mode&0o777,0o600);
   assert.equal(/synthetic-/u.test(JSON.stringify(service.settings())),false);

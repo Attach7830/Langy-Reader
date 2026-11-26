@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import { baseLanguage } from '../shared/language.js';
 import { normalizeLanguage, RequestError } from './books.js';
+import { waitForOpenLibrary } from './open-library-rate.js';
 
 const clean = (value, limit) => typeof value === 'string' ? value.replace(/[\x00-\x1f]/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, limit) : '';
 const titleKey = (value) => clean(value, 500).normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -56,7 +56,7 @@ export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl = 
     ) STRICT;
     UPDATE discoveries SET state='error',error='Discovery was interrupted by a restart. Try again.'
       WHERE state IN ('queued','scanning','searching','ranking');`);
-  let active, running, stopped = false, catalogueLane = Promise.resolve(), nextCatalogue = 0;
+  let active, running, stopped = false, catalogueLane = Promise.resolve();
   const catalogueCache = new Map();
   const rowFor = (visitor) => db.prepare('SELECT * FROM discoveries WHERE owner=?').get(ownerOf(visitor));
   const prune = () => db.prepare('DELETE FROM discoveries WHERE expires<=?').run(Date.now());
@@ -115,8 +115,7 @@ export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl = 
     if (cached?.expires > Date.now()) return cached.docs;
     const pending = catalogueLane.then(async () => {
       signal.throwIfAborted();
-      await delay(Math.max(0, nextCatalogue - Date.now()), undefined, { signal });
-      nextCatalogue = Date.now() + catalogueDelay;
+      await waitForOpenLibrary(signal, catalogueDelay);
       const url = new URL('https://openlibrary.org/search.json');
       url.searchParams.set('q', query); url.searchParams.set('limit', '24');
       url.searchParams.set('fields', 'key,title,author_name,first_publish_year,language,subject');
