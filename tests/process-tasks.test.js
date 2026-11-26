@@ -21,3 +21,14 @@ test('the process X cancels a slow request once and exposes no executable callba
   const finish=tasks.begin('Slow lookup',{cancel(){calls++;}});show();const job=tasks.snapshot().tasks[0];assert.equal(job.cancellable,true);assert.equal('cancel' in job,false);
   tasks.cancel(job.id);tasks.cancel(job.id);assert.equal(calls,1);assert.equal(tasks.snapshot().tasks[0].state,'cancelled');finish(new DOMException('Cancelled','AbortError'));assert.equal(tasks.snapshot().tasks.length,0);
 });
+
+test('background actions appear immediately and retain even a quick failure after their dialog closes', () => {
+  const tasks = createProcessTasks({ setTimer() { assert.fail('Immediate work does not wait for the slow-request timer'); } });
+  const finish = tasks.begin('Import book cover', { immediate: true, kind: 'cover', bookId: 'one', title: 'A book' });
+  assert.equal(tasks.snapshot().tasks[0].state, 'running');
+  finish(new Error('Image could not be imported.'));
+  assert.equal(tasks.snapshot().tasks[0].state, 'failed');
+  assert.equal(tasks.snapshot().tasks[0].bookId, 'one');
+  assert.equal(tasks.snapshot().tasks[0].detail, 'Image could not be imported.');
+  tasks.clearFinished(); assert.deepEqual(tasks.snapshot().tasks, []);
+});
