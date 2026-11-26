@@ -1,3 +1,4 @@
+import { kavitaConnection } from './kavita.js';
 import { $, $$, api, element, message, toast } from './ui.js';
 import { defaults, eventKey, fonts, keyLabel, modes, shortcuts, themes } from './settings.js';
 import { languageOptions, parseLanguage } from './languages.js';
@@ -14,6 +15,7 @@ import { coverSearchSettings } from './ui-cover-settings.js';
 export function settingsPage({ preferences, apply, navigate, back }) {
   const narration = narrationSettings();
   const archive = archiveSettings();
+  const kavita = kavitaConnection();
   const covers = coverSearchSettings();
   const devices = deviceSettings();
   $('#clear-cover-cache').addEventListener('click', async (event) => {
@@ -136,7 +138,7 @@ export function settingsPage({ preferences, apply, navigate, back }) {
     active = true; visit++; renderingAI = false;
     form.reset();
     narration.reset();
-    archive.reset(); covers.reset();
+    archive.reset(); covers.reset(); kavita.reset();
     devices.reset();
     aiConfig = null;
     const current = preferences();
@@ -168,7 +170,7 @@ export function settingsPage({ preferences, apply, navigate, back }) {
     if (tab === 'reading') void importedFonts.load(preferences().font);
     if (tab === 'ai') void loadAI();
     if (tab === 'narration') void narration.load();
-    if (tab === 'sources') {void archive.load();void covers.load();}
+    if (tab === 'sources') {void archive.load();void covers.load();void kavita.load();}
     if (tab === 'devices') void devices.load();
   }
 

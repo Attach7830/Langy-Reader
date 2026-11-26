@@ -1,4 +1,9 @@
 export function requestProcessLabel(path, method = 'GET') {
+  if (path.startsWith('/api/kavita/catalogue')) return 'Browse Kavita catalogue';
+  if (path === '/api/settings/kavita' && method === 'PUT') return 'Test Kavita connection';
+  if (path === '/api/imports/convert' && method === 'POST') return 'Upload document for EPUB conversion';
+  if (path === '/api/imports/kavita' && method === 'POST') return 'Queue Kavita book import';
+  if (path === '/api/proficiency' && method === 'GET') return 'Prepare reading profile';
   if (/\/audiobookshelf\/progress(?:\?|$)/u.test(path)) return '';
   if (/^\/api\/(processes|ai\/status)(?:\?|$)/u.test(path)) return '';
   if (/\/api\/ai\/phrase$/u.test(path)) return 'Explain selected phrase';

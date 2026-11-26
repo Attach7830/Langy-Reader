@@ -1,3 +1,5 @@
+import { proficiencyPage } from '../src/proficiency.js';
+import { kavitaConnection } from '../src/kavita.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
@@ -293,4 +295,32 @@ test('Process approval buttons submit an explicit decision and completed work re
   const replace = [...document.querySelectorAll('#process-list button')].find((button) => button.textContent === 'Import and replace Langy audio'); replace.click(); await until(() => Boolean(approved)); assert.deepEqual(approved, { replace: true });
   jobs = []; window.dispatchEvent(new dom.window.CustomEvent('langy-processes-changed')); await until(() => document.querySelector('[data-process="work"]')?.textContent.includes('Finished'));
   clock += 120001; const input = document.querySelector('#process-dismiss-minutes'); input.dispatchEvent(new dom.window.Event('change')); assert.equal(document.querySelector('[data-process="work"]'), null);
+});
+
+
+test('reading profile renders one language at a time, removes L1 even from stale results and saves account-scoped hours', async (t) => {
+  let ui; t.after(()=>ui?.leave()); const dom = await browser(t); let l1 = 'en-US', saved;
+  const language = (code) => ({ language:code, unit:code==='zh'?'characters':'lemmas', seen:30, likelyKnown:5, exposures:120, trackedExposures:100, completionExposures:20, books:2, authors:1, trackedHours:1, outsideHours:2, totalHours:3, readingCheck:2, listeningCheck:1, readingEstimate:{range:'Novice–Intermediate',evidence:'Partial exposure record'}, listeningEstimate:{range:'Novice',evidence:'Partial exposure record'}, history:{seen:[{date:'2026-11-20',seen:20},{date:'2026-11-26',seen:30}],observations:[{date:'2026-11-26',known:5,threshold:20,hours:3}]} });
+  const data={accountId:'reader-account',threshold:20,languages:['en','es','zh'].map(language)};
+  globalThis.fetch=async(_path,options={})=>{if(options.method==='PUT')saved=JSON.parse(options.body);return Response.json(data);};
+  document.querySelector('#proficiency-chart').getBoundingClientRect=()=>({width:340});
+  ui=proficiencyPage({preferences:()=>({nativeLanguage:l1})});await ui.open();
+  assert.deepEqual([...document.querySelector('#proficiency-language').options].map((item)=>item.value),['es','zh']);
+  assert.equal(document.querySelector('#proficiency-chart svg').getAttribute('viewBox'),'0 0 340 260');
+  assert.equal(document.querySelectorAll('#proficiency-chart svg').length,1);assert.match(document.querySelector('#proficiency-reading-range').textContent,/Novice/u);
+  document.querySelector('#proficiency-input-hours').value='150';document.querySelector('#proficiency-form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));await until(()=>Boolean(saved));assert.equal(saved.accountId,'reader-account');assert.equal(saved.hours,150);assert.equal(saved.language,'es');
+  l1='zh-Hant';await ui.open();assert.ok(![...document.querySelector('#proficiency-language').options].some((item)=>item.value==='zh'));
+  ui.leave();assert.equal(document.querySelectorAll('#proficiency-chart svg').length,0);
+});
+
+test('Kavita settings clear secrets after testing and catalogue imports queue without locking the library',async(t)=>{
+  let ui;t.after(()=>ui?.reset());const dom=await browser(t);let connected=false,connection,queued;
+  globalThis.fetch=async(path,options={})=>{
+    if(path==='/api/settings/kavita'){if(options.method==='PUT'){connection=JSON.parse(options.body);connected=true;}return Response.json({available:true,connected,origin:connected?'http://kavita.test:5000':''});}
+    if(path==='/api/library')return Response.json({categories:[{id:'folder',name:'Stories'}]});
+    if(path.startsWith('/api/kavita/catalogue'))return Response.json({title:'Kavita books',node:'feed-token',searchable:false,navigation:[],entries:[{title:'A story',author:'A Writer',summary:'A useful story',acquisitions:[{id:'book-token',format:'epub'}]}]});
+    if(path==='/api/imports/kavita'){queued=JSON.parse(options.body);return Response.json({state:'queued'});}assert.fail(path);
+  };
+  ui=kavitaConnection();await ui.load();document.querySelector('#kavita-url').value='http://kavita.test:5000/api/Opds/secret-key';document.querySelector('#kavita-username').value='reader';document.querySelector('#kavita-password').value='secret-password';document.querySelector('#kavita-save').click();await until(()=>connected&&document.querySelector('#kavita-url').value==='');assert.ok(connection.url.endsWith('secret-key'));assert.equal(document.querySelector('#kavita-password').value,'');
+  document.querySelector('#kavita-browse').click();await until(()=>document.querySelector('#kavita-entries button'));document.querySelector('#kavita-folder').value='folder';document.querySelector('#kavita-entries button').click();await until(()=>Boolean(queued));assert.deepEqual(queued,{item:'book-token',categoryId:'folder',language:''});assert.equal(document.querySelector('#kavita-dialog').open,true);assert.doesNotMatch(document.querySelector('#kavita-entries').textContent,/secret-key|secret-password/u);
 });

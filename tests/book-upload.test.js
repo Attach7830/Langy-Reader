@@ -13,12 +13,12 @@ import { sampleBook } from '../server/sample.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
-async function fixture(t) {
+async function fixture(t,{demo=false}={}) {
   const folder = await mkdtemp(join(tmpdir(), 'langy-book-upload-'));
   const probe = createServer().listen(0, '127.0.0.1'); await once(probe, 'listening');
   const { port } = probe.address(); await new Promise((resolve) => probe.close(resolve));
   const child = spawn(process.execPath, ['server/index.js'], { cwd: root, env: { ...process.env,
-    PORT: String(port), READER_DATA: folder, READER_STORAGE_ID: '', READER_DEMO: '0', READER_PASSWORD: '',
+    PORT: String(port), READER_DATA: folder, READER_STORAGE_ID: '', READER_DEMO: demo?'1':'0', READER_PASSWORD: '',
     READER_LANGUAGE_URL: 'http://127.0.0.1:1', READER_KOKORO_URL: '',
   }, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
@@ -76,7 +76,7 @@ test('the actual book form uploads one EPUB/PDF with its language field, while i
   for (const [change, expected] of [
     [(data) => data.append('extra', 'unexpected'), /too many book details/i],
     [(data) => data.set('title', 'x'.repeat(1025)), /book details is too long/i],
-    [(data) => data.append('file', new Blob([epub]), 'second.epub'), /one EPUB or PDF at a time/i],
+    [(data) => data.append('file', new Blob([epub]), 'second.epub'), /one book at a time/i],
   ]) {
     const { data } = requestData(); change(data);
     const response = await fetch(base + '/api/books', { method: 'POST', body: data });
@@ -90,4 +90,24 @@ test('the actual book form uploads one EPUB/PDF with its language field, while i
   assert.equal(rejected.status, 422); assert.match((await rejected.json()).error, /audiobook delay/i);
   assert.equal((await (await fetch(base + '/api/library')).json()).books.length, initial + 2);
   assert.deepEqual(await readdir(join(folder, 'uploads')), []);
+});
+
+
+test('HTTP document imports return a queued job, convert in the background and appear in the private library',async(t)=>{
+  const {base}=await fixture(t), data=new FormData();data.set('title','A converted story');data.set('author','A Writer');data.set('language','es');data.append('file',new Blob(['La viajera llegó a una casa cerca del río. Había un libro abierto en la ventana.']),'story.txt');
+  const response=await fetch(base+'/api/imports/convert',{method:'POST',body:data}),job=await response.json();assert.equal(response.status,202,JSON.stringify(job));assert.equal(job.kind,'conversion');
+  let done;
+  for(let index=0;index<100;index++){done=(await(await fetch(base+'/api/imports/web')).json()).jobs.find((item)=>item.id===job.id);if(['ready','error'].includes(done.state))break;await delay(30);}
+  assert.equal(done.state,'ready',done.error);const library=await(await fetch(base+'/api/library')).json(),book=library.books.find((item)=>item.id===done.book);assert.equal(book.format,'epub');assert.equal(book.title,'A converted story');assert.equal(book.language,'es');
+  const invalid=new FormData();invalid.append('file',new Blob(['not supported']),'book.mobi');const rejected=await fetch(base+'/api/imports/convert',{method:'POST',body:invalid});assert.equal(rejected.status,415);
+  const settings=await(await fetch(base+'/api/settings/reader')).json();await fetch(base+'/api/settings/reader',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:settings.revision,changes:{nativeLanguage:'en-US',readingLanguages:['en-GB','es','zh-Hans']}})});
+  const profile=await(await fetch(base+'/api/proficiency')).json();assert.ok(profile.accountId);assert.ok(profile.languages.every((row)=>row.language!=='en'));assert.ok(profile.languages.some((row)=>row.language==='zh'));
+});
+
+
+test('demo conversion jobs use the visitor cookie and remain hidden from other sessions',async(t)=>{
+  const {base}=await fixture(t,{demo:true}),session=await fetch(base+'/api/library'),cookie=session.headers.get('set-cookie').split(';')[0],data=new FormData();data.set('title','My demo story');data.set('language','es');data.append('file',new Blob(['Una historia sencilla para leer. La viajera encontró un libro junto a la ventana.']),'story.txt');
+  const response=await fetch(base+'/api/imports/convert',{method:'POST',headers:{Cookie:cookie},body:data}),queued=await response.json();assert.equal(response.status,202,JSON.stringify(queued));let job;
+  for(let index=0;index<100;index++){job=(await(await fetch(base+'/api/imports/web',{headers:{Cookie:cookie}})).json()).jobs.find((item)=>item.id===queued.id);if(['ready','error'].includes(job?.state))break;await delay(30);}assert.equal(job.state,'ready',job.error);
+  const other=await(await fetch(base+'/api/imports/web')).json();assert.deepEqual(other.jobs,[]);const library=await(await fetch(base+'/api/library',{headers:{Cookie:cookie}})).json();assert.ok(library.books.some((item)=>item.id===job.book));
 });

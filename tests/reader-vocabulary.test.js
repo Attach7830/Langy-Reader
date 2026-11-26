@@ -418,3 +418,11 @@ test('book vocabulary pagination stays bounded and pending or corrected analysis
   assert.equal(f.vocabulary.belowThreshold(source).entries[0].term, 'livro');
   assert.throws(() => f.vocabulary.term(source, { term: 'word0', language: 'en', unit: 'lemmas' }), { status: 404 });
 });
+
+
+test('reading-profile insights use real repeated exposure, retain character units and exclude native-language records', (t) => {
+  const f=fixture(t,{nativeLanguage:()=> 'en-US'}),source=f.book('profile','Reading profile','lee 中文 reads',[['lee','leer','es'],['中文','中文','zh'],['reads','read','en']]);
+  f.vocabulary.savePreferences({threshold:2});f.record(source,['lee','中文','reads'],undefined,'first');
+  let data=f.vocabulary.insights();assert.deepEqual(data.byLanguage.map((row)=>row.language).sort(),['es','zh']);assert.equal(data.byLanguage.find((row)=>row.language==='es').seen,1);assert.equal(data.byLanguage.find((row)=>row.language==='zh').seen,2);assert.equal(data.byLanguage.find((row)=>row.language==='zh').unit,'characters');assert.equal(data.byLanguage.find((row)=>row.language==='es').likelyKnown,0);
+  f.record(source,['lee','中文'],undefined,'second');data=f.vocabulary.insights();assert.equal(data.byLanguage.find((row)=>row.language==='es').likelyKnown,1);assert.equal(data.byLanguage.find((row)=>row.language==='zh').likelyKnown,2);assert.equal(data.byLanguage.find((row)=>row.language==='es').history.at(-1).seen,1);
+});

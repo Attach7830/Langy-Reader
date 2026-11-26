@@ -1,7 +1,8 @@
+import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 
-const pending = new Set(['queued', 'running', 'generating', 'aligning', 'assembling', 'syncing', 'linking', 'awaiting_confirmation', 'downloading', 'importing', 'scanning', 'searching', 'ranking', 'retry_wait', 'needs_action', 'waiting']);
+const pending = new Set(['queued', 'running', 'generating', 'aligning', 'assembling', 'syncing', 'linking', 'awaiting_confirmation', 'downloading', 'converting', 'importing', 'scanning', 'searching', 'ranking', 'retry_wait', 'needs_action', 'waiting']);
 const state = (value) => ['error', 'failed', 'needs_review'].includes(value) ? 'failed' : ['retry_wait', 'needs_action', 'waiting', 'awaiting_confirmation'].includes(value) ? 'waiting'
   : value === 'queued' ? 'queued' : pending.has(value) ? 'running' : value === 'cancelled' ? 'cancelled' : 'completed';
 
@@ -28,8 +29,8 @@ export function openProcesses(dir, { library, archive, webImports, discovery, le
       jobs.push({ id: `${kind}:${row.id || book}`, kind, label, state: status, phase: row.state, bookId: owned?.id,
         title: owned?.title || row.details?.title || row.title || '', created, progress: Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : null,
         detail: row.error || detail, nextAttempt: row.nextAttempt || row.retryAt || null,
-        cancellable: pending.has(row.state) && owned?.canEdit !== false && !(['ocr','web-import'].includes(kind) && row.state === 'importing'),
-        ...(kind === 'web-import' && row.state === 'error' ? {retry:row.id} : {}),
+        cancellable: pending.has(row.state) && owned?.canEdit !== false && !(['ocr','web-import','conversion','kavita-import'].includes(kind) && row.state === 'importing'),
+        ...(['web-import','kavita-import'].includes(kind) && row.retryable !== false && row.state === 'error' ? {retry:row.id} : {}),
         ...(kind === 'ocr' && row.state === 'error' && owned?.canEdit !== false ? { retryOcr: row.id } : {}),
         ...(kind === 'audiobookshelf' && row.kind === 'export' && row.state === 'needs_review' && row.uploadFilename ? { checkUpload: row.id } : {}),
         ...(kind === 'audiobookshelf' && row.state === 'awaiting_confirmation' ? { decision: row.id } : {}) });
@@ -58,11 +59,11 @@ export function openProcesses(dir, { library, archive, webImports, discovery, le
       read('pdf-ocr.sqlite', 'SELECT json FROM jobs ORDER BY rowid DESC LIMIT 100', (value) => { const row = JSON.parse(value.json); add('ocr', row, 'Scan PDF with OCR', { book: row.source, detail: row.notice || '' }); });
       if (!visitor?.authenticated || visitor.id === '') read('audiobookshelf.sqlite', 'SELECT json FROM jobs ORDER BY rowid DESC LIMIT 100', (value) => { const row = JSON.parse(value.json); add('audiobookshelf', row, row.kind === 'export' ? 'Export to Audiobookshelf' : 'Import from Audiobookshelf', { detail: row.notice || '' }); });
     }
-    for (const row of webImports?.list(visitor) || []) add('web-import',row,'Download book from web',{book:row.book,progress:row.total ? row.bytes/row.total*100 : null,detail:row.bytes ? `${(row.bytes/1024**2).toFixed(1)} MiB downloaded` : ''});
+    for (const row of webImports?.list(visitor) || []) add(row.kind==='conversion'?'conversion':row.kind==='kavita'?'kavita-import':'web-import',row,row.kind==='conversion'?'Convert document to EPUB':row.kind==='kavita'?'Import book from Kavita':'Download book from web',{book:row.book,progress:row.kind==='conversion'?null:row.total ? row.bytes/row.total*100 : null,detail:row.bytes ? `${(row.bytes/1024**2).toFixed(1)} MiB ${row.kind==='conversion'?'source uploaded':'downloaded'}` : ''});
     const found = discovery.status(visitor);
     if (found.id && (found.busy || found.error)) add('discovery', { id: found.id, state: found.state, error: found.error }, 'Discover similar books');
     jobs.sort((a, b) => Number(['completed', 'cancelled'].includes(a.state)) - Number(['completed', 'cancelled'].includes(b.state)) || b.created - a.created);
-    return { accountId: account(visitor).id, jobs: jobs.filter((job) => job.state !== 'failed' || latest.get(groups.get(job.id))?.id === job.id).slice(0, 200), unavailable };
+    return { accountId: account(visitor).id, libraryRevision: createHash('sha256').update(JSON.stringify([...books.values()].map((book) => [book.id,book.updatedAt,book.contentRevision]))).digest('hex'), jobs: jobs.filter((job) => job.state !== 'failed' || latest.get(groups.get(job.id))?.id === job.id).slice(0, 200), unavailable };
   }
   return { list, close() { for (const db of databases.values()) db.close(); } };
 }

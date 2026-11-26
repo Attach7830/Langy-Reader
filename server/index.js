@@ -9,6 +9,8 @@ import { openAccounts } from './accounts.js';
 import { userStorage } from './user-storage.js';
 import { fontDownloads } from './font-downloads.js';
 import { openBookImports } from './book-imports.js';
+import { openKavita } from './kavita.js';
+import { conversionLimit } from '../shared/import-formats.js';
 import { openCoverSearch } from './cover-search.js';
 import { openFonts, fontUploadLimit } from './fonts.js';
 import { openAIProfiles } from './ai-profiles.js';
@@ -32,6 +34,7 @@ import { openBookPinyin } from './book-pinyin.js';
 import { openReaderSettings } from './reader-settings.js';
 import { openPDFOCR } from './pdf-ocr.js';
 import { openReadingTime } from './reading-time.js';
+import { openProficiency } from './proficiency.js';
 import { bookTools } from './book-tools.js';
 import { openAudiobookshelf } from './audiobookshelf.js';
 import { offlinePacks } from './offline-pack.js';
@@ -83,6 +86,7 @@ const readingTime = openReadingTime(dir, { section: (book, key) => learning.voca
 const toolsForBook = bookTools({ learning, ai });
 const offlinePack = offlinePacks({ learning, mandarin, lookupSynonyms });
 const readingAccount = (visitor) => ({ id: readerSettings.get(visitor).accountId, owner: visitor?.id || '', expires: visitor?.expires ?? null });
+const proficiency = openProficiency(dir, { vocabulary:learning.vocabulary, readingTime, library, readerSettings, account:readingAccount });
 const userFonts = await openFonts(dir, { reserveStorage });
 accountStorage = userStorage(dir, {
   policy: (owner) => demo ? { active: true, storageLimit: null } : accounts.policyForOwner(owner),
@@ -96,7 +100,8 @@ const vocabularyMeaning = vocabularyMeanings({ vocabulary: learning.vocabulary, 
 const archive = await openArchive(dir, { library, demo, canUseShared: accounts.canUseArchiveKey, visitorForOwner: accounts.visitorForOwner, activeOwner: (owner) => accounts.policyForOwner(owner).active, onImport: (book, details) => learning.scheduleAudiobook(library.getBook(book.id), details) });
 const ocr = await openPDFOCR(dir, { library, demo, onImport: (book) => learning.ensure(library.getBook(book.id)) });
 const audiobookshelf = await openAudiobookshelf(dir, { library, learning, demo });
-const webImports = await openBookImports(dir,{library,demo,visitorForOwner:accounts.visitorForOwner,activeOwner:(owner)=>accounts.policyForOwner(owner).active,onImport:(book,details)=>{learning.ensure(library.getBook(book.id));learning.scheduleAudiobook(library.getBook(book.id),details);}});
+const kavita = await openKavita(dir, { demo });
+const webImports = await openBookImports(dir,{library,demo,connector:kavita,reserveStorage,visitorForOwner:accounts.visitorForOwner,activeOwner:(owner)=>demo||accounts.policyForOwner(owner).active,onImport:(book,details)=>{learning.ensure(library.getBook(book.id));learning.scheduleAudiobook(library.getBook(book.id),details);}});
 const processes = openProcesses(dir, { library, webImports, archive, discovery, learning, demo, account: readingAccount });
 const uploadLimit = limits?.upload ?? maxUpload;
 const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 12, fieldSize: 4096 } });
@@ -195,7 +200,7 @@ app.use('/api', (req, _res, next) => demo ? next() : withAI(req.visitor, next));
 
 if (demo) {
   const identifyVisitor = await visitorMiddleware(dir);
-  app.use(['/api/library', '/api/categories', '/api/books', '/api/storage', '/api/vocabulary', '/api/discovery', '/api/processes', '/api/settings/reader', '/api/settings/ai-cache', '/api/reading-time'], identifyVisitor);
+  app.use(['/api/library', '/api/categories', '/api/books', '/api/storage', '/api/vocabulary', '/api/discovery', '/api/processes', '/api/settings/reader', '/api/settings/ai-cache', '/api/reading-time', '/api/imports/convert', '/api/imports/web', '/api/proficiency'], identifyVisitor);
   app.post(['/api/ai/word', '/api/ai/summary', '/api/ai/phrase', '/api/mandarin/word', '/api/mandarin/readings', '/api/mandarin/pinyin'], identifyVisitor);
   await library.pruneDemoBooks();
   await learning.prune();
@@ -310,6 +315,8 @@ app.get('/api/settings/opds', (req, res) => res.json({
   authenticated: !demo && accounts.enabled, pageSize: opdsPageSize,
 }));
 app.get('/api/storage', async (req, res) => res.json(await storageFor(req.visitor)));
+app.get('/api/proficiency', (req,res)=>res.json(proficiency.summary(req.visitor)));
+app.put('/api/proficiency', (req,res)=>res.json(proficiency.save(req.body ?? {},req.visitor)));
 app.get('/api/reading-time', (req, res) => res.json(readingTime.summary(readingAccount(req.visitor))));
 app.post('/api/books/:id/reading-time', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor), account = readingAccount(req.visitor);
@@ -319,6 +326,14 @@ app.post('/api/books/:id/reading-time', (req, res) => {
 app.get('/api/discovery', (req, res) => res.json(discovery.status(req.visitor)));
 app.get('/api/book-catalogue/gutenberg',async(req,res)=>res.json(await webImports.catalogue(req.query.q,Number(req.query.page||1))));
 app.post('/api/imports/web', (req,res)=>res.status(202).json(webImports.queue(req.body ?? {},req.visitor)));
+app.get('/api/settings/kavita', (req,res)=>res.json(kavita.settings(req.visitor)));
+app.put('/api/settings/kavita', async(req,res)=>res.json(await kavita.save(req.body ?? {},req.visitor)));
+app.delete('/api/settings/kavita', (req,res)=>res.json(kavita.remove(req.visitor)));
+app.get('/api/kavita/catalogue', async(req,res)=>res.json(await kavita.catalogue(req.visitor,req.query)));
+app.get('/api/kavita/covers/:id', async(req,res)=>{const image=await kavita.cover(req.params.id,req.visitor);res.set('Cache-Control','private, no-store').type(image.thumbnailType).send(image.thumbnail);});
+app.post('/api/imports/kavita', (req,res)=>res.status(202).json(webImports.queueKavita(req.body ?? {},req.visitor)));
+const conversionUpload = multer({dest:library.uploads,limits:{fileSize:Math.min(uploadLimit,conversionLimit),files:1,fields:12,fieldSize:4096}}).single('file');
+app.post('/api/imports/convert', ...demoUploads, (req,res,next)=>{req.conversionUpload=true;conversionUpload(req,res,next);}, async(req,res)=>res.status(202).json(await webImports.queueFile(req.file,req.body ?? {},req.visitor)));
 app.get('/api/imports/web', (req,res)=>res.json({jobs:webImports.list(req.visitor)}));
 app.post('/api/imports/web/:id/retry',(req,res)=>res.status(202).json(webImports.retry(req.params.id,req.visitor)));
 app.get('/api/processes', (req, res) => res.json(processes.list(req.visitor)));
@@ -327,7 +342,7 @@ app.delete('/api/processes/:id', async (req,res) => {
   if (!job) throw new RequestError(404,'Process not found.');
   if (!job.cancellable) throw new RequestError(403,'Only the book owner can cancel this process, and completed files cannot be cancelled.');
   const id=job.id.slice(job.id.indexOf(':')+1), book=job.bookId ? library.getBook(job.bookId,req.visitor) : null;
-  if (job.kind === 'web-import') webImports.cancel(id,req.visitor);
+  if (['web-import','conversion','kavita-import'].includes(job.kind)) webImports.cancel(id,req.visitor);
   else if (job.kind === 'archive') archive.cancel(id,req.visitor);
   else if (job.kind === 'discovery') discovery.cancel(req.visitor);
   else if (job.kind === 'ocr') ocr.cancel(book,id);
@@ -567,12 +582,12 @@ app.use((err, _req, res, next) => {
       error: err.code === 'LIMIT_FILE_SIZE' ? 'Audio files must be 1 GiB or smaller.' : _req.chapterUpload ? 'Choose at most 200 chapter files and one recording name.' : 'Upload one audiobook at a time.',
     });
     const errors = {
-      LIMIT_FILE_SIZE: `Books must be ${uploadLimit / 1024 / 1024} MiB or smaller.`,
-      LIMIT_FILE_COUNT: 'Upload one EPUB or PDF at a time.',
+      LIMIT_FILE_SIZE: _req.conversionUpload ? `Documents for conversion must be ${Math.min(uploadLimit,conversionLimit)/1024**2} MiB or smaller.` : `Books must be ${uploadLimit / 1024 / 1024} MiB or smaller.`,
+      LIMIT_FILE_COUNT: 'Upload one book at a time.',
       LIMIT_FIELD_COUNT: 'Too many book details were submitted. Refresh the page and try again.',
       LIMIT_FIELD_VALUE: 'One of the book details is too long. Shorten it and try again.',
       LIMIT_FIELD_KEY: 'A book detail has an invalid field name.',
-      LIMIT_UNEXPECTED_FILE: err.field === 'file' ? 'Upload one EPUB or PDF at a time.' : 'Unexpected file field in the book upload.',
+      LIMIT_UNEXPECTED_FILE: err.field === 'file' ? 'Upload one book at a time.' : 'Unexpected file field in the book upload.',
     };
     return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: errors[err.code] || 'The book upload could not be processed. Try again.' });
   }

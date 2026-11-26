@@ -7,7 +7,7 @@ import { androidApp } from './platform.js';
 const active = (job) => ['queued', 'running', 'waiting', 'downloading'].includes(job.state);
 export function processQueue({ now = Date.now, changePreferences = saveSettings } = {}) {
   const dialog = $('#downloads-dialog'), list = $('#process-list'), empty = $('#process-empty'), button = $('#open-process-queue');
-  let disposed = false, account, jobs = [], local = processTasks.snapshot(), timer, pending, redraw, expiry, signature = '', dismissed = new Set(), history = processHistory({ now });
+  let disposed = false, account, libraryRevision, jobs = [], local = processTasks.snapshot(), timer, pending, redraw, expiry, signature = '', dismissed = new Set(), history = processHistory({ now });
   const version = (job) => JSON.stringify([job.id, job.state, job.created || 0, job.detail, job.phase]);
   function render() {
     const minutes = getSettings().processDismissMinutes;
@@ -83,7 +83,10 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
     pending = (async () => {
       try { const result = await api('/api/processes');
         if (disposed || result.accountId !== account) return;
+        if (libraryRevision && result.libraryRevision && libraryRevision !== result.libraryRevision) window.dispatchEvent(new CustomEvent('langy-library-changed'));
+        libraryRevision = result.libraryRevision || libraryRevision;
         if (result.jobs.some((job) => job.kind === 'ocr' && job.state === 'completed' && !jobs.some((previous) => previous.id === job.id && previous.state === 'completed'))) window.dispatchEvent(new CustomEvent('langy-library-changed'));
+        if (!result.unavailable && jobs.some((job) => ['ocr','conversion','web-import','kavita-import'].includes(job.kind) && active(job) && !result.jobs.some((next) => next.id === job.id))) window.dispatchEvent(new CustomEvent('langy-library-changed'));
         if (!result.unavailable) for (const job of jobs) if (job.kind === 'audiobookshelf' && job.phase === 'syncing' && !result.jobs.some((next) => next.id === job.id)) window.dispatchEvent(new CustomEvent('langy-audio-updated', { detail: { book: job.bookId } }));
         if (result.unavailable) jobs = [...result.jobs, ...jobs.filter((job) => !result.jobs.some((next) => next.id === job.id))];
         else jobs = result.jobs;
@@ -104,5 +107,5 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
   window.addEventListener('langy-processes-changed', () => { clearTimeout(timer); timer = setTimeout(() => void refresh(), 100); });
   window.addEventListener('online', () => void refresh());
   document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); });
-  return { dispose() { disposed = true; clearTimeout(timer); clearTimeout(expiry); cancelAnimationFrame(redraw); unsubscribe(); unsubscribeSettings(); }, setAccount(id) { if (account !== id) { jobs = []; dismissed.clear(); signature = ''; let storage; try { storage = localStorage; } catch {} history = processHistory({ now, storage, key: `langy-process-finished-${id || ''}` }); processTasks.setAccount(id); } account = id; void refresh(); } };
+  return { dispose() { disposed = true; clearTimeout(timer); clearTimeout(expiry); cancelAnimationFrame(redraw); unsubscribe(); unsubscribeSettings(); }, setAccount(id) { if (account !== id) { jobs = []; libraryRevision = undefined; dismissed.clear(); signature = ''; let storage; try { storage = localStorage; } catch {} history = processHistory({ now, storage, key: `langy-process-finished-${id || ''}` }); processTasks.setAccount(id); } account = id; void refresh(); } };
 }
