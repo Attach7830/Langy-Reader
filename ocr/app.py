@@ -36,8 +36,9 @@ def languages(request: Request):
 def child(folder, codes, mode, rotate):
     folder = Path(folder)
     try:
-        with offline_recognition(): pages, text_pages = convert_pdf(folder / 'input.pdf', folder / 'output.pdf', codes, mode, rotate)
-        result = {'pages': pages, 'textPages': text_pages}
+        details = {}
+        with offline_recognition(): pages, text_pages = convert_pdf(folder / 'input.pdf', folder / 'output.pdf', codes, mode, rotate, diagnostics=details)
+        result = {'pages': pages, 'textPages': text_pages, **details}
     except ValueError as error: result = {'error': str(error)[:300], 'status': 422}
     except Exception:
         logging.exception('PaddleOCR PDF recognition failed')
@@ -76,8 +77,10 @@ async def ocr(request: Request):
                 output.write(chunk)
         result = await run_in_threadpool(scan, folder, codes, mode, request.query_params.get('rotate', '1') != '0')
         delivered = True
-        return FileResponse(folder / 'output.pdf', media_type='application/pdf', filename='searchable.pdf',
-            headers={'X-Langy-OCR-Pages': str(result['pages']), 'X-Langy-OCR-Text-Pages': str(result['textPages'])},
+        headers = {'X-Langy-OCR-Pages': str(result['pages']), 'X-Langy-OCR-Text-Pages': str(result['textPages'])}
+        for field, name in [('recognizedCharacters', 'Characters'), ('scannedPages', 'Scanned-Pages'), ('skippedPages', 'Skipped-Pages')]:
+            if field in result: headers['X-Langy-OCR-' + name] = str(result[field])
+        return FileResponse(folder / 'output.pdf', media_type='application/pdf', filename='searchable.pdf', headers=headers,
             background=BackgroundTask(shutil.rmtree, folder, ignore_errors=True))
     finally:
         lock.release()
