@@ -930,7 +930,9 @@ body[data-auth="loading"]::before { content:'Opening Langy…'; position:fixed; 
   .proficiency-controls { display: block; }.proficiency-controls p { margin-top: 10px; }
   .proficiency-chart-heading { display: block; }.proficiency-chart-heading select { max-width: 100%; }
   .proficiency-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); row-gap: 22px; }
-  .proficiency-estimates { grid-template-columns: 1fr; }.proficiency-axis { font-size: 20px; }
+  .proficiency-estimates { grid-template-columns: 1fr; }.proficiency-axis { font-size: 12px; }
 }
 
 .proficiency-familiarity { margin: 22px 0; }.proficiency-familiarity meter { width: 100%; height: 10px; accent-color: var(--brand); }
+
+@media(max-width:480px) { .proficiency-input-card .form-grid,.kavita-modal .form-grid { grid-template-columns: 1fr; } }
