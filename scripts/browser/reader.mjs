@@ -168,8 +168,22 @@ try {
     let searched;
     await page.route('**/api/covers/search', async(route)=>{searched=route.request().postDataJSON();await route.fulfill({json:{covers:[{id:'browser-cover',provider:'google',title:'Matching edition',author:'A Writer',source:'https://books.google.com/books?id=browser',url:'https://books.google.com/books/content?id=browser',preview:'/api/books/'+book.id+'/cover'}]}});});
     await page.locator(`[data-book="${book.id}"] .book-mobile-menu`).click();await page.locator('#book-actions-body button').filter({hasText:/^Edit book details$/}).click();
-    const title=await page.locator('#book-form [name=title]').inputValue();await page.locator('#find-book-covers').click();await page.getByRole('button',{name:'Use this cover',exact:true}).click();
+    const title=await page.locator('#book-form [name=title]').inputValue();await page.locator('#book-cover-provider').selectOption('google');await page.locator('#find-book-covers').click();await page.getByRole('button',{name:'Use this cover',exact:true}).click();
     assert.equal(searched.title,title);assert.equal(searched.provider,'google');assert.equal(await page.locator('#book-form [name=coverUrl]').inputValue(),'https://books.google.com/books/content?id=browser');
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    await page.getByRole('button',{name:'Close book details',exact:true}).click();await page.unroute('**/api/covers/search');
+  });
+  await check('key-free automatic cover search defaults to public sources and shows available results with provider notices',async()=>{
+    let searched;
+    await page.route('**/api/covers/search',async(route)=>{searched=route.request().postDataJSON();await route.fulfill({json:{notice:'Google Books is temporarily unavailable; showing results from the other source.',covers:[{id:'open-library-cover',provider:'openlibrary',title:'Public catalogue edition',author:'A Writer',source:'https://openlibrary.org/works/OL1W',url:'https://covers.openlibrary.org/b/id/123-L.jpg?default=false',preview:'/api/books/'+book.id+'/cover'}]}});});
+    await page.locator('#import-book').click();
+    assert.equal(await page.locator('#book-cover-provider').inputValue(),'auto');
+    await page.locator('#book-form [name=title]').fill('Public catalogue book');
+    await page.locator('#find-book-covers').click();
+    await page.getByRole('link',{name:'Open Library edition',exact:true}).waitFor();
+    await page.locator('#book-cover-error').filter({hasText:'Google Books is temporarily unavailable'}).waitFor();
+    await page.getByRole('button',{name:'Use this cover',exact:true}).click();
+    assert.equal(searched.provider,'auto');assert.equal(await page.locator('#book-form [name=coverUrl]').inputValue(),'https://covers.openlibrary.org/b/id/123-L.jpg?default=false');
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     await page.getByRole('button',{name:'Close book details',exact:true}).click();await page.unroute('**/api/covers/search');
   });
