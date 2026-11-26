@@ -1,6 +1,8 @@
 // Interface text only. Book content, generated explanations and dictionary
 // meanings keep their independently selected languages.
 const phrases = [
+  ['Audio synced', 'Audio sincronizado', 'Áudio sincronizado', '音频已同步'],
+  ['Audio is ready for synchronized reading.', 'El audio está listo para la lectura sincronizada.', 'O áudio está pronto para leitura sincronizada.', '音频已准备好，可同步阅读。'],
   ['Raise priority', 'Subir prioridad', 'Aumentar prioridade', '提高优先级'],
   ['Priority raised', 'Prioridad elevada', 'Prioridade elevada', '已提高优先级'],
   ['Queue position', 'Posición en la cola', 'Posição na fila', '队列位置'],
