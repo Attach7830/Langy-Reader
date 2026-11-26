@@ -101,12 +101,13 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
       : waiting ? 'Book downloads are waiting for a connection. Open Process queue to retry.' : jobs.some((job) => job.state === 'failed') ? 'A book download needs attention. Open Process queue to retry.' : '');
     const duration = (getSettings().processDismissMinutes || 0) * 60000;
     for (const job of jobs) if (['complete', 'cancelled'].includes(job.state) && !observedFinished.has(job.id)) observedFinished.set(job.id, job.finished || Date.now());
-    const visibleJobs = jobs.filter((job) => pending(job) || job.state === 'failed' || duration > 0 && Date.now() < observedFinished.get(job.id) + duration);
+    const visibleJobs = jobs.filter((job) => pending(job) || job.state === 'failed' || duration > 0 && Date.now() < observedFinished.get(job.id) + duration)
+      .sort((a, b) => Number(b.state === 'downloading') - Number(a.state === 'downloading') || (b.priority || 0) - (a.priority || 0) || a.created - b.created);
     processTasks.setDownloads(visibleJobs, { includeFinished: true });
     clearTimeout(expiry);
     const done = visibleJobs.filter((job) => ['complete', 'cancelled'].includes(job.state));
     if (done.length) { expiry = setTimeout(() => renderJobs(queue.snapshot()), Math.max(1, Math.min(...done.map((job) => observedFinished.get(job.id) + duration - Date.now())))); expiry?.unref?.(); }
-    const version = JSON.stringify(visibleJobs.map((job) => [job.id, job.state, job.error, job.book.title]));
+    const version = JSON.stringify(visibleJobs.map((job) => [job.id, job.state, job.error, job.book.title, job.priority]));
     if (version !== listVersion) {
     const cards = visibleJobs.map((job) => {
       const card = element('article', 'download-card'); card.dataset.download = job.book.id;
@@ -122,6 +123,7 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
         button.addEventListener('click', () => { void Promise.resolve().then(callback).catch((error) => message('#offline-download-error', error.message)); }); actions.append(button);
       }
       if (pending(job)) action('Cancel download', () => queue.cancel(job.id));
+      if (['queued', 'waiting'].includes(job.state)) action('Raise priority', () => queue.raisePriority(job.id));
       if (['waiting', 'failed'].includes(job.state)) action('Retry download', () => queue.retry(job.id));
       if (!pending(job)) action('Dismiss', () => queue.remove(job.id));
       card.append(title, status, meter, actions); return card;
