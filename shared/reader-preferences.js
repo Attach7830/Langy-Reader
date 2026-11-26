@@ -10,7 +10,7 @@ export const defaults = {
   autoHideDocks: false,
   tapToTurn: false, swipeToTurn: true, tapCenterFullscreen: true,
   doubleTapToTurn: true,
-  immersionMode: false, quietLibrary: true, showSharedBooks: true, libraryLayout: 'auto', coversOnly: false, processDismissMinutes: 0,
+  immersionMode: false, quietLibrary: true, showSharedBooks: true, libraryLayout: 'auto', libraryFormat: '', coversOnly: false, processDismissMinutes: 0,
 };
 
 export const accountFields = Object.keys(defaults).filter((key) => !['progressSyncEnabled', 'syncDeviceName'].includes(key));
@@ -37,7 +37,7 @@ export function preferenceChanges(before, after) {
 export function validatePreferences(value) {
   if (!isObject(value) || Object.keys(value).some((key) => !accountFields.includes(key))) throw new Error('Unknown reader preference.');
   const enums = { mode: ['translation', 'definition', 'synonyms', 'off'], theme: ['paper', 'sepia', 'dark', 'dusk', 'midnight'],
-    background: ['grain', 'plain', 'linen', 'grid'], font: ['spectral', 'georgia', 'sans', 'mono', 'chinese'], width: ['narrow', 'balanced', 'wide'], uiLanguage: ['en', 'es', 'pt', 'zh'], libraryLayout: ['auto','1','2','3','4','list'] };
+    background: ['grain', 'plain', 'linen', 'grid'], font: ['spectral', 'georgia', 'sans', 'mono', 'chinese'], width: ['narrow', 'balanced', 'wide'], uiLanguage: ['en', 'es', 'pt', 'zh'], libraryLayout: ['auto','1','2','3','4','list'], libraryFormat: ['', 'epub', 'pdf'] };
   for (const [key, setting] of Object.entries(value)) {
     let valid = true;
     if (enums[key]) valid = enums[key].includes(setting) || key === 'font' && typeof setting === 'string' && /^custom-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(setting);
