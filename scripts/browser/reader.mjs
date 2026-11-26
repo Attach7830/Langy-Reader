@@ -75,6 +75,11 @@ try {
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   }
   async function changed(before) { await page.waitForFunction(({ id, before }) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target !== before, { id: book.id, before }, { timeout: 4000 }); }
+  async function useAndroidApp(browserContext, currentPage) {
+    const bridge = (await readFile('android/app/src/main/assets/reader-fullscreen.js', 'utf8')).replace('__LANGY_FULLSCREEN_TOKEN__', 'browser-test-native-channel');
+    await browserContext.addInitScript({ content: bridge + `\ndocument.addEventListener('DOMContentLoaded', () => { const channel = new MessageChannel(); window.postMessage('browser-test-native-channel', location.origin, [channel.port2]); }, { once: true });` });
+    await currentPage.reload(); await currentPage.locator('#android-app-controls').waitFor({ state: 'attached' });
+  }
   await page.goto(base + '/#library');
   await page.locator('#books a[href="#read/' + book.id + '"]').waitFor();
   await check('unlimited accounts show the actual library drive capacity bar', async () => {
@@ -98,6 +103,7 @@ try {
     await page.locator('.book-mobile-menu').first().click();
     await page.locator('#book-actions-dialog').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#book-actions-dialog .book-word-count, #book-actions-dialog .book-metrics').count(), 0);
+    assert.equal(await page.locator('#book-actions-dialog').getByRole('button', { name: 'Save offline', exact: true }).count(), 0, 'a phone browser is still the web version');
     await page.locator('#book-actions-dialog [data-close]').click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({ path: output + '/mobile-library.png', fullPage: true });
@@ -222,6 +228,7 @@ try {
     await page.locator('#book-dialog [data-close]').first().click();
   });
   await check('completed book packs show Downloaded and open locally even when the source URL fails', async () => {
+    await useAndroidApp(context, page);
     await page.waitForFunction(() => Boolean(localStorage.getItem('langy-offline-owner')));
     const file = await context.request.get(base + '/api/books/' + book.id + '/file'); assert.equal(file.status(), 200);
     await page.evaluate(async ({ id, source }) => {
@@ -580,18 +587,64 @@ try {
   await check('desktop library and project pages retain their full layout', async () => {
     await desktopPage.goto(base + '/#library'); await desktopPage.locator('#books a').first().waitFor();
     assert.equal(await desktopPage.locator('.library-rail').isVisible(), true); assert.equal(await desktopPage.locator('#mobile-navigation').isVisible(), false);
+    await desktopPage.locator('.library-view-options > summary').click(); await desktopPage.locator('#library-covers-only').check();
+    await desktopPage.locator('.library-view-options > summary').click();
+    await desktopPage.locator('[data-book="' + book.id + '"] .book-mobile-menu').click();
+    await desktopPage.locator('#book-actions-dialog').waitFor({ state: 'visible' });
+    assert.equal(await desktopPage.locator('#book-actions-dialog').getByRole('button', { name: 'Analysis & audio', exact: true }).isVisible(), true);
+    assert.equal(await desktopPage.locator('#book-actions-dialog').getByRole('button', { name: 'Edit book details', exact: true }).isVisible(), true);
+    assert.equal(await desktopPage.locator('#book-actions-dialog').getByRole('button', { name: 'Save offline', exact: true }).count(), 0);
+    await desktopPage.locator('#book-actions-dialog').getByRole('button', { name: 'Analysis & audio', exact: true }).click();
+    await desktopPage.locator('#learning-dialog').waitFor({ state: 'visible' }); await desktopPage.locator('#learning-dialog > header [data-close]').click();
     await desktopPage.screenshot({ path: output + '/library-desktop.png' });
     await desktopPage.goto(base + '/#about'); await desktopPage.locator('#about-title').waitFor({ state: 'visible' });
     await desktopPage.screenshot({ path: output + '/about-desktop.png' });
     assert.equal(await desktopPage.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   });
+  await check('matched ABS books resume and sync reading progress on mobile and desktop without local narration', async () => {
+    const readingZip = await JSZip.loadAsync(await zip.generateAsync({ type: 'nodebuffer' }));
+    // KOSync identifies identical EPUB bytes as the same document, even when
+    // library titles differ. Keep this fixture's progress separate.
+    readingZip.file('OEBPS/book.opf', (await readingZip.file('OEBPS/book.opf').async('string')).replace('langy-browser-fixture', 'langy-browser-reading-sync-fixture').replace('Reader interactions', 'Reading without narration'));
+    const created = await context.request.post(base + '/api/books', { multipart: { title: 'Reading without narration', author: 'An Author', language: 'es', file: { name: 'reading-only.epub', mimeType: 'application/epub+zip', buffer: await readingZip.generateAsync({ type: 'nodebuffer' }) } } });
+    assert.equal(created.status(), 201); const readingBook = await created.json();
+    for (const currentPage of [page, desktopPage]) {
+      try {
+      let remote = { linked: true, recording: 'reading', mode: 'reading', automatic: true, approximate: true, currentTime: .3, duration: 1, updated: 1000, version: 'initial' }, writes = [];
+      await currentPage.route('**/api/books/' + readingBook.id + '/narration*', (route) => route.fulfill({ json: { connected: false, absConnected: true, recordings: [], audio: { state: 'missing' } } }));
+      await currentPage.route('**/api/books/' + readingBook.id + '/chapters/*', (route) => route.fulfill({ json: { key: 'epub:0', tokens: [], audio: { timings: [] } } }));
+      await currentPage.route('**/api/books/' + readingBook.id + '/audiobookshelf/progress*', async (route) => {
+        if (route.request().method() === 'PUT') { const body = route.request().postDataJSON(); writes.push(body); remote = { ...remote, currentTime: body.currentTime, version: 'saved-' + writes.length }; }
+        await route.fulfill({ json: remote });
+      });
+      await currentPage.goto(base + '/?abs-reading-check=' + readingBook.id + '#read/' + readingBook.id);
+      await currentPage.locator('#abs-sync-status').filter({ hasText: 'synced by book percentage' }).waitFor();
+      assert.equal(writes.length, 0, 'opening must not overwrite ABS progress');
+      const before = await currentPage.evaluate((id) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target, readingBook.id);
+      const countBeforeTurn = writes.length;
+      await currentPage.locator('#next').click();
+      await currentPage.waitForFunction(({ id, before }) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target !== before, { id: readingBook.id, before });
+      const expected = await currentPage.evaluate((id) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.syncPayload?.percentage, readingBook.id);
+      assert.ok(Number.isFinite(expected));
+      await currentPage.evaluate(() => document.querySelector('#narration-audio').dispatchEvent(new Event('pause')));
+      for (let n = 0; n < 80 && !writes.slice(countBeforeTurn).some((body) => Math.abs(body.currentTime - expected) < .000001); n++) await delay(50);
+      assert.ok(writes.slice(countBeforeTurn).some((body) => body.recording === 'reading' && Math.abs(body.currentTime - expected) < .000001), JSON.stringify({ expected, writes }));
+      } finally { await currentPage.goto(base + '/#library'); await currentPage.locator('#books .book-card').first().waitFor(); }
+    }
+  });
   await check('desktop reader supports trackpad text size, section shortcuts, contextual phrase help and one process queue', async () => {
     await desktopPage.goto(base + '/#read/' + book.id);
+    await desktopPage.waitForFunction((title) => document.querySelector('#reading-title').textContent === title, book.title);
     await desktopPage.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 1 of 3');
     await desktopPage.locator('#reader-message').waitFor({ state: 'hidden' });
+    await desktopPage.waitForFunction(() => !document.querySelector('#contents-button').disabled);
+    await desktopPage.frameLocator('#viewer iframe').locator('#source').waitFor({ state: 'attached' });
     const before = await desktopPage.evaluate(() => ({ size: 20, ...JSON.parse(localStorage.getItem('langy-settings-v1')) }));
-    let frame = await (await desktopPage.locator('#viewer iframe').elementHandle()).contentFrame();
-    assert.equal(await frame.evaluate(() => { const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -24, clientX: 120, clientY: 180 }); document.body.dispatchEvent(event); return event.defaultPrevented; }), true);
+    assert.equal(await desktopPage.frameLocator('#viewer iframe').locator('body').evaluate((body) => {
+      const visible = parent.document.querySelector('#viewer').getBoundingClientRect(), frame = window.frameElement.getBoundingClientRect();
+      const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -24, clientX: visible.left + visible.width / 2 - frame.left, clientY: visible.top + visible.height / 2 - frame.top });
+      body.dispatchEvent(event); return event.defaultPrevented;
+    }), true);
     await desktopPage.waitForFunction((size) => JSON.parse(localStorage.getItem('langy-settings-v1')).size > size, before.size);
     assert.equal((await desktopPage.evaluate(() => JSON.parse(localStorage.getItem('langy-settings-v1')))).touchSize, before.touchSize);
     assert.equal(await desktopPage.evaluate(() => visualViewport.scale), 1); await delay(700);
@@ -601,8 +654,7 @@ try {
     await desktopPage.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 1 of 3'); await delay(300);
     let phrases = 0;
     await desktopPage.route('**/api/ai/phrase', async (route) => { phrases++; const data = route.request().postDataJSON(); assert.equal(data.phrase, 'La viajera'); assert.ok(data.context.includes('casa tranquila')); await route.fulfill({ json: { text: 'The traveler is the woman arriving at the house.' } }); });
-    frame = await (await desktopPage.locator('#viewer iframe').elementHandle()).contentFrame();
-    await frame.evaluate(() => { const node = document.querySelector('#source').firstChild, range = document.createRange(); range.setStart(node, 0); range.setEnd(node, 10); const selected = getSelection(); selected.removeAllRanges(); selected.addRange(range); document.dispatchEvent(new Event('selectionchange')); });
+    await desktopPage.frameLocator('#viewer iframe').locator('#source').evaluate((source) => { const node = source.firstChild, range = document.createRange(); range.setStart(node, 0); range.setEnd(node, 10); const selected = getSelection(); selected.removeAllRanges(); selected.addRange(range); document.dispatchEvent(new Event('selectionchange')); });
     await desktopPage.locator('#phrase-help').waitFor({ state: 'visible' }); assert.equal(phrases, 0);
     await desktopPage.locator('[data-explain-phrase]').click(); await desktopPage.locator('[data-phrase-answer]').filter({ hasText: 'The traveler' }).waitFor(); assert.equal(phrases, 1);
     await desktopPage.screenshot({ path: output + '/contextual-phrase-desktop.png' });
@@ -622,7 +674,7 @@ try {
   });
   let memberContext, memberPage, memberBook;
   await check('administrator creates an account and the new reader signs in to an empty private library', async () => {
-    await desktopPage.locator('#downloads-dialog [data-close]').click();
+    if (await desktopPage.locator('#downloads-dialog').isVisible()) await desktopPage.locator('#downloads-dialog [data-close]').click();
     await desktopPage.goto(base + '/#settings/account'); await desktopPage.locator('#account-panel').waitFor({ state: 'visible' });
     assert.equal(await desktopPage.locator('#account-name').textContent(), 'reader');
     await desktopPage.locator('#account-new-name').fill('member'); await desktopPage.locator('#account-new-password').fill(memberPassword);
@@ -685,6 +737,7 @@ try {
   });
   let retainedPack, retainedOwner;
   await check('Switch user keeps downloaded books by default and clears the active account', async () => {
+    await useAndroidApp(memberContext, memberPage);
     await memberContext.setExtraHTTPHeaders(adminHeaders);
     assert.equal((await (await memberContext.request.get(base + '/api/account')).json()).user.username, 'member');
     const otherTab = await memberContext.newPage(); await otherTab.goto(base + '/#library'); await otherTab.locator('#shared-books-control').waitFor({ state: 'visible' });

@@ -96,6 +96,7 @@ test('shared books can be hidden independently, owned shared books remain visibl
 
 test('completed offline downloads leave the queue automatically without removing the downloaded book', async (t) => {
   await browser(t); let publish, removed = 0;
+  const native = document.createElement('fieldset'); native.id = 'android-app-controls'; document.querySelector('[data-settings-panel="devices"]').append(native);
   const job = { id: 'pack', book: { id: 'book', title: 'My offline book' }, state: 'downloading', progress: { percent: 40 } };
   const queue = { subscribe(listener) { publish = listener; listener([job]); return () => {}; }, snapshot: () => [job], close() {}, remove() { removed++; } };
   const ui = offlineDownloads({ queue }); t.after(() => ui.dispose());

@@ -304,6 +304,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     manualNavigation = false; manualPage = pendingWordTime = undefined; navigationVersion++; wordPlayback++;
     initialSeek = true; waitingForMetadata = true;
     previewAudio = false;
+    absConnected = false;
     recordingCount = 0;
     deviceControls.clear();
     markers.replaceChildren(); chapters.replaceChildren(); play.disabled = seek.disabled = true; controls();
@@ -328,7 +329,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     }
     rate.value = value;
     if (!enabled) { audio.pause(); wantPlaying = false; clearHighlight(); }
-    else if (recording) void updateRecording({ connected: connection, previewAudio, audio: recording }).catch((error) => { status.textContent = error.message; });
+    else if (recording) void updateRecording({ connected: connection, previewAudio, absConnected, audio: recording }).catch((error) => { status.textContent = error.message; });
     if (!preferences().audioHighlight) clearHighlight();
     controls();
   }
@@ -382,6 +383,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   return {
     refresh, apply, stop, toggle, skipBy,
     get ready() { return ready(); },
+    get absConnected() { return absConnected; },
     beginNavigation() { manualNavigation = true; pendingWordTime = undefined; wordPlayback++; return ++navigationVersion; },
     async endNavigation(version, { seekToPage = true } = {}) {
       if (version !== navigationVersion) return;

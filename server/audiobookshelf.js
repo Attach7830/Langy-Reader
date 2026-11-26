@@ -14,26 +14,36 @@ const hash = (value) => createHash('sha256').update(JSON.stringify(value)).diges
 const sameDestination = (a, b) => a?.libraryId === b?.libraryId && a?.folderId === b?.folderId;
 const titleKey = (value) => typeof value === 'string' ? value.normalize('NFKC').toLowerCase().replace(/[\p{P}\p{Z}\s]+/gu, ' ').trim() : '';
 const identifier = (value) => typeof value === 'string' && /^[\w-]{1,120}$/u.test(value);
-export function progressVersion(progress) { return progress ? hash([progress.lastUpdate, progress.currentTime, progress.duration, progress.isFinished]) : 'none'; }
+export function progressVersion(progress) { return progress ? hash([progress.lastUpdate, progress.currentTime, progress.duration, progress.isFinished, progress.ebookProgress, progress.ebookLocation]) : 'none'; }
+const authorKey = (metadata) => {
+  const authors = metadata?.authors?.map((author) => typeof author === 'string' ? author : author?.name).filter(Boolean);
+  return authors?.length ? authors.map(titleKey).sort().join(' | ') : titleKey(metadata?.authorName);
+};
+const sameBook = (book, item) => Boolean(titleKey(book.title) && titleKey(book.author)
+  && titleKey(book.title) === titleKey(item?.media?.metadata?.title)
+  && [authorKey(item?.media?.metadata), titleKey(item?.media?.metadata?.authorName), titleKey(item?.media?.metadata?.authors?.map((author) => typeof author === 'string' ? author : author?.name).filter(Boolean).join(', '))].includes(titleKey(book.author)));
 
 export async function openAudiobookshelf(dir, { library, learning, demo = false, request = fetch, autoStart = true, now = Date.now }) {
   const settingsPath = join(dir, 'audiobookshelf-settings.json');
   const operation = new AsyncLocalStorage(), controllers = new Map();
-  let config = { baseUrl: '', apiKey: '', libraryId: '', folderId: '', categoryDestinations: {}, autoExport: true }, writing = Promise.resolve(), running = false, closed = false;
+  let config = { baseUrl: '', apiKey: '', libraryId: '', folderId: '', categoryDestinations: {}, autoExport: true, autoLink: true }, writing = Promise.resolve(), running = false, closed = false;
+  let catalogCache;
   if (!demo) { try { config = { ...config, ...JSON.parse(await readFile(settingsPath, 'utf8')) }; } catch (error) { if (error.code !== 'ENOENT') throw error; } }
   const db = new DatabaseSync(join(dir, 'audiobookshelf.sqlite'));
   db.exec(`PRAGMA journal_mode=WAL;
     CREATE TABLE IF NOT EXISTS links(server TEXT NOT NULL,book TEXT NOT NULL,recording TEXT NOT NULL,item TEXT NOT NULL,PRIMARY KEY(server,book,recording)) STRICT;
-    CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,json TEXT NOT NULL) STRICT;`);
+    CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,json TEXT NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS book_links(server TEXT NOT NULL,book TEXT NOT NULL,item TEXT NOT NULL,signature TEXT NOT NULL,automatic INTEGER NOT NULL,PRIMARY KEY(server,book)) STRICT;`);
   const linkColumns = new Set(db.prepare('PRAGMA table_info(links)').all().map((column) => column.name));
   for (const column of ['libraryId', 'folderId']) if (!linkColumns.has(column)) db.exec(`ALTER TABLE links ADD COLUMN ${column} TEXT`);
+  db.exec("INSERT OR IGNORE INTO book_links(server,book,item,signature,automatic) SELECT server,book,item,'explicit',0 FROM links ORDER BY rowid DESC");
   const server = () => hash([config.baseUrl, config.apiKey]);
   const jobs = new Map(db.prepare('SELECT * FROM jobs ORDER BY rowid').all().map((row) => [row.id, JSON.parse(row.json)]));
   for (const job of jobs.values()) if (job.kind === 'import' && job.destination) job.matchedExport = true;
   const persist = (job) => db.prepare('INSERT INTO jobs VALUES(?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(job.id, JSON.stringify(job));
   for (const job of jobs.values()) if (job.state === 'running') { job.state = job.kind === 'export' ? job.phase === 'checking' ? 'queued' : 'needs_review' : 'error'; job.error = 'The server restarted during this transfer. Check the destination before retrying.'; persist(job); }
   const settings = () => ({ configurable: !demo, connected: !demo && Boolean(config.baseUrl && config.apiKey), baseUrl: config.baseUrl,
-    hasKey: Boolean(config.apiKey), libraryId: config.libraryId, folderId: config.folderId, autoExport: config.autoExport !== false,
+    hasKey: Boolean(config.apiKey), libraryId: config.libraryId, folderId: config.folderId, autoExport: config.autoExport !== false, autoLink: config.autoLink !== false,
     categoryDestinations: structuredClone(config.categoryDestinations || {}) });
   function destinationFor(book) {
     const key = book.categoryId || 'uncategorized', mappings = config.categoryDestinations || {};
@@ -101,7 +111,8 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
       const categoryDestinations = mappings(body.categoryDestinations === undefined
         ? baseUrl === config.baseUrl ? config.categoryDestinations || {} : {} : body.categoryDestinations);
       if (body.autoExport !== undefined && typeof body.autoExport !== 'boolean') throw new RequestError(422, 'Choose whether to export audiobooks automatically.');
-      const next = { baseUrl, apiKey, libraryId: body.libraryId || '', folderId: body.folderId || '', categoryDestinations, autoExport: body.autoExport ?? config.autoExport };
+      if (body.autoLink !== undefined && typeof body.autoLink !== 'boolean') throw new RequestError(422, 'Choose whether to link matching books automatically.');
+      const next = { baseUrl, apiKey, libraryId: body.libraryId || '', folderId: body.folderId || '', categoryDestinations, autoExport: body.autoExport ?? config.autoExport, autoLink: body.autoLink ?? config.autoLink };
       if (apiKey) {
         const remote = await json('/api/libraries', {}, next);
         const destinations = Object.values(categoryDestinations); // Legacy defaults are retained only for migration, never used or required.
@@ -111,7 +122,7 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
         }
       }
       const temp = `${settingsPath}.${randomUUID()}.tmp`;
-      try { await writeFile(temp, JSON.stringify(next), { flag: 'wx', mode: 0o600 }); await rename(temp, settingsPath); config = next; }
+      try { await writeFile(temp, JSON.stringify(next), { flag: 'wx', mode: 0o600 }); await rename(temp, settingsPath); config = next; catalogCache = null; }
       finally { await rm(temp, { force: true }); }
       for (const job of jobs.values()) if ((job.kind === 'export' || job.matchedExport) && !job.exportedAt && ['queued', 'awaiting_confirmation'].includes(job.state)) {
         if (!job.automatic && job.kind === 'export' && job.server === server()) continue; // Re-resolve manual work in pump, too.
@@ -134,6 +145,7 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
   function link(book, recording, item, destination = {}) {
     db.prepare('INSERT INTO links(server,book,recording,item,libraryId,folderId) VALUES(?,?,?,?,?,?) ON CONFLICT(server,book,recording) DO UPDATE SET item=excluded.item,libraryId=excluded.libraryId,folderId=excluded.folderId')
       .run(server(), book.id, recording, item, destination.libraryId || null, destination.folderId || null);
+    db.prepare('INSERT INTO book_links VALUES(?,?,?,?,0) ON CONFLICT(server,book) DO UPDATE SET item=excluded.item,signature=excluded.signature,automatic=0').run(server(), book.id, item, 'explicit');
   }
   const linkedDestination = (book, recording) => db.prepare('SELECT libraryId,folderId,item FROM links WHERE server=? AND book=? AND recording=?').get(server(), book.id, recording);
   const getLink = (book, recording) => db.prepare('SELECT item FROM links WHERE server=? AND book=? AND recording=?').get(server(), book.id, recording)?.item;
@@ -150,24 +162,95 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
     if (body.sameRecording !== true) throw new RequestError(422, 'Confirm that both apps use the same recording before linking timestamps.');
     link(book, recording.id, item.id, item); return { linked: true, item: item.id, recording: recording.id };
   }
+  async function progressCatalog() {
+    const identity = server();
+    if (catalogCache?.identity === identity && catalogCache.until > now()) return catalogCache.promise;
+    const current = { ...config }, signal = AbortSignal.timeout(120000);
+    const entry = { identity, until: now() + 60000 };
+    entry.promise = (async () => {
+      const catalog = await json('/api/libraries', { signal }, current), items = [];
+      if (!Array.isArray(catalog?.libraries)) throw new RequestError(502, 'Audiobookshelf did not return a complete library catalog.');
+      for (const library of catalog.libraries.filter((item) => item.mediaType === 'book')) {
+        if (!identifier(library.id)) throw new RequestError(502, 'Audiobookshelf returned an invalid library.');
+        let seen = 0;
+        for (let page = 0; ; page++) {
+          const result = await json(`/api/libraries/${encode(library.id)}/items?limit=500&page=${page}&minified=1&sort=media.metadata.title`, { signal }, current);
+          if (!Array.isArray(result?.results) || !Number.isSafeInteger(result.total) || result.total < seen + result.results.length || (!result.results.length && seen < result.total)) throw new RequestError(502, 'Audiobookshelf returned an incomplete catalog. Automatic linking will retry.');
+          items.push(...result.results.map((item) => ({ ...item, libraryId: library.id })));
+          seen += result.results.length;
+          if (seen >= result.total) break;
+          if (page >= 10000) throw new RequestError(502, 'Audiobookshelf catalog is too large to finish checking.');
+        }
+      }
+      if (identity !== server()) throw new RequestError(409, 'The Audiobookshelf connection changed.');
+      return items;
+    })();
+    catalogCache = entry;
+    try { return await entry.promise; } catch (error) { entry.until = now() + 15000; throw error; }
+  }
+  async function bookProgressTarget(book) {
+    if (demo || !config.baseUrl || !config.apiKey || book.owner) return { notice: '' };
+    const identity = server(), destination = destinationFor(book);
+    const signature = hash([titleKey(book.title), titleKey(book.author), book.categoryId, destination]);
+    const unchanged = () => {
+      const current = library.getBook(book.id);
+      return identity === server() && !current.owner && signature === hash([titleKey(current.title), titleKey(current.author), current.categoryId, destinationFor(current)]);
+    };
+    const saved = db.prepare('SELECT * FROM book_links WHERE server=? AND book=?').get(identity, book.id);
+    if (saved && (!saved.automatic || config.autoLink !== false && saved.signature === signature)) {
+      const details = await json(`/api/items/${encode(saved.item)}?expanded=1`, { allow404: true });
+      if (identity !== server() || saved.automatic && !unchanged()) throw new RequestError(409, 'The book or Audiobookshelf connection changed.');
+      if (details?.mediaType === 'book' && (!saved.automatic || sameBook(book, details) && (!validDestination(destination) || sameDestination(details, destination)))) return { item: details, automatic: Boolean(saved.automatic) };
+      db.prepare('DELETE FROM book_links WHERE server=? AND book=?').run(identity, book.id);
+    }
+    if (config.autoLink === false) return { notice: 'Automatic title and author linking is turned off.' };
+    if (!titleKey(book.title) || !titleKey(book.author)) return { notice: 'Add both a title and author to link progress automatically.' };
+    const candidates = (await progressCatalog()).filter((item) => titleKey(item.media?.metadata?.title) === titleKey(book.title)
+      && (!validDestination(destination) || item.libraryId === destination.libraryId));
+    const matches = new Map();
+    for (const candidate of candidates) {
+      if (!identifier(candidate.id)) throw new RequestError(502, 'Audiobookshelf returned an invalid title.');
+      const details = await json(`/api/items/${encode(candidate.id)}?expanded=1`, { allow404: true });
+      if (details?.mediaType === 'book' && sameBook(book, details) && (!validDestination(destination) || sameDestination(details, destination))) matches.set(details.id, details);
+    }
+    if (!unchanged()) throw new RequestError(409, 'The book or Audiobookshelf connection changed.');
+    if (matches.size !== 1) return { notice: matches.size ? 'Multiple Audiobookshelf books have this title and author. Choose a folder mapping or link a specific recording in Analysis & audio.' : 'No Audiobookshelf book with the same title and author was found.' };
+    const item = matches.values().next().value;
+    db.prepare('INSERT INTO book_links VALUES(?,?,?,?,1) ON CONFLICT(server,book) DO UPDATE SET item=excluded.item,signature=excluded.signature,automatic=1').run(identity, book.id, item.id, signature);
+    return { item, automatic: true };
+  }
   async function remote(book, selected) {
-    const recording = recordingFor(book, selected), item = getLink(book, recording.id);
-    if (!item) return { linked: false, recording: recording.id };
-    const value = await json(`/api/me/progress/${encode(item)}`, { allow404: true });
-    return { linked: true, recording: recording.id, item, version: progressVersion(value), currentTime: Math.min(recording.duration, Math.max(0, Number(value?.currentTime) || 0)),
-      updated: value?.lastUpdate || 0, duration: recording.duration };
+    const identity = server(), connection = { ...config };
+    const reading = selected === 'reading', recording = reading ? { id: 'reading', duration: 1 } : recordingFor(book, selected);
+    const exact = !reading && getLink(book, recording.id);
+    const target = exact ? null : await bookProgressTarget(book), item = exact || target?.item?.id;
+    if (!item) return { linked: false, recording: recording.id, notice: target?.notice || '' };
+    const value = await json(`/api/me/progress/${encode(item)}`, { allow404: true }, connection);
+    if (identity !== server()) throw new RequestError(409, 'The Audiobookshelf connection changed.');
+    const remoteDuration = exact ? recording.duration : Number(target.item.media?.duration) || 0;
+    const percentage = Math.min(1, Math.max(0, exact ? (Number(value?.currentTime) || 0) / recording.duration
+      : remoteDuration > 0 ? (Number(value?.currentTime) || 0) / remoteDuration : Number(value?.ebookProgress) || 0));
+    return { linked: true, recording: recording.id, item, version: value ? hash([item, progressVersion(value)]) : 'none', currentTime: percentage * recording.duration,
+      updated: value?.lastUpdate || 0, duration: recording.duration, remoteDuration, percentage, mode: reading ? 'reading' : exact ? 'recording' : 'percentage',
+      automatic: Boolean(target?.automatic), hasEbook: Boolean(target?.item?.media?.ebookFile), approximate: !exact };
   }
   const locks = new Map();
   async function push(book, body) {
     const key = `${book.id}:${body.recording}`, previous = locks.get(key) || Promise.resolve();
     const operation = previous.catch(() => {}).then(async () => {
+      const identity = server(), connection = { ...config };
       const state = await remote(book, body.recording);
       if (!state.linked) throw new RequestError(409, 'Link this recording to Audiobookshelf first.');
-      if (typeof body.baseVersion !== 'string' || !Number.isFinite(body.currentTime) || body.currentTime < 0 || body.currentTime > state.duration + .5) throw new RequestError(422, 'Choose a valid recording position.');
+      if (typeof body.baseVersion !== 'string' || !Number.isFinite(body.currentTime) || body.currentTime < 0 || body.currentTime > state.duration + (state.mode === 'reading' ? .000001 : .5)) throw new RequestError(422, 'Choose a valid recording position.');
       if (body.baseVersion !== state.version) return { conflict: true, ...state };
+      if (identity !== server()) throw new RequestError(409, 'The Audiobookshelf connection changed.');
       const time = Math.min(state.duration, body.currentTime);
-      await call(`/api/me/progress/${encode(state.item)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentTime: time, duration: state.duration,
-        progress: time / state.duration, isFinished: time >= state.duration - .5 }) });
+      const percentage = time / state.duration;
+      const update = state.mode === 'recording' ? { currentTime: time, duration: state.duration, progress: percentage, isFinished: time >= state.duration - .5 }
+        : { ...(state.remoteDuration > 0 ? { currentTime: percentage * state.remoteDuration, duration: state.remoteDuration, progress: percentage } : {}),
+          ...(state.hasEbook || !state.remoteDuration ? { ebookProgress: percentage } : {}), isFinished: percentage >= 1 };
+      await call(`/api/me/progress/${encode(state.item)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update) }, connection);
+      if (identity !== server()) throw new RequestError(409, 'The Audiobookshelf connection changed.');
       return remote(book, body.recording);
     });
     locks.set(key, operation); try { return await operation; } finally { if (locks.get(key) === operation) locks.delete(key); }
@@ -239,8 +322,12 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
         if (item.libraryId && item.libraryId !== destination.libraryId || item.folderId && item.folderId !== destination.folderId) continue;
         const duration = item.media?.duration;
         if (item.mediaType !== 'book' || !Number.isFinite(duration) || Math.abs(duration - recording.duration) > Math.max(2, duration * .001) || !hasExportedFile(item, audioFilename(job))) continue;
-        link(book, recording.id, item.id, destination); job.state = 'exported'; job.linked = true; job.item = item.id; job.retryAt = null; job.error = null;
-        job.notice = 'Exported and linked automatically. Listening progress now syncs with Audiobookshelf.'; return;
+        const currentBook = library.getBook(book.id), current = destinationFor(currentBook);
+        const currentFolder = sameDestination(current, destination) || !validDestination(current) && job.explicitDestination && job.categoryId === (currentBook.categoryId || 'uncategorized');
+        if (currentFolder) link(book, recording.id, item.id, destination);
+        job.state = 'exported'; job.linked = true; job.item = item.id; job.retryAt = null; job.error = null;
+        job.notice = currentFolder ? 'Exported and linked automatically. Listening progress now syncs with Audiobookshelf.'
+          : 'The existing upload was verified in its original folder. Progress keeps using this book’s current folder link.'; return;
       }
       if ((page + 1) * 500 >= result.total) break;
       if (page >= 10000) throw new RequestError(502, 'Audiobookshelf catalog is too large to finish checking.');
@@ -453,6 +540,13 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
       job.notice=job.state === 'needs_review' ? 'Transfer stopped. Check Audiobookshelf before retrying; an upload may already exist. Its files were not deleted.' : 'Transfer cancelled. Existing book and audio files were kept.';
       persist(job);controllers.get(id)?.abort();
     } return publicJob(job);
+  }, checkUpload(book, id) {
+    const job = jobs.get(id);
+    if (!job || job.book !== book.id || job.server !== server()) throw new RequestError(404, 'Transfer not found.');
+    if (job.kind !== 'export' || !job.uploadFilename || !['needs_review', 'linking'].includes(job.state)) throw new RequestError(409, 'This transfer has no interrupted upload to verify.');
+    job.state = 'linking'; job.phase = 'indexing'; job.exportedAt ||= now(); job.retryAt = null; job.error = null;
+    job.notice = 'Checking Audiobookshelf for the exact uploaded file. No files will be uploaded again or overwritten.';
+    persist(job); if (autoStart) void pump(); return publicJob(job);
   }, removeKey: () => save(() => ({ ...settings(), clearKey: true })), libraries, items, attach, remote, push, queue, pump,
     status: (book) => ({ ...settings(), destination: destinationFor(book),
       automaticExportNotice: config.autoExport !== false && !validDestination(destinationFor(book, true)) ? 'Automatic export waiting: map this book’s category to an Audiobookshelf library and folder in Settings → Devices.' : '',

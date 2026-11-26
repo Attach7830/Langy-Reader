@@ -1,4 +1,5 @@
 export function requestProcessLabel(path, method = 'GET') {
+  if (/\/audiobookshelf\/progress(?:\?|$)/u.test(path)) return '';
   if (/^\/api\/(processes|ai\/status)(?:\?|$)/u.test(path)) return '';
   if (/\/api\/ai\/phrase$/u.test(path)) return 'Explain selected phrase';
   if (/\/api\/ai\/summary$/u.test(path)) return 'Generate page explanation';

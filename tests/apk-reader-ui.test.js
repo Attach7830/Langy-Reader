@@ -93,6 +93,7 @@ test('a touch page jump waits for the keyboard viewport to finish resizing befor
 
 test('adding a pack closes its dialog immediately and download progress stays visible while more books are queued', async (t) => {
   const dom = await browser(t), values = new Map(); let finish, report;
+  const native = document.createElement('fieldset'); native.id = 'android-app-controls'; document.querySelector('[data-settings-panel="devices"]').append(native);
   const gate = new Promise((resolve) => { finish = resolve; });
   const queue = readingPackQueue({ store: { all: async () => [...values.values()], put: async (job) => values.set(job.id, structuredClone(job)), remove: async (id) => values.delete(id) }, owner: () => 'one', online: () => true,
     async download(book, { progress }) { report = progress; progress({ phase: 'audio', label: 'Downloading complete audiobook', loaded: 1024, total: 2048, percent: 70 }); if (book.id === 'a') await gate; } });

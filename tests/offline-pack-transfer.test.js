@@ -10,7 +10,7 @@ test('an interrupted replacement preserves the existing offline book, and a succ
       const bytes = await response.arrayBuffer(); entries.set(path, new Response(bytes, { status: response.status, headers: response.headers }));
     } };
   } };
-  for (const [name, value] of Object.entries({ caches, isSecureContext: true, navigator: { serviceWorker: { ready: Promise.resolve() }, storage: { persist: async () => true } }, localStorage: { getItem: () => 'owner' } })) {
+  for (const [name, value] of Object.entries({ document: { getElementById: (id) => id === 'android-app-controls' ? {} : null }, caches, isSecureContext: true, navigator: { serviceWorker: { ready: Promise.resolve() }, storage: { persist: async () => true } }, localStorage: { getItem: () => 'owner' } })) {
     previous.set(name, Object.getOwnPropertyDescriptor(globalThis, name)); Object.defineProperty(globalThis, name, { configurable: true, value });
   }
   const fetchBefore = globalThis.fetch;

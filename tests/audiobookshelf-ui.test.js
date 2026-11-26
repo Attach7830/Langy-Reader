@@ -52,6 +52,8 @@ test('the Settings page saves distinct category folders through its main Save se
     row.querySelector('[data-abs-folder]').value = folder;
   }
   assert.equal(document.querySelector('#abs-auto-export').checked, true);
+  assert.equal(document.querySelector('#abs-auto-link').checked, true);
+  document.querySelector('#abs-auto-link').checked = false;
   document.querySelector('#abs-auto-export').checked = false;
   choose('spanish', 'books', 'spanish-folder'); choose('chinese', 'chinese-library', 'chinese-folder');
   const form = document.querySelector('#settings-form'); form.dispatchEvent(new f.dom.window.Event('submit', { cancelable: true }));
@@ -61,10 +63,12 @@ test('the Settings page saves distinct category folders through its main Save se
   assert.equal(f.writes[0].libraryId, 'books'); assert.equal(f.writes[0].folderId, 'default');
   assert.equal(f.writes[0].apiKey, '');
   assert.equal(f.writes[0].autoExport, false);
+  assert.equal(f.writes[0].autoLink, false);
   page.open('devices'); await until(() => document.querySelector('[aria-label="Mandarin export folder"]')?.value === 'chinese-folder');
   assert.equal(document.querySelector('[aria-label="Spanish export folder"]').value, 'spanish-folder');
   assert.equal(document.querySelector('#abs-key').value, '');
   assert.equal(document.querySelector('#abs-auto-export').checked, false);
+  assert.equal(document.querySelector('#abs-auto-link').checked, false);
 });
 
 test('book exports preview their mapped destination and do not offer unavailable destinations', async (t) => {

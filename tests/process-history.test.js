@@ -22,3 +22,15 @@ test('auto-dismiss minutes and library layouts validate as account preferences',
   for (const processDismissMinutes of [-1, Infinity, '5', 10081]) assert.throws(() => validatePreferences({ processDismissMinutes }));
   assert.throws(() => validatePreferences({ libraryLayout: '6' }));
 });
+
+test('dismissed failures stay dismissed after reloading while new attempts and approvals remain visible', () => {
+  const saved = new Map(), storage = { getItem: (key) => saved.get(key), setItem: (key, value) => saved.set(key, value) };
+  const options = { storage, key: 'one' }, job = { id: 'failed', created: 10, state: 'failed', detail: 'Old failure' };
+  const first = processHistory(options); first.update([job]); first.dismiss(job); first.update([job]); assert.deepEqual(first.visible(0), []);
+  const reopened = processHistory(options); reopened.update([job]); assert.deepEqual(reopened.visible(0), []);
+  reopened.update([{ ...job, detail: 'New failure after retry' }, { id: 'approval', state: 'waiting', decision: 'keep' }]);
+  assert.equal(reopened.visible(0).length, 2);
+  assert.equal(processHistory({ storage, key: 'other-reader' }).visible(0).length, 0);
+  reopened.update([{ ...job, state: 'running' }]); assert.equal(reopened.visible(0)[0].state, 'running');
+  reopened.update([job]); assert.equal(reopened.visible(0)[0].state, 'failed', 'a retry clears the earlier dismissal');
+});

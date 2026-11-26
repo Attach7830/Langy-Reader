@@ -58,7 +58,7 @@ const progress = getProgress();
 const discovery = discoveryScreen({ request: api });
 const summaries = new Map();
 let settings = getSettings();
-let activeBook, renderer, loadController, activePosition, summaryController, activeSummary;
+let activeBook, renderer, loadController, activePosition, summaryController, activeSummary, hadSavedPosition = false;
 let moving = false, summaryQueued = false, fallbackFullscreen = false;
 let hasReturnLocation = false, temporaryAudioVisible = false, pinchStart;
 let zoom = 1;
@@ -134,7 +134,14 @@ for (const type of ['input', 'change', 'click', 'wheel', 'focusin']) $('#narrati
 $('#narration-player').addEventListener('pointerdown', audioPeek.hold, { passive: true });
 document.addEventListener('pointerup', audioPeek.release, { passive: true });
 document.addEventListener('pointercancel', audioPeek.release, { passive: true });
-const absProgress = audiobookshelfProgress({ audio, request: api });
+const absProgress = audiobookshelfProgress({ audio, request: api, reading: {
+  hasSavedPosition: () => hadSavedPosition,
+  playbackPosition() {
+    const current = renderer?.syncPosition?.();
+    return activeBook && current && audio.absConnected ? { book: activeBook.id, recording: 'reading', time: current.percentage, duration: 1, absConnected: true, readingTarget: current.target, hasSavedPosition: hadSavedPosition } : null;
+  },
+  async resumeAt(percentage) { if (!await move(0, { sync: { percentage } })) throw new Error('The Audiobookshelf reading position could not be opened.'); },
+} });
 const processes = processQueue({ changePreferences: (values) => applySettings({ ...settings, ...values }) });
 const library = libraryScreen({
   preferences: () => settings, changePreferences: (updated) => { applySettings({ ...settings, ...updated }); },
@@ -330,6 +337,7 @@ function positionChanged(position) {
     saveProgress(progress);
   }
   if (changed && !position.reflowed) readingSync.changed();
+  if (changed && !position.reflowed) absProgress.changed();
   $('#page-label').textContent = position.label;
   const heading = position.heading || position.label;
   $('#reading-subtitle').textContent = heading; $('#reading-subtitle').title = heading;
@@ -558,6 +566,7 @@ function closeReader() {
 
 async function openBook(book) {
   closeReader();
+  hadSavedPosition = Boolean(progress[book.id]?.target);
   const finishOpening = processTasks.begin('Open book', { bookId: book.id, title: book.title, cancel: () => { closeReader(); location.hash = '#library'; } });
   activeBook = book;
   updateComprehension();
@@ -614,8 +623,9 @@ async function openBook(book) {
     if (signal.aborted) return;
     contentsButton.disabled = false;
     audio.apply();
-    void audio.refresh();
-    void readingSync.start(book, opened);
+    void Promise.all([audio.refresh(), readingSync.start(book, opened)]).then(() => {
+      if (!signal.aborted && renderer === opened) absProgress.start();
+    });
     readerMessage();
     if (!document.querySelector('dialog[open]')) viewer.focus({ preventScroll: true });
   } catch (error) {

@@ -2,6 +2,7 @@ import { $, api, element, message } from './ui.js';
 import { bookLanguages } from '../shared/language.js';
 import { selectedOCRLanguages, preferredOCRLanguages } from '../shared/ocr-languages.js';
 import { defaults } from './settings.js';
+import { androidApp } from './platform.js';
 
 function name(code) {
   if (code === 'chi_sim') return 'Mandarin · simplified';
@@ -19,8 +20,8 @@ export function pdfOCR({ changed, readingLanguages = () => defaults.readingLangu
     submit.disabled = !loaded || active(job);
     $('#ocr-result').hidden = job?.state !== 'ready';
     if (job?.state === 'ready') $('#ocr-result').href = `#read/${encodeURIComponent(job.book.id)}`;
-    message('#ocr-progress', job?.state === 'ready' ? `${job.inPlace ? 'PDF updated in this book' : 'Previous searchable copy available'}${job.pages ? ` · ${job.textPages}/${job.pages} pages have text` : ''}. Save the book offline again to update any downloaded copy.`
-      : ({ queued: 'PDF queued for local OCR…', running: 'Scanning PDF pages. You can close this dialog; processing continues on your server.', importing: 'Updating this book’s PDF…', error: job?.error })[job?.state]);
+    message('#ocr-progress', job?.state === 'ready' ? `${job.inPlace ? 'PDF updated in this book' : 'Previous searchable copy available'}${job.pages ? ` · ${job.textPages}/${job.pages} pages have text` : ''}.${androidApp() ? ' Save the book offline again to update any downloaded copy.' : ''}`
+      : ({ queued: job?.notice || 'PDF queued for local OCR…', running: 'Scanning PDF pages. You can close this dialog; processing continues on your server.', importing: 'Updating this book’s PDF…', error: job?.error })[job?.state]);
   }
   async function load(version, initial = false) {
     clearTimeout(poll);
