@@ -7,8 +7,38 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <title>Langy Reader</title>
   <link rel="icon" type="image/png" sizes="64x64" href="/src/assets/langy-icon.png?no-inline">
+  <style>
+    [hidden] { display:none !important; }
+    body[data-startup="loading"]:not([data-auth="signed-out"]) > :not(#startup-loading):not(#login-screen) { visibility:hidden; pointer-events:none; }
+    body[data-auth="signed-out"] #startup-loading { display:none !important; }
+    .startup-screen { position:fixed; inset:0; z-index:1000; display:grid; place-items:center; padding:28px; overflow:auto; background:var(--ground,#f7f5ef); color:var(--ink,#262c24); font-family:"DM Sans",system-ui,sans-serif; }
+    .startup-card { width:min(100%,360px); text-align:center; display:grid; justify-items:center; gap:18px; }
+    .startup-card img { width:56px; height:56px; border-radius:15px; }
+    .startup-card h1 { margin:0; font:400 34px/1.1 "Instrument Serif",Georgia,serif; }
+    .startup-card p { margin:0; line-height:1.5; }
+    .startup-card progress { width:100%; height:6px; accent-color:var(--brand,#385543); }
+    .startup-stage { font-size:15px; }
+    .startup-note { font-size:13px; color:var(--muted,#62665b); }
+    .startup-error { color:var(--danger,#9d3931); font-size:14px; }
+    @media(prefers-reduced-motion:reduce) { .startup-card progress { animation:none; } }
+  </style>
 </head>
-<body data-auth="loading">
+<body data-auth="loading" data-startup="loading">
+  <section id="startup-loading" class="startup-screen" aria-labelledby="startup-title" aria-busy="true">
+    <div class="startup-card">
+      <img src="/src/assets/langy-icon.png?no-inline" alt="" width="56" height="56">
+      <h1 id="startup-title">Opening your library</h1>
+      <p id="startup-stage" class="startup-stage" role="status" aria-live="polite">Starting Langy…</p>
+      <progress id="startup-progress" aria-label="Library loading progress"></progress>
+      <p id="startup-count" class="startup-note" data-user-content hidden></p>
+      <p id="startup-detail" class="startup-note"></p>
+      <p class="startup-note"><span>Elapsed</span> · <span id="startup-elapsed" data-user-content>0:00</span></p>
+      <p id="startup-slow" class="startup-note" hidden>Large libraries can take longer to open. Keep Langy open while loading finishes.</p>
+      <p id="startup-error" class="startup-error" role="alert" hidden></p>
+      <button id="startup-retry" class="button secondary" type="button" hidden>Try again</button>
+      <noscript><p>Enable JavaScript to open Langy Reader.</p></noscript>
+    </div>
+  </section>
   <main id="login-screen" class="auth-screen" hidden>
     <section class="auth-card"><a class="brand" href="#library">Langy Reader</a><h1>Welcome back.</h1><p class="field-note">Sign in to your library.</p>
       <form id="login-form" class="form-stack"><label class="field">Username<input name="username" autocomplete="username" maxlength="128" required></label><label class="field">Password<input name="password" type="password" autocomplete="current-password" maxlength="256" required></label><label class="checkbox-row"><input name="rememberMe" type="checkbox" aria-describedby="remember-me-help"> Remember me</label><p id="remember-me-help" class="field-note">Stay signed in for up to 30 days on this device. Leave unchecked for a browser session, up to 24 hours.</p><button type="submit" class="button primary">Sign in</button><p id="login-status" class="field-note" role="status"></p></form>
@@ -350,6 +380,8 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
   <dialog id="kavita-dialog" class="modal kavita-modal" aria-labelledby="kavita-title"><header class="modal-header"><h2 id="kavita-title">Browse Kavita</h2><button type="button" class="icon-button" data-close aria-label="Close Kavita">×</button></header><div class="modal-body form-stack"><div class="download-actions"><button id="kavita-back" class="button quiet small" type="button" disabled>Back</button><button id="kavita-home" class="button quiet small" type="button">Home</button></div><h3 id="kavita-catalogue-title">Your catalogue</h3><div class="kavita-search"><input id="kavita-query" aria-label="Search Kavita" placeholder="Title or author"><button id="kavita-search" class="button secondary small" type="button">Search</button></div><div class="form-grid"><label class="field">Import into folder<select id="kavita-folder"><option value="">Uncategorized</option></select></label><label class="field">Book language<select id="kavita-language"><option value="">Detect automatically</option></select></label></div><p id="kavita-result" class="field-note" role="status" hidden></p><p id="kavita-error" class="form-error" role="alert" hidden></p><div id="kavita-entries" class="form-stack"></div><div id="kavita-navigation" class="download-actions"></div></div></dialog>
   <dialog class="modal" id="downloads-dialog" aria-labelledby="downloads-title">
     <header class="modal-header"><h2 id="downloads-title">Process queue</h2><button class="icon-button" type="button" data-close aria-label="Close process queue"><i data-lucide="x"></i></button></header>
+    <p class="process-guidance field-note">Server tasks continue while you read. Long stages may take several minutes; progress appears as each part finishes.</p>
+    <p id="process-checked-at" class="process-guidance field-note" hidden></p>
     <div class="modal-body form-stack"><label class="field">Auto-dismiss completed tasks after (minutes)<input id="process-dismiss-minutes" type="number" min="0" max="10080" step="any" value="0"></label><p class="field-note">0 dismisses completed tasks immediately. Errors and replacement approvals stay until you act.<span data-app-only hidden> Downloaded books stay available in your library.</span></p><p id="process-empty" class="field-note">No processes in the queue.</p><div id="process-list" class="form-stack" aria-label="Background processes"></div><p id="process-error" class="form-error" hidden></p><button id="clear-finished-processes" class="button quiet small" type="button">Dismiss finished tasks</button><section id="process-downloads" class="form-stack" hidden><h3>Book downloads</h3><p class="field-note">Books download one at a time. Keep Langy open; you can read or browse while downloads run. The queue resumes when you reopen the app or reconnect.</p><div id="offline-download-list" class="form-stack" aria-label="Book pack downloads"></div><p id="offline-download-error" class="form-error" role="alert" hidden></p></section></div>
   </dialog>
   <dialog class="modal" id="book-tools-dialog" aria-labelledby="book-tools-title">
