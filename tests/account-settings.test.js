@@ -35,7 +35,7 @@ function browser(t, db, { initial = {}, storage = new Map(), ...options } = {}) 
 
 test('reader preferences persist across restarts and browsers, preserving device-specific fields', async (t) => {
   const s = await store(t, { username: 'reader' });
-  const a = browser(t, s.db, { initial: { theme: 'midnight', showPinyin: true, readingLanguages: ['pt', 'zh'], keys: { pinyin: 'j' }, tapToTurn: true, swipeToTurn: false, tapCenterFullscreen: false, libraryLayout: '3', coversOnly: true, processDismissMinutes: 2.5 } });
+  const a = browser(t, s.db, { initial: { theme: 'midnight', showPinyin: true, readingLanguages: ['pt', 'zh'], keys: { pinyin: 'j' }, tapToTurn: true, swipeToTurn: false, tapCenterFullscreen: false, libraryLayout: '3', libraryFormat: 'pdf', coversOnly: true, processDismissMinutes: 2.5 } });
   await a.client.start(); assert.equal(s.db.get().preferences.theme, 'midnight');
   s.db.close(); const restarted = s.open({ username: 'reader' });
   const b = browser(t, restarted, { initial: { theme: 'paper', syncDeviceName: 'Tablet', progressSyncEnabled: false } });
@@ -45,6 +45,7 @@ test('reader preferences persist across restarts and browsers, preserving device
   assert.equal(b.settings().tapToTurn, true); assert.equal(b.settings().swipeToTurn, false); assert.equal(b.settings().tapCenterFullscreen, false);
   assert.equal(b.settings().syncDeviceName, 'Tablet'); assert.equal(b.settings().progressSyncEnabled, false);
   assert.equal(b.settings().libraryLayout, '3'); assert.equal(b.settings().coversOnly, true); assert.equal(b.settings().processDismissMinutes, 2.5);
+  assert.equal(b.settings().libraryFormat, 'pdf');
   assert.equal('syncDeviceName' in restarted.get().preferences, false); assert.equal('progressSyncEnabled' in restarted.get().preferences, false);
 });
 
