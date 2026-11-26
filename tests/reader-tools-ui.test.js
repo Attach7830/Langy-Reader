@@ -27,6 +27,36 @@ async function browser(t) {
   return dom;
 }
 
+test('rapid successive edits open the requested book and an older refresh cannot reset the newer save', async (t) => {
+  const dom = await browser(t); let releaseRefresh, releaseSecond, holdRefresh = false, refreshing = false, savingSecond = false;
+  const refreshGate = new Promise((resolve) => { releaseRefresh = resolve; }), secondGate = new Promise((resolve) => { releaseSecond = resolve; });
+  const books = ['First book', 'Second book'].map((title, index) => ({ id: String(index + 1), title, author: '', language: 'es', format: 'epub', addedAt: index + 1 }));
+  globalThis.fetch = async (path, options = {}) => {
+    if (path === '/api/library') {
+      if (holdRefresh) { refreshing = true; await refreshGate; }
+      return Response.json({ books, categories: [], maxUpload: 1000000, demo: false, storage: { available: false } });
+    }
+    const id = path.split('/').at(-1), book = books.find((item) => item.id === id);
+    assert.equal(options.method, 'PATCH'); assert.ok(book);
+    if (id === '2') { savingSecond = true; await secondGate; }
+    Object.assign(book, JSON.parse(options.body)); return Response.json(book);
+  };
+  const ui = libraryScreen({ progress: {}, onRemove() {} });
+  t.after(() => { releaseRefresh(); releaseSecond(); ui.dispose(); }); await ui.refresh();
+  document.querySelector('[aria-label="Edit First book"]').click();
+  const form = document.querySelector('#book-form'); form.elements.series.value = 'First series';
+  holdRefresh = true; form.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await until(() => refreshing && !document.querySelector('#book-dialog').open);
+  document.querySelector('[aria-label="Edit Second book"]').click();
+  assert.equal(form.elements.title.value, 'Second book'); assert.equal(document.querySelector('#book-submit').disabled, false);
+  form.elements.series.value = 'Second series'; form.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await until(() => savingSecond); releaseRefresh(); await delay(25);
+  assert.equal(document.querySelector('#book-dialog').open, true); assert.equal(form.elements.title.value, 'Second book');
+  assert.equal(document.querySelector('#book-submit').disabled, true, 'the older save must not unlock the newer submit');
+  releaseSecond(); await until(() => !document.querySelector('#book-dialog').open);
+  assert.equal(books[0].series, 'First series'); assert.equal(books[1].series, 'Second series');
+});
+
 test('Analysis & audio reveals ready controls while an unrelated iVoox request remains pending; empty Uncategorized is hidden', async (t) => {
   const dom = await browser(t); let release, books = [{ id: 'book', title: 'My book', author: '', language: 'es', format: 'epub', categoryId: 'folder', addedAt: 1 }], ocrJob = { state: 'queued', notice: 'Waiting for the OCR worker' };
   const held = new Promise((resolve) => { release = resolve; });
