@@ -86,16 +86,28 @@ try {
       assert.equal(updated.books.find((book) => book.id === books[1].id).series, 'Second series');
       results.push({ name: 'rapid editing opens the requested book and isolates overlapping save cleanup', pass: true });
       const status = await (await context.request.get(base + '/api/processes')).json();
-      await page.route('**/api/processes', (route) => route.fulfill({ json: { accountId: status.accountId, jobs: [{
+      let promoted = false;
+      const queuedJobs = () => ['first', 'second'].map((name, index) => ({ id: `analysis:${name}`, kind: 'analysis', label: 'Analyze book vocabulary',
+        title: `${name} queued book`, state: 'queued', canPrioritize: true, priority: promoted && index === 1 ? 1 : 0,
+        queuePosition: promoted ? 2 - index : index + 1 }));
+      await page.route('**/api/processes/analysis%3Asecond/priority', async (route) => { assert.equal(route.request().method(), 'POST'); promoted = true; await route.fulfill({ status: 202, json: { priority: 1 } }); });
+      await page.route('**/api/processes', (route) => route.fulfill({ json: { accountId: status.accountId, sequential: true, jobs: [{
         id: 'narration:progress-fixture', kind: 'narration', label: 'Generate audiobook', state: 'running', phase: 'aligning',
         startedAt: Date.now() - 65000, progress: 12.5, counter: { complete: 1, total: 10, unit: 'sections' }, activity: { complete: 2, total: 8, unit: 'passages' },
-      }] } }));
+      }, ...queuedJobs()] } }));
       await page.locator('#open-process-queue').click();
       const card = page.locator('[data-process="narration:progress-fixture"]'); await card.waitFor();
       assert.match(await card.innerText(), /1 \/ 10 sections completed/u); assert.match(await card.innerText(), /2 \/ 8 passages completed/u);
       assert.match(await card.innerText(), /Synchronizing spoken words/u); assert.match(await card.locator('.process-elapsed').innerText(), /1:0[5-9]/u);
       await page.screenshot({ path: 'browser-results/process-progress.png' });
       results.push({ name: 'background progress shows stage, section and passage counts, and elapsed time', pass: true });
+      await page.locator('[data-process="analysis:second"]').getByRole('button', { name: 'Raise priority' }).click();
+      await page.locator('[data-process="analysis:second"]').getByText('Priority raised').waitFor();
+      assert.deepEqual(await page.locator('#process-list [data-process]').evaluateAll((cards) => cards.map((node) => node.dataset.process)),
+        ['narration:progress-fixture', 'analysis:second', 'analysis:first']);
+      assert.equal(await card.getByRole('button', { name: 'Raise priority' }).count(), 0, 'the current task remains active and cannot be promoted');
+      await page.screenshot({ path: 'browser-results/process-priority.png' });
+      results.push({ name: 'raising priority moves a queued book ahead while the current task keeps running', pass: true });
     }
     const failure = await context.newPage(); failure.on('pageerror', (error) => errors.push(error.message)); let broken = true;
     await failure.route('**/api/library', (route) => broken ? route.fulfill({ status: 503, json: { error: 'Synthetic unavailable library' } }) : route.continue());
