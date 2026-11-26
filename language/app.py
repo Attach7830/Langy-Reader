@@ -1,9 +1,9 @@
 import base64
+from contextlib import contextmanager
 import difflib
 import functools
 import io
 import math
-import os
 import re
 import subprocess
 import tempfile
@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from spanish_morphology import spanish_correction
 from vocabulary_filters import lexical_tokens, lemma_inventory
 from pdf_ocr import router as ocr_router
+from whisper_runtime import AlignmentRuntimeError, runtime as whisper_runtime
 
 app = FastAPI()
 app.include_router(ocr_router)
@@ -114,11 +115,23 @@ def analyze(body: Analysis):
     return {"tokens": tokens, "lemmas": lemma_inventory(tokens, language), "method": method}
 
 
-@functools.lru_cache(maxsize=1)
 def recognizer():
-    from faster_whisper import WhisperModel
-    folder = os.path.join(os.environ.get("LANGY_MODELS", "./models"), "whisper")
-    return WhisperModel(folder, device="cpu", compute_type="int8", cpu_threads=min(4, os.cpu_count() or 2), local_files_only=True)
+    return whisper_runtime.load()
+
+
+@app.get("/alignment/status")
+def alignment_status():
+    # Do not load a model or contact a model host just to inspect the service.
+    return whisper_runtime.status()
+
+
+@contextmanager
+def alignment_operation(task, samples):
+    try:
+        with whisper_runtime.operation(task, len(samples) / 16000, lock):
+            yield
+    except AlignmentRuntimeError as error:
+        raise HTTPException(503, error.detail) from None
 
 
 def normalized(text):
@@ -225,7 +238,7 @@ def decode_recording(encoded):
 @app.post("/align")
 def align(body: Alignment):
     samples = decode_recording(body.audio)
-    with lock:
+    with alignment_operation("align", samples):
         model = recognizer()
         language = body.language.replace("_", "-").split("-")[0].lower()
         times = match_timings(body.words, recognized_words(model, samples, language, body.words, text=body.text))
@@ -240,7 +253,7 @@ def align(body: Alignment):
 @app.post("/transcribe")
 def transcribe_recording(body: Alignment):
     samples = decode_recording(body.audio)
-    with lock:
+    with alignment_operation("transcribe", samples):
         language = body.language.replace("_", "-").split("-")[0].lower()
         heard = recognized_words(recognizer(), samples, language, [], vad=True)
     return {"heard": [{"word": word, "start": float(start), "end": float(end)}
@@ -254,7 +267,7 @@ def rescan_recording(body: Alignment):
     samples = decode_recording(body.audio)
     if len(samples) > 70 * 16000:
         raise HTTPException(422, "Rescan windows must be at most 70 seconds.")
-    with lock:
+    with alignment_operation("rescan", samples):
         language = body.language.replace("_", "-").split("-")[0].lower()
         heard = recognized_words(recognizer(), samples, language, [], retry=True, vad=False)
         heard = [word for word in heard if word[3] >= 0.65 and word[2] - word[1] >= 0.02
