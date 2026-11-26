@@ -1,0 +1,17 @@
+# Optional NVIDIA acceleration for Whisper only. Kokoro and Ollama are unchanged.
+# docker compose -f compose.yaml -f compose.gpu.yaml up -d --build language
+services:
+  language:
+    build:
+      target: gpu
+    environment:
+      LANGY_WHISPER_DEVICE: cuda
+      LANGY_WHISPER_COMPUTE_TYPE: ${READER_WHISPER_COMPUTE_TYPE:-float16}
+      LANGY_WHISPER_CPU_THREADS: ${READER_WHISPER_CPU_THREADS:-4}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${READER_ALIGNMENT_GPU:-0}"]
+              capabilities: [gpu]
