@@ -612,7 +612,7 @@ try {
         if (route.request().method() === 'PUT') { const body = route.request().postDataJSON(); writes.push(body); remote = { ...remote, currentTime: body.currentTime, version: 'saved-' + writes.length }; }
         await route.fulfill({ json: remote });
       });
-      await currentPage.goto(base + '/#read/' + readingBook.id);
+      await currentPage.goto(base + '/?abs-reading-check=' + readingBook.id + '#read/' + readingBook.id);
       await currentPage.locator('#abs-sync-status').filter({ hasText: 'synced by book percentage' }).waitFor();
       assert.equal(writes.length, 0, 'opening must not overwrite ABS progress');
       const before = await currentPage.evaluate((id) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target, readingBook.id);
