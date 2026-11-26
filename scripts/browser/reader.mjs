@@ -150,19 +150,26 @@ try {
     await page.locator('#ocr-provider').selectOption('builtin'); await page.locator('#ocr-service-save').click(); await page.locator('#ocr-service-status').filter({ hasText: 'Built-in OCR selected.' }).waitFor();
     await page.locator('#settings-back').click(); await page.unroute('**/api/settings/ocr');
   });
-  await check('Edit book imports a cover image URL and clears the submitted URL', async () => {
-    let importedURL;
+  await check('cover imports close book details immediately and remain visible in Process queue until finished', async () => {
+    let importedURL, release;
+    const held = new Promise((resolve) => { release = resolve; });
     await page.route('**/api/books/' + book.id + '/cover', async (route) => {
       if (route.request().method() !== 'POST') return route.continue();
       importedURL = route.request().postDataJSON().url;
+      await held;
       await route.fulfill({ json: { ...book, thumbnailType: 'image/png', coverRevision: 'browser-cover', updatedAt: Date.now() } });
     });
-    await page.locator(`[data-book="${book.id}"] .book-mobile-menu`).click();
-    await page.locator('#book-actions-body button').filter({ hasText: /^Edit book details$/ }).click();
-    await page.locator('#book-form [name=coverUrl]').fill('https://images.example.org/cover.png'); await page.locator('#book-import-cover').click();
-    await page.locator('#book-cover-error').filter({ hasText: 'Cover imported.' }).waitFor(); assert.equal(importedURL, 'https://images.example.org/cover.png');
-    assert.equal(await page.locator('#book-form [name=coverUrl]').inputValue(), '');
-    await page.getByRole('button', { name: 'Close book details', exact: true }).click(); await page.unroute('**/api/books/' + book.id + '/cover');
+    try {
+      await page.locator(`[data-book="${book.id}"] .book-mobile-menu`).click();
+      await page.locator('#book-actions-body button').filter({ hasText: /^Edit book details$/ }).click();
+      await page.locator('#book-form [name=coverUrl]').fill('https://images.example.org/cover.png'); await page.locator('#book-import-cover').click();
+      await page.locator('#book-dialog').waitFor({ state: 'hidden' });
+      await page.locator('#open-process-queue').click();
+      await page.locator('.process-card').filter({ hasText: 'Import book cover' }).waitFor();
+      await page.locator('#downloads-dialog [data-close]').first().click(); release();
+      await page.locator('#toast').filter({ hasText: 'Cover imported.' }).waitFor();
+      assert.equal(importedURL, 'https://images.example.org/cover.png'); assert.equal(await page.locator('#book-form [name=coverUrl]').inputValue(), '');
+    } finally { release(); await page.unroute('**/api/books/' + book.id + '/cover'); }
   });
   await check('automatic cover search uses the current title and author and selects a stored Google cover', async () => {
     let searched;
@@ -186,6 +193,42 @@ try {
     assert.equal(searched.provider,'auto');assert.equal(await page.locator('#book-form [name=coverUrl]').inputValue(),'https://covers.openlibrary.org/b/id/123-L.jpg?default=false');
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     await page.getByRole('button',{name:'Close book details',exact:true}).click();await page.unroute('**/api/covers/search');
+  });
+  await check('series metadata saves on mobile, filters books across folders and sorts by numeric reading order', async () => {
+    const ids = [], bytes = await zip.generateAsync({ type: 'nodebuffer' });
+    try {
+      for (const number of ['2.5', '1']) {
+        const result = await context.request.post(base + '/api/books', { multipart: { title: 'Series book ' + number, language: 'es', series: 'Browser stories', seriesIndex: number, file: { name: 'series.epub', mimeType: 'application/epub+zip', buffer: bytes } } });
+        assert.equal(result.status(), 201); ids.push((await result.json()).id);
+      }
+      await page.reload(); await page.locator(`[data-book="${ids[0]}"]`).waitFor();
+      await page.locator('#mobile-filters-toggle').click(); await page.locator('#book-series-filter').selectOption('series:browser stories');
+      assert.equal(await page.locator('#book-sort').inputValue(), 'series');
+      assert.deepEqual(await page.locator('#books .book-card').evaluateAll((cards) => cards.map((card) => card.dataset.book)), [ids[1], ids[0]]);
+      await page.locator(`[data-book="${ids[0]}"] .book-mobile-menu`).click(); await page.locator('#book-actions-body button').filter({ hasText: /^Edit book details$/ }).click();
+      assert.equal(await page.locator('#book-form [name=series]').inputValue(), 'Browser stories'); assert.equal(await page.locator('#book-form [name=seriesIndex]').inputValue(), '2.5');
+      await page.locator('#book-form [name=seriesIndex]').fill('3'); await page.locator('#book-submit').click(); await page.locator('#book-dialog').waitFor({ state: 'hidden' });
+      await page.locator(`[data-book="${ids[0]}"] .book-series`).filter({ hasText: 'Book 3' }).waitFor();
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      await page.screenshot({ path: output + '/series-mobile.png' });
+    } finally { for (const id of ids) await context.request.delete(base + '/api/books/' + id); await page.reload(); await page.locator(`[data-book="${book.id}"]`).waitFor(); }
+  });
+  await check('queuing OCR closes its dialog and Process queue Details can reopen the active scan', async () => {
+    const created = await context.request.post(base + '/api/books', { multipart: { title: 'OCR browser PDF', language: 'es', file: { name: 'ocr.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4\n%%EOF\n') } } });
+    assert.equal(created.status(), 201); const pdf = await created.json(); let job = null;
+    const ocrPath = '**/api/books/' + pdf.id + '/ocr';
+    await page.route(ocrPath, async (route) => {
+      if (route.request().method() === 'POST') { assert.deepEqual(route.request().postDataJSON().languages, ['spa']); job = { id: 'browser-ocr', state: 'queued' }; await route.fulfill({ json: job }); }
+      else await route.fulfill({ json: { available: true, languages: ['spa'], job } });
+    });
+    await page.route('**/api/processes', async (route) => { const response = await route.fetch(), result = await response.json(); await route.fulfill({ json: { ...result, jobs: [...result.jobs, ...(job ? [{ id: 'ocr:browser-ocr', kind: 'ocr', label: 'Scan PDF with OCR', state: 'queued', bookId: pdf.id, title: pdf.title, created: Date.now() }] : [])] } }); });
+    try {
+      await page.reload(); await page.locator(`[data-book="${pdf.id}"] .book-mobile-menu`).click(); await page.locator('#book-actions-body button').filter({ hasText: /^Scan PDF with OCR$/ }).click();
+      await page.locator('#ocr-submit').click(); await page.locator('#ocr-dialog').waitFor({ state: 'hidden' });
+      await page.locator('#open-process-queue').click(); await page.locator('[data-process="ocr:browser-ocr"]').getByRole('button', { name: 'Details', exact: true }).click();
+      await page.locator('#ocr-dialog').waitFor({ state: 'visible' }); await page.locator('#ocr-progress').filter({ hasText: 'queued' }).waitFor();
+      assert.equal(await page.locator('#ocr-dialog').isVisible(), true); await page.getByRole('button', { name: 'Close OCR', exact: true }).click();
+    } finally { await page.unroute(ocrPath); await page.unroute('**/api/processes'); await context.request.delete(base + '/api/books/' + pdf.id); await page.reload(); await page.locator(`[data-book="${book.id}"]`).waitFor(); }
   });
   await check('web imports select a Gutenberg edition and retain its folder and scheduled audiobook options',async()=>{
     let queued;
