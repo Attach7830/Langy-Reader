@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { maxUpload, normalizeLanguage, RequestError } from './books.js';
 import { publicDownload, downloadURL } from './public-download.js';
 import { importNarrationOptions } from './import-narration.js';
+import { consumeProcesses } from './process-scheduler.js';
 
 const mirrors = ['https://annas-archive.gl', 'https://annas-archive.pk', 'https://annas-archive.gd'];
 const pending = new Set(['queued', 'downloading', 'importing']);
@@ -46,7 +47,7 @@ function filename(headers, md5, format) {
 }
 
 export async function openArchive(dir, { library, demo = false, request = publicDownload, onImport = () => {}, now = Date.now, autoStart = true,
-  canUseShared = () => true, visitorForOwner = (id) => id ? { id } : undefined, activeOwner = () => true }) {
+  canUseShared = () => true, visitorForOwner = (id) => id ? { id } : undefined, activeOwner = () => true, scheduler }) {
   const path = join(dir, 'archive-settings.json');
   const profilesPath = join(dir, 'archive-users.json'); let profiles = {};
   let current = { baseUrl: mirrors[0], apiKey: '', slowFallback: true, retryUnavailable: true };
@@ -251,12 +252,14 @@ export async function openArchive(dir, { library, demo = false, request = public
     insert(batch); return { batchId, jobs: batch.map(publicJob) };
   }
   async function pump() {
-    if (running || closed || demo) return;
+    if (running || controllers.size || closed || demo) return;
+    if (![...jobs.values()].some((job) => job.state === 'queued' || current.retryUnavailable && job.queueUnavailable !== false
+      && ['retry_wait','needs_action'].includes(job.state) && job.nextAttempt && job.nextAttempt <= now())) return;
     running = true;
     try {
-      for (;;) {
-        const job = [...jobs.values()].find((job) => job.state === 'queued' || current.retryUnavailable && job.queueUnavailable !== false && ['retry_wait', 'needs_action'].includes(job.state) && job.nextAttempt && job.nextAttempt <= now());
-        if (!job || closed) break;
+      await consumeProcesses(scheduler, () => closed ? [] : [...jobs.values()].filter((job) => job.state === 'queued'
+        || current.retryUnavailable && job.queueUnavailable !== false && ['retry_wait', 'needs_action'].includes(job.state) && job.nextAttempt && job.nextAttempt <= now())
+        .map((job) => ({ id: `archive:${job.id}`, created: job.created, data: job })), async (job) => {
         controllers.set(job.id, new AbortController()); job.state = 'queued'; job.source = 'fast'; job.error = null; job.nextAttempt = null; job.attempts++; persist(job);
         try {
           const connection = effective(visitorForOwner(job.owner || ''));
@@ -265,14 +268,14 @@ export async function openArchive(dir, { library, demo = false, request = public
           else await run(job, connection, job.md5, { downloadMode: job.mode });
         } catch (error) { fail(job, error); }
         finally { controllers.delete(job.id); }
-      }
+      });
     } finally { running = false; }
   }
   function resumable(id, visitor) {
     if (demo) throw new RequestError(403, 'Anna’s Archive imports are available on self-hosted installations.');
     const job = findJob(id, visitor);
     if (!job || job.source !== 'slow') throw new RequestError(404, 'Slow import not found. Start a new import if the server restarted.');
-    if (job.state !== 'needs_action' || running) throw new RequestError(409, 'Wait for the current import to finish.');
+    if (job.state !== 'needs_action' || controllers.size) throw new RequestError(409, 'Wait for the current import to finish.');
     return job;
   }
   function updateDetails(job, details) {
@@ -291,8 +294,11 @@ export async function openArchive(dir, { library, demo = false, request = public
   return {
     settings, save, removeKey: (visitor) => save(() => ({ clearKey: true, ...(personal(visitor) && !canUseShared(visitor) ? { useShared: false } : {}) }), visitor), queue, queueBatch, latest, list: (visitor) => [...jobs.values()].filter((job) => owned(job, visitor)).map(publicJob), pump,
     continue(id, body, visitor) { const job = resumable(id, visitor), url = downloadURL(body?.url); updateDetails(job, body?.details);
+      job.nextAttempt = null; persist(job);
       running = true; controllers.set(id, new AbortController());
-      void downloadFile(job, url).finally(() => { controllers.delete(id); running = false; if (autoStart) void pump(); }); return publicJob(job); },
+      const task = () => downloadFile(job, url);
+      void (scheduler ? scheduler.run(`archive:${id}`, task, { created: job.created, valid: () => !closed && job.state !== 'cancelled' }) : task())
+        .finally(() => { controllers.delete(id); running = false; if (autoStart) void pump(); }); return publicJob(job); },
     async accept(id, file, details, visitor) {
       const temporary = file?.path;
       try {
@@ -302,7 +308,7 @@ export async function openArchive(dir, { library, demo = false, request = public
         updateDetails(job, details);
         running = true;
         job.state = 'importing'; job.bytes = file.size; job.error = null;
-        try { await importFile(job, temporary); }
+        try { const task = () => importFile(job, temporary); await (scheduler ? scheduler.run(`archive:${id}`, task, { created: job.created, valid: () => !closed && job.state !== 'cancelled' }) : task()); }
         catch (error) { job.state = 'needs_action'; job.error = error instanceof RequestError ? error.message : 'The downloaded file could not be imported.'; persist(job); throw error; }
         finally { running = false; if (autoStart) void pump(); }
         return publicJob(job);
