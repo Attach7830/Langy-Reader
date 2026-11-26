@@ -3,6 +3,8 @@ import { processTasks } from './process-tasks.js';
 import { processHistory } from './process-history.js';
 import { getSettings, saveSettings, subscribeSettings } from './settings.js';
 import { androidApp } from './platform.js';
+import { processElapsed, processProgress } from './process-progress.js';
+import { translateUI } from './i18n.js';
 
 const active = (job) => ['queued', 'running', 'waiting', 'downloading'].includes(job.state);
 export function processQueue({ now = Date.now, changePreferences = saveSettings } = {}) {
@@ -41,7 +43,16 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
         const state = ({ queued: 'Queued', running: 'In progress', waiting: 'Waiting', failed: 'Needs attention', completed: 'Finished', cancelled: 'Cancelled' })[job.state] || job.state;
         const detail = job.detail || (job.nextAttempt ? `Retry at ${new Date(job.nextAttempt).toLocaleTimeString()}` : '');
         card.append(element('p', 'field-note', [state, detail].filter(Boolean).join(' · ')));
-        if (active(job)) { const bar = document.createElement('progress'); bar.max = 100; if (Number.isFinite(job.progress)) bar.value = job.progress; bar.setAttribute('aria-label', job.label); card.append(bar); }
+        if (active(job)) {
+          const progress = processProgress(job), bar = document.createElement('progress'); bar.max = 100;
+          if (progress.percent != null) bar.value = progress.percent;
+          bar.setAttribute('aria-label', job.label); if (progress.text) bar.setAttribute('aria-valuetext', progress.text);
+          card.append(bar);
+          if (progress.phase) card.append(element('p', 'process-phase', progress.phase));
+          if (progress.text) { const count = element('p', 'process-progress-text', progress.text); count.setAttribute('data-user-content', ''); card.append(count); }
+          if (progress.detail || progress.unknown) card.append(element('p', 'field-note', progress.detail || progress.unknown));
+          if (job.startedAt) { const clock = element('p', 'field-note process-elapsed', processElapsed(job, now())); clock.dataset.started = job.startedAt; card.append(clock); }
+        }
         const actions = element('div', 'download-actions');
         for (const [label, path] of [
           ...(job.retryOcr ? [['Retry OCR', `/api/books/${encodeURIComponent(job.bookId)}/ocr/jobs/${encodeURIComponent(job.retryOcr)}/retry`]] : []),
@@ -74,6 +85,7 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
     }
     empty.hidden = Boolean(entries.length || local.downloads.length);
     $('#process-downloads').hidden = !androidApp() || !local.downloads.length;
+    for (const clock of list.querySelectorAll('.process-elapsed')) clock.textContent = processElapsed({ startedAt: Number(clock.dataset.started) }, now());
   }
   function scheduleRender() { if (redraw) return; redraw = requestAnimationFrame(() => { redraw = null; render(); }); }
   const unsubscribe = processTasks.subscribe((value) => { local = value; scheduleRender(); });
@@ -90,8 +102,10 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
         if (!result.unavailable) for (const job of jobs) if (job.kind === 'audiobookshelf' && job.phase === 'syncing' && !result.jobs.some((next) => next.id === job.id)) window.dispatchEvent(new CustomEvent('langy-audio-updated', { detail: { book: job.bookId } }));
         if (result.unavailable) jobs = [...result.jobs, ...jobs.filter((job) => !result.jobs.some((next) => next.id === job.id))];
         else jobs = result.jobs;
-        message('#process-error', result.unavailable ? 'Some process statuses are temporarily unavailable.' : ''); render();
-      } catch (error) { if (dialog.open) message('#process-error', 'Server status unavailable. Device downloads are shown below.'); }
+        message('#process-error', result.unavailable ? 'Some process statuses are temporarily unavailable.' : '');
+        const checked = $('#process-checked-at'); if (checked) { checked.hidden = false; checked.textContent = `${translateUI('Server status checked')} · ${new Date(now()).toLocaleTimeString()}`; }
+        render();
+      } catch (error) { if (dialog.open) message('#process-error', 'Server status unavailable. Progress shown may be out of date. Device downloads are shown below.'); }
       finally { pending = undefined; if (!disposed) timer = setTimeout(() => void refresh(), document.hidden ? 30000 : dialog.open || jobs.some(active) ? 2000 : 5000); timer?.unref?.(); }
     })(); return pending;
   }
