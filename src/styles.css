@@ -292,6 +292,8 @@ html[data-immersion="true"] #abs-sync-status { display: none; }
 .book-title { font-weight: 750; }
 .book-meta { margin-top: 3px; font-size: 12px; color: var(--muted); }
 .book-read-badge { display: inline-block; margin-top: 7px; padding: 2px 7px; border-radius: 4px; background: var(--brand-soft); color: var(--ink); font-size: 11px; font-weight: 600; }
+.book-audio-badge { display:flex; align-items:center; gap:5px; width:fit-content; }
+.book-audio-badge svg { width:13px; height:13px; }
 .book-edit { position: absolute; right: 0; bottom: 2px; }
 .book-star { position: absolute; top: 8px; right: 8px; background: var(--surface); box-shadow: var(--shadow); }
 .book-star[aria-pressed="true"] { color: var(--ink); background: var(--brand-soft); }
