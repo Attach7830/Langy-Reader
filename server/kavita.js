@@ -43,7 +43,7 @@ export async function openKavita(dir, { demo = false, request = fetchKavita, now
   for (const suffix of ['-wal','-shm']) await chmod(file + suffix, 0o600).catch((error) => { if(error.code !== 'ENOENT')throw error; });
   const tokens = new Map(), browsing = new Map();
   const configFor = (visitor) => { const row = db.prepare('SELECT json FROM connections WHERE owner=?').get(owner(visitor)); return row ? JSON.parse(row.json) : null; };
-  function settings(visitor) { const config = configFor(visitor); return { available: !demo, connected: Boolean(config), origin: config ? new URL(config.url).origin : '', hasCredentials: Boolean(config?.username) }; }
+  function settings(visitor) { const config = demo ? null : configFor(visitor); return { available: !demo, connected: Boolean(config), origin: config ? new URL(config.url).origin : '', hasCredentials: Boolean(config?.username) }; }
   function requireConfig(visitor) { if (demo) throw new RequestError(403, 'Kavita connections are available on self-hosted installations.'); const config = configFor(visitor); if (!config) throw new RequestError(409, 'Connect your Kavita OPDS feed in Book sources first.'); return config; }
   function remember(value, visitor, config) {
     for (const [key, item] of tokens) if (item.until <= now()) tokens.delete(key);
@@ -121,7 +121,7 @@ export async function openKavita(dir, { demo = false, request = fetchKavita, now
       db.prepare('INSERT INTO connections VALUES(?,?) ON CONFLICT(owner) DO UPDATE SET json=excluded.json').run(owner(visitor), JSON.stringify(config));
       return settings(visitor);
     },
-    remove(visitor) { db.prepare('DELETE FROM connections WHERE owner=?').run(owner(visitor)); for (const [key, value] of tokens) if (value.owner === owner(visitor)) tokens.delete(key); return settings(visitor); },
+    remove(visitor) { if (demo) throw new RequestError(403, 'Kavita connections are available on self-hosted installations.'); db.prepare('DELETE FROM connections WHERE owner=?').run(owner(visitor)); for (const [key, value] of tokens) if (value.owner === owner(visitor)) tokens.delete(key); return settings(visitor); },
     selection(key, visitor) { const config = requireConfig(visitor), item = resolveToken(key, visitor, config, 'book'); return { url: item.url, connection: config.id, details: item.details }; },
     async download(selection, visitor, signal) {
       const config = requireConfig(visitor);
