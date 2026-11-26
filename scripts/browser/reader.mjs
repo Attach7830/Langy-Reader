@@ -164,7 +164,7 @@ try {
       await page.locator('#book-actions-body button').filter({ hasText: /^Edit book details$/ }).click();
       await page.locator('#book-form [name=coverUrl]').fill('https://images.example.org/cover.png'); await page.locator('#book-import-cover').click();
       await page.locator('#book-dialog').waitFor({ state: 'hidden' });
-      await page.locator('#open-process-queue').click();
+      await page.locator('#mobile-navigation [data-open-processes]').click();
       await page.locator('.process-card').filter({ hasText: 'Import book cover' }).waitFor();
       await page.locator('#downloads-dialog [data-close]').first().click(); release();
       await page.locator('#toast').filter({ hasText: 'Cover imported.' }).waitFor();
@@ -225,7 +225,7 @@ try {
     try {
       await page.reload(); await page.locator(`[data-book="${pdf.id}"] .book-mobile-menu`).click(); await page.locator('#book-actions-body button').filter({ hasText: /^Scan PDF with OCR$/ }).click();
       await page.locator('#ocr-submit').click(); await page.locator('#ocr-dialog').waitFor({ state: 'hidden' });
-      await page.locator('#open-process-queue').click(); await page.locator('[data-process="ocr:browser-ocr"]').getByRole('button', { name: 'Details', exact: true }).click();
+      await page.locator('#mobile-navigation [data-open-processes]').click(); await page.locator('[data-process="ocr:browser-ocr"]').getByRole('button', { name: 'Details', exact: true }).click();
       await page.locator('#ocr-dialog').waitFor({ state: 'visible' }); await page.locator('#ocr-progress').filter({ hasText: 'queued' }).waitFor();
       assert.equal(await page.locator('#ocr-dialog').isVisible(), true); await page.getByRole('button', { name: 'Close OCR', exact: true }).click();
     } finally { await page.unroute(ocrPath); await page.unroute('**/api/processes'); await context.request.delete(base + '/api/books/' + pdf.id); await page.reload(); await page.locator(`[data-book="${book.id}"]`).waitFor(); }
