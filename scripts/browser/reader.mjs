@@ -77,6 +77,19 @@ try {
   async function changed(before) { await page.waitForFunction(({ id, before }) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target !== before, { id: book.id, before }, { timeout: 4000 }); }
   await page.goto(base + '/#library');
   await page.locator('#books a[href="#read/' + book.id + '"]').waitFor();
+  await check('unlimited accounts show the actual library drive capacity bar', async () => {
+    await page.locator('#storage-meter').waitFor({ state: 'visible' });
+    const capacity = await page.evaluate(() => ({ max: document.querySelector('#storage-meter').max, value: document.querySelector('#storage-meter').value,
+      label: document.querySelector('#storage-meter').getAttribute('aria-label'), summary: document.querySelector('#storage-summary').textContent,
+      detail: document.querySelector('#storage-detail').textContent }));
+    const storage = await (await context.request.get(base + '/api/storage')).json();
+    assert.equal(storage.unlimited, true); assert.equal(storage.drive.available, true);
+    assert.equal(capacity.max, storage.drive.totalBytes);
+    assert.ok(capacity.value > storage.usedBytes, 'the bar includes other drive files, not just this account');
+    assert.equal(capacity.label, 'Library drive space used or reserved');
+    assert.match(capacity.summary, /^Library drive · .+ available$/u);
+    assert.match(capacity.detail, /shared with other files on this drive/u);
+  });
   await check('mobile library uses compact controls and book actions contain no statistics', async () => {
     assert.equal(await page.locator('#mobile-navigation').isVisible(), true);
     assert.equal(await page.locator('.mobile-collections').isVisible(), true);
