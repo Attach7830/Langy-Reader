@@ -690,6 +690,10 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       return rows.map((row) => ({ ...row, tokens: JSON.parse(row.tokens || '[]'), languages: JSON.parse(row.languages || '[]') }));
     },
     narration, queueBook: completeAudio.queue,
+    audioSynced(book) {
+      const current = db.prepare('SELECT 1 FROM analyses WHERE book=? AND contentRevision=? AND textVersion=1').get(book.id, book.contentRevision || '');
+      return Boolean(current && completeAudio.isSynced(book));
+    },
     scheduleAudiobook(book, options) { ensure(book); return scheduledAudio.schedule(book, options); },
     readyAudiobooks: () => db.prepare("SELECT book,id AS recording FROM book_audio WHERE state='ready' ORDER BY created DESC,rowid DESC").all(),
     recordings, removeRecording, rescans, ivoox, vocabulary, estimates,
