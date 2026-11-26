@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import JSZip from 'jszip';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -229,6 +230,40 @@ try {
       await page.locator('#ocr-dialog').waitFor({ state: 'visible' }); await page.locator('#ocr-progress').filter({ hasText: 'queued' }).waitFor();
       assert.equal(await page.locator('#ocr-dialog').isVisible(), true); await page.getByRole('button', { name: 'Close OCR', exact: true }).click();
     } finally { await page.unroute(ocrPath); await page.unroute('**/api/processes'); await context.request.delete(base + '/api/books/' + pdf.id); await page.reload(); await page.locator(`[data-book="${book.id}"]`).waitFor(); }
+  });
+  await check('document uploads queue EPUB conversion, close the dialog and appear without blocking the library', async () => {
+    let imported;
+    try {
+      await page.locator('#import-book').click();
+      await page.locator('#book-file').setInputFiles({ name:'A converted story.txt',mimeType:'text/plain',buffer:Buffer.from('Una historia sencilla. La viajera llegó a una casa cerca del río. Había un libro abierto en la ventana.') });
+      await page.locator('#book-form [name=title]').fill('Browser conversion story'); await page.locator('#book-form [name=language]').fill('es');
+      const response=page.waitForResponse((item)=>item.url().endsWith('/api/imports/convert')&&item.request().method()==='POST');await page.locator('#book-submit').click();const queued=await(await response).json();assert.equal(queued.kind,'conversion');
+      await page.locator('#book-dialog').waitFor({state:'hidden'});
+      for(let index=0;index<100;index++){const jobs=await(await context.request.get(base+'/api/imports/web')).json();const job=jobs.jobs.find((item)=>item.id===queued.id);if(job?.state==='error')throw new Error(job.error);if(job?.state==='ready'){imported=job.book;break;}await delay(100);}
+      assert.ok(imported);await page.locator(`[data-book="${imported}"]`).waitFor({timeout:10000});assert.equal(await page.locator(`[data-book="${imported}"] .book-format`).textContent(),'EPUB');
+    }finally{if(imported)await context.request.delete(base+'/api/books/'+imported);await page.reload();await page.locator(`[data-book="${book.id}"]`).waitFor();}
+  });
+  await check('personal Kavita OPDS connects, browses and queues an EPUB import on mobile', async () => {
+    const bytes=await zip.generateAsync({type:'nodebuffer'});const source=createServer((req,res)=>{if(req.url==='/book.epub'){res.setHeader('Content-Type','application/epub+zip');return res.end(bytes);}res.setHeader('Content-Type','application/atom+xml');res.end('<feed xmlns="http://www.w3.org/2005/Atom"><title>My Kavita library</title><entry><title>Browser Kavita story</title><author><name>A Writer</name></author><link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="/book.epub"/></entry></feed>');});
+    await new Promise((resolve)=>source.listen(0,'127.0.0.1',resolve));let imported;
+    try{
+      await page.goto(base+'/#settings/sources');await page.locator('#kavita-url').fill('http://127.0.0.1:'+source.address().port+'/feed/browser-test-key');await page.locator('#kavita-save').click();await page.locator('#kavita-browse:not([disabled])').waitFor();assert.equal(await page.locator('#kavita-url').inputValue(),'');
+      await page.locator('#kavita-browse').click();await page.locator('#kavita-entries').getByRole('button',{name:'Import EPUB',exact:true}).waitFor();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.screenshot({path:output+'/kavita-mobile.png'});
+      await page.locator('#kavita-entries').getByRole('button',{name:'Import EPUB',exact:true}).click();await page.locator('#kavita-entries').getByRole('button',{name:'Queued',exact:true}).waitFor();
+      for(let index=0;index<100;index++){const jobs=await(await context.request.get(base+'/api/imports/web')).json();const job=jobs.jobs.find((item)=>item.kind==='kavita');if(job?.state==='error')throw new Error(job.error);if(job?.state==='ready'){imported=job.book;break;}await delay(100);}assert.ok(imported);
+      await page.getByRole('button',{name:'Close Kavita',exact:true}).click();await page.goto(base+'/#library');await page.locator(`[data-book="${imported}"]`).waitFor({timeout:10000});
+    }finally{await context.request.delete(base+'/api/settings/kavita');if(imported)await context.request.delete(base+'/api/books/'+imported);await new Promise((resolve)=>source.close(resolve));await page.goto(base+'/#library');await page.reload();await page.locator(`[data-book="${book.id}"]`).waitFor();}
+  });
+  await check('reading profile excludes L1, saves input hours and comprehension checks and fits mobile',async()=>{
+    const preferences=await(await context.request.get(base+'/api/settings/reader')).json();
+    await context.request.patch(base+'/api/settings/reader',{data:{revision:preferences.revision,changes:{nativeLanguage:'en-US',readingLanguages:['en-GB','es','zh-Hans']}}});
+    try{
+      await page.reload();await page.goto(base+'/#proficiency');await page.locator('#proficiency-content').waitFor({state:'visible'});
+      assert.equal(await page.locator('#proficiency-language option[value=en]').count(),0);await page.locator('#proficiency-language').selectOption('es');
+      await page.locator('#proficiency-input-hours').fill('125.5');await page.locator('#proficiency-reading').selectOption('3');await page.locator('#proficiency-listening').selectOption('2');await page.locator('#proficiency-save').click();await page.locator('#proficiency-status').filter({hasText:'saved to your account'}).waitFor();
+      assert.equal(await page.locator('#proficiency-reading-range').textContent(),'Intermediate–Advanced');await page.locator('#proficiency-metric').selectOption('hours');assert.equal(await page.locator('#proficiency-chart svg').count(),1);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.screenshot({path:output+'/reading-profile-mobile.png',fullPage:true});
+      await page.locator('#proficiency-language').selectOption('zh');await page.locator('#proficiency-metric').selectOption('seen');assert.match(await page.locator('#proficiency-chart-label').textContent(),/Han characters/);await page.reload();await page.locator('#proficiency-language').selectOption('es');assert.equal(await page.locator('#proficiency-input-hours').inputValue(),'125.5');
+    }finally{const latest=await(await context.request.get(base+'/api/settings/reader')).json();await context.request.patch(base+'/api/settings/reader',{data:{revision:latest.revision,changes:{nativeLanguage:preferences.preferences.nativeLanguage||'',readingLanguages:preferences.preferences.readingLanguages||[]}}});await page.goto(base+'/#library');await page.reload();await page.locator(`[data-book="${book.id}"]`).waitFor();}
   });
   await check('web imports select a Gutenberg edition and retain its folder and scheduled audiobook options',async()=>{
     let queued;
@@ -664,6 +699,9 @@ try {
     await desktopPage.screenshot({ path: output + '/library-desktop.png' });
     await desktopPage.goto(base + '/#about'); await desktopPage.locator('#about-title').waitFor({ state: 'visible' });
     await desktopPage.screenshot({ path: output + '/about-desktop.png' });
+    await desktopPage.goto(base+'/#proficiency'); await desktopPage.locator('#proficiency-content').waitFor({state:'visible'});
+    assert.equal(await desktopPage.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    await desktopPage.screenshot({path:output+'/reading-profile-desktop.png',fullPage:true});
     assert.equal(await desktopPage.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   });
   await check('matched ABS books resume and sync reading progress on mobile and desktop without local narration', async () => {
