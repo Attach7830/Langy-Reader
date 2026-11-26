@@ -297,6 +297,25 @@ test('library format labels and every selected layout render independently of th
   assert.equal(document.querySelector('#books').dataset.coversOnly, 'true'); assert.equal(document.querySelectorAll('.book-cover').length, 2);
 });
 
+test('synced audio is visible in quiet and covers-only libraries and refreshes after recording changes', async (t) => {
+  const dom = await browser(t);
+  const books = ['synced', 'unsynced'].map((id) => ({ id, title: id, format: 'epub', language: 'es', addedAt: 1, audioSynced: id === 'synced' }));
+  globalThis.fetch = async (path) => {
+    assert.equal(path, '/api/library'); return Response.json({ books, categories: [], storage: { available: false } });
+  };
+  const ui = libraryScreen({ progress: {}, onRemove() {}, preferences: () => ({ quietLibrary: true, coversOnly: true }) });
+  t.after(() => ui.dispose()); await ui.refresh();
+  assert.equal(document.querySelector('[data-book="synced"] .book-audio-badge').textContent, 'Audio synced');
+  assert.equal(document.querySelector('[data-book="unsynced"] .book-audio-badge'), null);
+  assert.equal(document.querySelector('#books').dataset.coversOnly, 'true');
+  assert.equal(document.querySelector('[data-book="synced"] .book-reading-details').hidden, true);
+  assert.equal(document.querySelector('[data-book="synced"] .book-audio-badge').closest('.book-info'), null, 'the badge remains outside hidden cover metadata');
+  books[0].audioSynced = false; books[1].audioSynced = true;
+  window.dispatchEvent(new dom.window.CustomEvent('langy-audio-updated', { detail: { book: 'synced' } }));
+  await until(() => !document.querySelector('[data-book="synced"] .book-audio-badge'));
+  assert.equal(document.querySelector('[data-book="unsynced"] .book-audio-badge').textContent, 'Audio synced');
+});
+
 test('folder editor loads its ABS link, saves a folder-scoped change and keeps existing mappings when untouched', async (t) => {
   const dom = await browser(t), writes = [];
   globalThis.fetch = async (path, options = {}) => {
