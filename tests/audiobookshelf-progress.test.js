@@ -51,12 +51,13 @@ test('reading-only books sync fractional progress on desktop or mobile and retai
   const dom = new JSDOM('<audio id="narration-audio"></audio><div id="abs-sync-notice" hidden><p id="abs-sync-message"></p><button id="abs-sync-resume"></button><button id="abs-sync-keep"></button></div><p id="abs-sync-status" hidden></p>', { url: 'https://langy.test' });
   const original = new Map();
   for (const name of ['window', 'document', 'localStorage']) { original.set(name, Object.getOwnPropertyDescriptor(globalThis, name)); Object.defineProperty(globalThis, name, { configurable: true, value: dom.window[name] }); }
-  const previousInterval = globalThis.setInterval; globalThis.setInterval = () => 0;
+  let poll;
+  const previousInterval = globalThis.setInterval; globalThis.setInterval = (callback) => { poll = callback; return 0; };
   t.after(() => { globalThis.setInterval = previousInterval; dom.window.close(); for (const [name, value] of original) if (value) Object.defineProperty(globalThis, name, value); else delete globalThis[name]; });
   localStorage.setItem('langy-offline-owner', 'owner');
   let state = { book: 'book', recording: 'reading', duration: 1, time: .1, absConnected: true, readingTarget: 'page-1' };
-  let remote = { linked: true, recording: 'reading', currentTime: .2, version: 'v1', updated: 1000, approximate: true }, writes = 0;
-  const sync = audiobookshelfProgress({ audio: { playbackPosition: () => null }, reading: { playbackPosition: () => state, async resumeAt(time) { state.time = time; } }, request: async (_path, options = {}) => {
+  let remote = { linked: true, recording: 'reading', currentTime: .2, version: 'v1', updated: 1000, approximate: true }, writes = 0, roundPosition = false;
+  const sync = audiobookshelfProgress({ audio: { playbackPosition: () => null }, reading: { playbackPosition: () => state, async resumeAt(time) { state.time = roundPosition ? Math.floor(time * 100) / 100 : time; } }, request: async (_path, options = {}) => {
     if (options.method === 'PUT') { assert.equal(options.body.recording, 'reading'); assert.equal(options.body.baseVersion, remote.version); writes++; remote = { ...remote, currentTime: options.body.currentTime, version: 'v' + (writes + 1) }; }
     return { ...remote };
   } });
@@ -70,4 +71,8 @@ test('reading-only books sync fractional progress on desktop or mobile and retai
   state = { ...state, book: 'existing-book', time: .7, hasSavedPosition: true }; remote = { ...remote, automatic: true, currentTime: .1, version: 'first-auto-link' };
   sync.start(); await settle(); assert.equal(state.time, .7); assert.equal(document.querySelector('#abs-sync-notice').hidden, false, 'first automatic matching must preserve a different existing reading position');
   document.querySelector('#abs-sync-resume').click(); await settle(); assert.equal(state.time, .1); sync.stop();
+  state = { ...state, book: 'rounded-book', time: 0, hasSavedPosition: false }; roundPosition = true;
+  remote = { ...remote, currentTime: .235, version: 'rounded-position' };
+  const previousWrites = writes; sync.start(); await settle(); assert.equal(state.time, .23);
+  poll(); await settle(); assert.equal(writes, previousWrites, 'page rounding during a remote resume must not create a local change'); sync.stop();
 });
