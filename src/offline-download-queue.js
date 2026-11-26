@@ -35,7 +35,7 @@ export function readingPackQueue({ download, store = offlineDownloadJobs, owner 
     const epoch = generation;
     running = (async () => {
       while (!disposed && epoch === generation && online() && owner() === account) {
-        const job = jobs.find((item) => item.state === 'queued'); if (!job) break;
+        const job = jobs.filter((item) => item.state === 'queued').sort((a, b) => (b.priority || 0) - (a.priority || 0) || a.created - b.created)[0]; if (!job) break;
         controller = new AbortController(); const signal = controller.signal;
         job.state = 'downloading'; job.error = ''; job.progress = { label: 'Preparing reading pack…', percent: 0 }; emit();
         try {
@@ -76,10 +76,17 @@ export function readingPackQueue({ download, store = offlineDownloadJobs, owner 
       const existing = jobs.find((job) => job.book.id === book.id);
       if (existing && ['queued', 'downloading', 'waiting'].includes(existing.state)) return structuredClone(existing);
       const job = { id: `${account}:${book.id}`, owner: account, book: { id: book.id, title: book.title, format: book.format, thumbnailType: book.thumbnailType },
-        options: { audio: Boolean(options.audio), recording: options.recording || '' }, created: now(), state: 'queued', progress: { label: 'Queued', percent: 0 } };
+        options: { audio: Boolean(options.audio), recording: options.recording || '' }, created: now(), priority: 0, state: 'queued', progress: { label: 'Queued', percent: 0 } };
       await persist(job);
       if (job.owner !== owner() || job.owner !== account) { await store.remove(job.id); throw new Error('The signed-in account changed. Queue the book from the current library.'); }
       jobs = jobs.filter((item) => item.id !== job.id); jobs.push(job); emit(); kick(); return structuredClone(job);
+    },
+    async raisePriority(id) {
+      if (!await load()) return;
+      const job = jobs.find((item) => item.id === id);
+      if (!job || job.owner !== owner() || !['queued', 'waiting'].includes(job.state)) return;
+      job.priority = Math.max(0, ...jobs.filter((item) => ['queued', 'waiting'].includes(item.state)).map((item) => item.priority || 0)) + 1;
+      await persist(job); emit(); kick();
     },
     async cancel(id) {
       const job = jobs.find((item) => item.id === id); if (!job || job.owner !== owner() || !['queued', 'downloading', 'waiting'].includes(job.state)) return;
