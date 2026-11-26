@@ -99,7 +99,7 @@ const audiobookshelf = await openAudiobookshelf(dir, { library, learning, demo }
 const webImports = await openBookImports(dir,{library,demo,visitorForOwner:accounts.visitorForOwner,activeOwner:(owner)=>accounts.policyForOwner(owner).active,onImport:(book,details)=>{learning.ensure(library.getBook(book.id));learning.scheduleAudiobook(library.getBook(book.id),details);}});
 const processes = openProcesses(dir, { library, webImports, archive, discovery, learning, demo, account: readingAccount });
 const uploadLimit = limits?.upload ?? maxUpload;
-const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 10, fieldSize: 4096 } });
+const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 12, fieldSize: 4096 } });
 const audioUpload = multer({ dest: library.uploads, limits: { fileSize: maxAudioUpload, files: 1, fields: 1, fieldSize: 1024 } });
 const chapterUpload = multer({ storage: chapterStorage(library.uploads), limits: { fileSize: maxAudioUpload, files: chapterFileLimit, fields: 1, fieldSize: 1024 } });
 const demoUploads = demo ? [limitJobs({ perMinute: 32, perVisitor: 8 })] : [];
@@ -405,7 +405,7 @@ app.post('/api/books', ...demoUploads, (req, _res, next) => {
 }, upload.single('file'), async (req, res) => {
   let narrationOptions;
   try {
-    const allowed = new Set(['title','author','language','languages','categoryId','coverStyle','coverUrl','autoAudiobook','audiobookDelayMinutes','shared']);
+    const allowed = new Set(['title','author','language','languages','categoryId','coverStyle','coverUrl','autoAudiobook','audiobookDelayMinutes','shared','series','seriesIndex']);
     if (Object.keys(req.body ?? {}).some((key) => !allowed.has(key))) throw new RequestError(400, 'Too many book details were submitted. Refresh the page and try again.');
     if (Object.entries(req.body ?? {}).some(([key, value]) => typeof value !== 'string' || key !== 'coverUrl' && Buffer.byteLength(value) > 1024)) throw new RequestError(400, 'One of the book details is too long or invalid. Shorten it and try again.');
     narrationOptions = importNarrationOptions(req.body ?? {});
