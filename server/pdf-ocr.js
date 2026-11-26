@@ -8,9 +8,12 @@ import { pipeline } from 'node:stream/promises';
 import { maxUpload, RequestError } from './books.js';
 import { ocrBookLanguages } from '../shared/ocr-languages.js';
 import { ocrSettings } from './ocr-settings.js';
+import { ocrHTTP, ocrRequestTimeout } from './ocr-http.js';
 
-export async function openPDFOCR(dir, { library, demo = false, onImport = () => {}, request = fetch,
+export async function openPDFOCR(dir, { library, demo = false, onImport = () => {}, request,
   workerURL = process.env.READER_LANGUAGE_URL || 'http://127.0.0.1:8091', now = Date.now }) {
+  const transport = request ? null : ocrHTTP();
+  request ||= transport.request;
   const db = new DatabaseSync(join(dir, 'pdf-ocr.sqlite'));
   db.exec(`PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,json TEXT NOT NULL) STRICT`);
   const jobs = new Map(db.prepare('SELECT * FROM jobs ORDER BY rowid').all().map((row) => [row.id, JSON.parse(row.json)]));
@@ -23,7 +26,7 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
     if (['running', 'importing'].includes(job.state)) { job.state = 'queued'; persist(job); }
   }
   const publicJob = (job) => { if (!job) return null; const { owner, expires, bytes, ...book } = job.result || {};
-    return { id: job.id, state: job.state, languages: job.languages, error: job.error, notice: job.notice, retryAt: job.retryAt, book: job.result ? book : undefined, inPlace: job.result?.id === job.source, pages: job.pages, textPages: job.textPages, recognizedCharacters: job.recognizedCharacters, scannedPages: job.scannedPages, skippedPages: job.skippedPages }; };
+    return { id: job.id, state: job.state, languages: job.languages, error: job.error, errorCode: job.errorCode, notice: job.notice, retryAt: job.retryAt, book: job.result ? book : undefined, inPlace: job.result?.id === job.source, pages: job.pages, textPages: job.textPages, recognizedCharacters: job.recognizedCharacters, scannedPages: job.scannedPages, skippedPages: job.skippedPages }; };
   const status = (book) => publicJob([...jobs.values()].filter((job) => job.source === book.id).at(-1));
   const languages = () => connection.languages();
   async function pump() {
@@ -37,14 +40,14 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
         const temporary = join(library.uploads, `ocr-${job.id}.pdf`);
         const controller = new AbortController(); controllers.set(job.id, controller);
         try {
-          job.state = 'running'; job.error = null; job.notice = null; job.retryAt = null; persist(job);
+          job.state = 'running'; job.error = null; job.errorCode = null; job.notice = null; job.retryAt = null; persist(job);
           const book = library.getBook(job.source);
           if (book.contentRevision === job.id) { job.result = book; job.state = 'ready'; persist(job); try { onImport(book); } catch {} continue; }
           if (job.connection && job.connection !== connection.fingerprint()) throw new RequestError(409, 'The OCR connection changed while this scan was queued. Queue the PDF again to use the new connection.');
           const selected = connection.connection(job.provider || 'builtin');
           const url = new URL(selected.baseUrl.replace(/\/+$/u, '') + '/ocr'); url.search = new URLSearchParams({ languages: job.languages.join('+'), rotate: job.rotate ? '1' : '0', mode: job.mode || 'redo' });
           const response = await request(url, { method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/pdf', ...(selected.apiKey ? { Authorization: `Bearer ${selected.apiKey}` } : {}) },
-            body: createReadStream(library.filePath(book)), duplex: 'half', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(3_660_000)]) });
+            body: createReadStream(library.filePath(book)), duplex: 'half', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(ocrRequestTimeout)]) });
           if (!response.ok) {
             let body; try { body = await response.json(); } catch {}
             if (response.status === 409) {
@@ -70,7 +73,13 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
             revision: job.id, expectedRevision: book.contentRevision, ...ocrBookLanguages(current, job.languages),
           }, { id: book.owner || '' });
           job.state = 'ready'; persist(job); try { onImport(job.result); } catch {}
-        } catch (error) { if (job.state !== 'cancelled') { job.state = 'error'; job.error = error instanceof RequestError ? error.message : 'OCR could not finish. Check the language service and retry.'; } persist(job); }
+        } catch (error) { if (job.state !== 'cancelled') {
+          job.state = 'error';
+          const code = error.cause?.code || error.code || error.name;
+          job.errorCode = typeof code === 'string' && /^[A-Za-z0-9_]{1,80}$/u.test(code) ? code : null;
+          job.error = error instanceof RequestError ? error.message : 'PDF OCR ended before the result was saved. Check the reader and OCR service logs, then retry.';
+          if (!(error instanceof RequestError)) console.error('PDF OCR request failed', { code: job.errorCode });
+        } persist(job); }
         finally { controllers.delete(job.id); await rm(temporary, { force: true }); }
       }
     } finally {
@@ -100,5 +109,5 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
     cancel(book, id) { const job=jobs.get(id); if (!job || job.source !== book.id) throw new RequestError(404,'Scan not found.');
       if (job.state === 'importing') throw new RequestError(409,'The completed scan is being saved. Wait for it to finish.');
       if (['queued','running'].includes(job.state)) {job.state='cancelled';job.error=null;persist(job);controllers.get(id)?.abort();} return publicJob(job); },
-    close() { closed = true; clearTimeout(retryTimer); for (const controller of controllers.values()) controller.abort(); } };
+    close() { closed = true; clearTimeout(retryTimer); for (const controller of controllers.values()) controller.abort(); if (transport) void transport.close().catch(() => {}); } };
 }
