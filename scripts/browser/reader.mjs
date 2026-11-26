@@ -633,9 +633,9 @@ try {
     await desktopPage.waitForFunction((title) => document.querySelector('#reading-title').textContent === title, book.title);
     await desktopPage.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 1 of 3');
     await desktopPage.locator('#reader-message').waitFor({ state: 'hidden' });
+    await desktopPage.frameLocator('#viewer iframe').locator('#source').waitFor({ state: 'attached' });
     const before = await desktopPage.evaluate(() => ({ size: 20, ...JSON.parse(localStorage.getItem('langy-settings-v1')) }));
-    let frame = await (await desktopPage.locator('#viewer iframe').elementHandle()).contentFrame();
-    assert.equal(await frame.evaluate(() => { const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -24, clientX: 120, clientY: 180 }); document.body.dispatchEvent(event); return event.defaultPrevented; }), true);
+    assert.equal(await desktopPage.frameLocator('#viewer iframe').locator('body').evaluate((body) => { const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -24, clientX: 120, clientY: 180 }); body.dispatchEvent(event); return event.defaultPrevented; }), true);
     await desktopPage.waitForFunction((size) => JSON.parse(localStorage.getItem('langy-settings-v1')).size > size, before.size);
     assert.equal((await desktopPage.evaluate(() => JSON.parse(localStorage.getItem('langy-settings-v1')))).touchSize, before.touchSize);
     assert.equal(await desktopPage.evaluate(() => visualViewport.scale), 1); await delay(700);
@@ -645,8 +645,7 @@ try {
     await desktopPage.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 1 of 3'); await delay(300);
     let phrases = 0;
     await desktopPage.route('**/api/ai/phrase', async (route) => { phrases++; const data = route.request().postDataJSON(); assert.equal(data.phrase, 'La viajera'); assert.ok(data.context.includes('casa tranquila')); await route.fulfill({ json: { text: 'The traveler is the woman arriving at the house.' } }); });
-    frame = await (await desktopPage.locator('#viewer iframe').elementHandle()).contentFrame();
-    await frame.evaluate(() => { const node = document.querySelector('#source').firstChild, range = document.createRange(); range.setStart(node, 0); range.setEnd(node, 10); const selected = getSelection(); selected.removeAllRanges(); selected.addRange(range); document.dispatchEvent(new Event('selectionchange')); });
+    await desktopPage.frameLocator('#viewer iframe').locator('#source').evaluate((source) => { const node = source.firstChild, range = document.createRange(); range.setStart(node, 0); range.setEnd(node, 10); const selected = getSelection(); selected.removeAllRanges(); selected.addRange(range); document.dispatchEvent(new Event('selectionchange')); });
     await desktopPage.locator('#phrase-help').waitFor({ state: 'visible' }); assert.equal(phrases, 0);
     await desktopPage.locator('[data-explain-phrase]').click(); await desktopPage.locator('[data-phrase-answer]').filter({ hasText: 'The traveler' }).waitFor(); assert.equal(phrases, 1);
     await desktopPage.screenshot({ path: output + '/contextual-phrase-desktop.png' });
@@ -666,7 +665,7 @@ try {
   });
   let memberContext, memberPage, memberBook;
   await check('administrator creates an account and the new reader signs in to an empty private library', async () => {
-    await desktopPage.locator('#downloads-dialog [data-close]').click();
+    if (await desktopPage.locator('#downloads-dialog').isVisible()) await desktopPage.locator('#downloads-dialog [data-close]').click();
     await desktopPage.goto(base + '/#settings/account'); await desktopPage.locator('#account-panel').waitFor({ state: 'visible' });
     assert.equal(await desktopPage.locator('#account-name').textContent(), 'reader');
     await desktopPage.locator('#account-new-name').fill('member'); await desktopPage.locator('#account-new-password').fill(memberPassword);
