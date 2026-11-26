@@ -23,7 +23,9 @@ test('offline packs show only downloaded books, bookmarks survive lost acknowled
   await put('/api/books/book/offline-data', { book: { id: 'book' }, analysis: { state: 'ready' } });
   await put('/api/books/book/bookmarks', { bookmarks: [] });
   await put('/api/library', { books: [{ id: 'book' }, { id: 'not-downloaded' }] });
-  assert.deepEqual((await offlineRequest('/api/library')).books.map((book) => book.id), ['book']);
+  const loading = [];
+  assert.deepEqual((await offlineRequest('/api/library', { onProgress: (event) => loading.push(event) })).books.map((book) => book.id), ['book']);
+  assert.deepEqual(loading.filter((event) => event.label === 'Loading saved books…').map(({ complete, total }) => [complete, total]), [[0, 1], [1, 1]]);
   const base = '/api/books/book/bookmarks', body = { target: 'epubcfi(/6/2!/4/2/1:7)', label: 'My passage', note: 'A note' };
   const saved = await offlineRequest(base, { method: 'POST', body }); assert.equal(saved.queued, true); assert.equal(saved.bookmarks[0].label, 'My passage');
   let loseAck = true, requests = 0; const remote = new Map();

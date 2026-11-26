@@ -40,7 +40,7 @@ export async function api(path, options = {}) {
     return result;
   } catch (error) { finish?.(error.offline && (!options.method || options.method === 'GET') ? undefined : error); throw error; }
 }
-async function requestAPI(path, { body, method, signal, keepalive } = {}) {
+async function requestAPI(path, { body, method, signal, keepalive, onProgress } = {}) {
   const form = body instanceof FormData;
   let response;
   try { response = await fetch(path, {
@@ -50,10 +50,10 @@ async function requestAPI(path, { body, method, signal, keepalive } = {}) {
   }); if (response.headers.get('X-Langy-Offline') === '1') throw new TypeError('Offline'); }
   catch (error) {
     if (error.name === 'AbortError' || signal?.aborted) throw error;
-    try { return await offlineRequest(path, { body, method }); }
+    try { return await offlineRequest(path, { body, method, onProgress }); }
     catch (offlineError) { offlineError.offline = true; throw offlineError; }
   }
-  if (response.headers.get('X-Langy-Cached') === '1' && (path === '/api/library' || /\/bookmarks$/u.test(path))) return offlineRequest(path, { body, method });
+  if (response.headers.get('X-Langy-Cached') === '1' && (path === '/api/library' || /\/bookmarks$/u.test(path))) return offlineRequest(path, { body, method, onProgress });
   if (response.status === 204) return;
   const result = await response.json().catch(() => null);
   if (!response.ok || !result) {

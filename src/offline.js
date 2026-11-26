@@ -42,7 +42,7 @@ async function bookmarkList(path) {
   }
   return { bookmarks: result };
 }
-export async function offlineRequest(path, { body, method = body ? 'POST' : 'GET' } = {}) {
+export async function offlineRequest(path, { body, method = body ? 'POST' : 'GET', onProgress } = {}) {
   if (!globalThis.caches || !offlineOwner()) throw new Error('Connect to Langy and download an offline reading pack first.');
   const bookmark = /^\/api\/books\/([^/]+)\/bookmarks(?:\/([^/]+))?$/u.exec(path);
   const pinyin = /^\/api\/books\/([^/]+)\/pinyin$/u.exec(path);
@@ -63,16 +63,37 @@ export async function offlineRequest(path, { body, method = body ? 'POST' : 'GET
   }
   if (method === 'GET') {
     if (path === '/api/library') {
-      const response = await cachedResponse(path); if (!response) throw new Error('Download a book for offline reading first.');
-      const snapshot = await response.json(), ids = new Set();
-      for (const name of await packCaches()) { const entry = await (await caches.open(name)).match('/__langy_pack_ready__'); if (entry) ids.add((await entry.json()).book); }
+      const owner = offlineOwner(), packs = new Map();
+      onProgress?.({ label: 'Checking saved books…' });
+      const names = await packCaches(); let response, checked = 0;
+      for (const name of names) {
+        const cache = await caches.open(name), entry = await cache.match('/__langy_pack_ready__');
+        if (entry) {
+          const marker = await entry.json();
+          if (!marker.owner || marker.owner === owner) {
+            packs.set(marker.book, cache);
+            response = await cache.match(path) || response;
+          }
+        }
+        onProgress?.({ label: 'Checking saved books…', complete: ++checked, total: names.length });
+      }
+      if (!response) throw new Error('Download a book for offline reading first.');
+      const snapshot = await response.json(), savedBooks = snapshot.books.filter((item) => packs.has(item.id));
       let native = ''; try { native = JSON.parse(localStorage.getItem('langy-settings-v1') || '{}').nativeLanguage || ''; } catch {}
       const books = [];
-      const queued = (await offlineChanges.all()).filter((item) => item.owner === offlineOwner() && item.kind === 'book-status').sort((a, b) => a.created - b.created);
-      for (const book of snapshot.books.filter((item) => ids.has(item.id))) { const pack = await savedPack(book.id), current = { ...book, learning: learningLanguages(pack.analysis, native) };
+      const queued = (await offlineChanges.all()).filter((item) => item.owner === owner && item.kind === 'book-status').sort((a, b) => a.created - b.created);
+      onProgress?.({ label: 'Loading saved books…', complete: 0, total: savedBooks.length });
+      for (const book of savedBooks) {
+        // Open each known pack directly rather than scanning every cache again
+        // for every book. Large libraries otherwise perform quadratic scans.
+        const data = await packs.get(book.id).match(`/api/books/${book.id}/offline-data`);
+        if (!data) throw new Error('A saved book is incomplete. Reconnect to Langy and download it again.');
+        const pack = await data.json(), current = { ...book, learning: learningLanguages(pack.analysis, native) };
         for (const change of queued.filter((item) => item.book === book.id)) statusChange(current, change.operation, change.body, change.created);
         books.push(current);
+        onProgress?.({ label: 'Loading saved books…', complete: books.length, total: savedBooks.length });
       }
+      if (offlineOwner() !== owner) throw new Error('The signed-in account changed while opening the library.');
       return { ...snapshot, books, archive: { available: false, jobs: [], job: null }, offline: true };
     }
     if (bookmark && !bookmark[2]) return bookmarkList(path);

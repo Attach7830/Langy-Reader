@@ -48,7 +48,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   let learningBook, learningTimer, libraryTimer, learningVisit = 0, libraryVisit = 0, learningParts = {}, learningPending = {};
   let snapshot = { categories: [], books: [], maxUpload: 120 * 1024 ** 2, demo: false };
   let category = 'all', editingBook, editingCategory, selectedFile, slowImport;
-  let bookPending = false, categoryPending = false;
+  let bookPending = false, categoryPending = false, bookVisit = 0;
   const metadataFields = bookMetadataFields({ form: bookForm, status: $('#book-metadata-status'), detect: detectMetadata,
     active: () => !editingBook && bookDialog.open && $('#book-source').value === 'file' });
   const pendingReadStatus = new Set();
@@ -304,14 +304,15 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     renderDownloads(snapshot.archive?.jobs || []);
   }
 
-  async function refresh({ signal } = {}) {
-    const version = ++libraryVisit, next = await api('/api/library', { signal }); signal?.throwIfAborted(); if (disposed || version !== libraryVisit) return snapshot;
+  async function refresh({ signal, onProgress } = {}) {
+    const version = ++libraryVisit, next = await api('/api/library', { signal, onProgress }); signal?.throwIfAborted(); if (disposed || version !== libraryVisit) return snapshot;
     snapshot = next;
     onSnapshot(snapshot);
     showReadingTime(snapshot.readingTime);
     vocabularyUI.update(snapshot.vocabulary);
     showStorage(snapshot.storage);
     message('#library-error');
+    onProgress?.({ label: 'Preparing your library…', complete: next.books.length, total: next.books.length });
     render();
     clearTimeout(libraryTimer);
     if (snapshot.books.some((book) => ['queued', 'running'].includes(book.learning?.state)
@@ -594,7 +595,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   function showBook(book) {
     if (book?.canEdit === false) return;
     if (pendingCovers.has(book?.id)) { toast('This cover is still importing. Follow its progress in Process queue.'); return; }
-    if (bookPending) { if (!bookDialog.open) bookDialog.showModal(); return; }
+    if (bookPending) return toast('The previous book is still saving. Please try again shortly.');
+    bookVisit++;
     metadataFields.reset(); coverSearchUI.reset();
     editingBook = book;
     slowImport = null;
@@ -609,6 +611,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     const isEdit = Boolean(book);
     $('#book-dialog-title').textContent = isEdit ? 'Book details' : 'Import book';
     $('#book-submit').textContent = isEdit ? 'Save book' : 'Import book';
+    $('#book-submit').disabled = false;
     $('#remove-book').hidden = !isEdit;
     $('#file-field').hidden = isEdit;
     $('#kavita-import-source').hidden = isEdit;
@@ -794,12 +797,19 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     stageFile(event.dataTransfer.files[0]);
   });
 
+  function refreshAfterBookChange() {
+    // The write is complete once the dialog closes. A catalog refresh must not
+    // reopen the old form or block editing another book in the meantime.
+    if (!bookDialog.open) bookPending = false;
+    return refresh();
+  }
+
   bookForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (bookPending || pendingCovers.has(editingBook?.id)) return;
-    const submittedBook = editingBook, submittedFile = selectedFile, submittedSource = $('#book-source').value;
+    const submittedBook = editingBook, submittedFile = selectedFile, submittedSource = $('#book-source').value, submittedVisit = bookVisit;
     await metadataFields.ready();
-    if (bookPending || !bookDialog.open || submittedBook !== editingBook || submittedFile !== selectedFile || submittedSource !== $('#book-source').value) return;
+    if (bookPending || !bookDialog.open || submittedVisit !== bookVisit || submittedBook !== editingBook || submittedFile !== selectedFile || submittedSource !== $('#book-source').value) return;
     const data = new FormData(bookForm);
     if (!String(data.get('coverUrl') || '').trim()) data.delete('coverUrl');
     if (snapshot.sharingAvailable) data.set('shared', String(bookForm.elements.shared.checked)); else data.delete('shared');
@@ -833,12 +843,12 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
         const updated = await api(`/api/books/${submittedBook.id}`, { method: 'PATCH', body: Object.fromEntries(data) });
         if (coverUrl) { importBookCover(updated, String(coverUrl).trim()); void refresh().catch((error) => message('#library-error', error.message)); return; }
       } else if (webImport) {
-        data.delete('file'); await api('/api/imports/web',{method:'POST',body:{...Object.fromEntries(data),url:webURL}}); bookDialog.close(); toast('Book download queued'); await refresh();return;
+        data.delete('file'); await api('/api/imports/web',{method:'POST',body:{...Object.fromEntries(data),url:webURL}}); bookDialog.close(); toast('Book download queued'); await refreshAfterBookChange();return;
       } else if (archiveImport) {
         data.delete('file');
         if (bulkImport.enabled()) {
           const result = await api('/api/imports/anna/batch', { method: 'POST', body: { ...Object.fromEntries(data), downloadMode, queueUnavailable, sameAuthor: bulkImport.sameAuthor(), books: bulkImport.value() } });
-          bookDialog.close(); toast(`${result.jobs.length} books queued`); await refresh(); return;
+          bookDialog.close(); toast(`${result.jobs.length} books queued`); await refreshAfterBookChange(); return;
         }
         let job;
         if (slowImport) {
@@ -849,42 +859,45 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
         } else job = await api('/api/imports/anna', { method: 'POST', body: { ...Object.fromEntries(data), reference, downloadMode, queueUnavailable } });
         if (job.state === 'needs_action') { showSlowImport(job); await refresh(); return; }
         if (job.state === 'error') throw new Error(job.error || 'The book could not be imported.');
-        bookDialog.close(); toast(job.state === 'ready' ? 'Book imported' : 'Book download queued'); await refresh(); return;
+        bookDialog.close(); toast(job.state === 'ready' ? 'Book imported' : 'Book download queued'); await refreshAfterBookChange(); return;
       } else {
         data.set('file', selectedFile);
         const coverUrl = data.get('coverUrl'); data.delete('coverUrl');
         if(convertsToEPUB(selectedFile.name)){
           if(coverUrl)data.set('coverUrl',coverUrl);
-          await api('/api/imports/convert',{method:'POST',body:data});bookDialog.close();toast('EPUB conversion queued');await refresh();return;
+          await api('/api/imports/convert',{method:'POST',body:data});bookDialog.close();toast('EPUB conversion queued');await refreshAfterBookChange();return;
         }
         const imported = await api('/api/books', { method: 'POST', body: data });
         if (coverUrl) { importBookCover(imported, String(coverUrl).trim()); void refresh().catch((error) => message('#library-error', error.message)); return; }
       }
       if ((editingBook?.id || '') === (submittedBook?.id || '') && submittedFile === selectedFile) bookDialog.close();
       toast(submittedBook ? 'Book updated' : 'Book imported');
-      await refresh();
+      await refreshAfterBookChange();
     } catch (error) {
-      message(bookDialog.open ? '#book-error' : '#library-error', error.message);
+      message(submittedVisit === bookVisit && bookDialog.open ? '#book-error' : '#library-error', error.message);
     } finally {
-      bookPending = false;
-      message('#book-import-progress');
-      message('#archive-import-status', importProgress(snapshot.archive?.job));
-      $('#book-submit').disabled = false;
-      $('#book-submit').textContent = editingBook ? 'Save book' : slowImport ? 'Import slow download' : 'Import book';
+      if (submittedVisit === bookVisit) {
+        bookPending = false;
+        message('#book-import-progress');
+        message('#archive-import-status', importProgress(snapshot.archive?.job));
+        $('#book-submit').disabled = false;
+        $('#book-submit').textContent = editingBook ? 'Save book' : slowImport ? 'Import slow download' : 'Import book';
+      }
     }
   });
 
   $('#remove-book').addEventListener('click', async () => {
     if (bookPending || !editingBook || !window.confirm(`Remove “${editingBook.title}” from this library?`)) return;
     bookPending = true;
+    const removedBook = editingBook, submittedVisit = bookVisit;
     try {
-      await api(`/api/books/${editingBook.id}`, { method: 'DELETE' });
-      onRemove(editingBook.id);
+      await api(`/api/books/${removedBook.id}`, { method: 'DELETE' });
+      onRemove(removedBook.id);
       bookDialog.close();
-      await refresh();
+      await refreshAfterBookChange();
       toast('Book removed');
-    } catch (error) { message(bookDialog.open ? '#book-error' : '#library-error', error.message); }
-    finally { bookPending = false; }
+    } catch (error) { message(submittedVisit === bookVisit && bookDialog.open ? '#book-error' : '#library-error', error.message); }
+    finally { if (submittedVisit === bookVisit) bookPending = false; }
   });
 
   categoryForm.addEventListener('submit', async (event) => {

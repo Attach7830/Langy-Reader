@@ -20,7 +20,7 @@ test('retry replaces unusable cached sections, keeps valid audio, and completes 
   const folder = await mkdtemp(join(tmpdir(), 'langy-narration-retry-'));
   const originalURL = process.env.READER_KOKORO_URL;
   const originalFetch = globalThis.fetch;
-  let db, learning, speechCalls = 0;
+  let db, learning, speechCalls = 0; const phases = [];
   try {
     process.env.READER_KOKORO_URL = 'http://kokoro.test/v1';
     const book = { id: 'book', title: 'A book with headings', language: 'es' };
@@ -30,8 +30,8 @@ test('retry replaces unusable cached sections, keeps valid audio, and completes 
     await run('ffmpeg', ['-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=220:duration=1', '-ar', '24000', wav]);
     const speech = await readFile(wav);
     globalThis.fetch = async (url) => {
-      if (new URL(url).pathname === '/v1/audio/speech') { speechCalls++; return new Response(speech); }
-      if (new URL(url).pathname === '/align') return Response.json({ timings: [] });
+      if (new URL(url).pathname === '/v1/audio/speech') { speechCalls++; phases.push(...db.prepare('SELECT json FROM worker_progress').all().map((row) => JSON.parse(row.json))); return new Response(speech); }
+      if (new URL(url).pathname === '/align') { phases.push(...db.prepare('SELECT json FROM worker_progress').all().map((row) => JSON.parse(row.json))); return Response.json({ timings: [] }); }
       throw new Error('Unexpected request');
     };
     db = new DatabaseSync(join(folder, 'learning.sqlite'));
@@ -64,6 +64,10 @@ test('retry replaces unusable cached sections, keeps valid audio, and completes 
     assert.equal(complete.state, 'ready');
     assert.ok(learning.readyAudiobooks().some((item) => item.book === book.id && item.recording === complete.id), 'completed book audio is discovered by the automatic export worker');
     assert.equal(speechCalls, 2, 'only the failed heading and numeric heading need generation');
+    assert.ok(phases.some((item) => item.phase === 'generating' && item.total > 0));
+    assert.ok(phases.some((item) => item.phase === 'aligning' && item.total > 0));
+    assert.ok(phases.every((item) => item.startedAt > 0 && item.updatedAt >= item.startedAt));
+    assert.equal(db.prepare('SELECT count(*) AS n FROM worker_progress').get().n, 0, 'completed narration clears transient progress');
     assert.equal(complete.approximateSections, 2);
     assert.equal(complete.segments[0].approximate, false);
     const heading = learning.unit(book, 'heading', complete.id);

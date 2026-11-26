@@ -20,6 +20,10 @@ test('the real OCR HTTP transport saves the complete PDF and keeps language prob
   const received = new Promise((resolve) => { receive = resolve; }), ready = new Promise((resolve) => { release = resolve; });
   const server = createServer(async (request, response) => {
     assert.equal(request.headers.authorization, 'Bearer synthetic-ocr-key');
+    if (request.url.startsWith('/ocr/progress/')) {
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify({ job: request.url.split('/').at(-1), phase: 'scanning', complete: 2, total: 4 })); return;
+    }
     if (request.url === '/ocr/languages') {
       response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ engine: 'paddleocr', protocol: 1, languages: ['chi_sim', 'eng'] })); return;
     }
@@ -30,9 +34,11 @@ test('the real OCR HTTP transport saves the complete PDF and keeps language prob
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(() => { release(); server.closeAllConnections(); return new Promise((resolve) => server.close(resolve)); });
-  const service = await openPDFOCR(dir, { library }); t.after(() => service.close());
+  const service = await openPDFOCR(dir, { library, progressInterval: 10 }); t.after(() => service.close());
   await service.save({ provider: 'paddle', baseUrl: `http://127.0.0.1:${server.address().port}`, apiKey: 'synthetic-ocr-key' });
   service.queue(book, { languages: ['chi_sim'] }); await received;
+  await until(() => service.status(book)?.scanProgress?.complete === 2);
+  assert.deepEqual(service.status(book).scanProgress, { phase: 'scanning', complete: 2, total: 4 });
   assert.deepEqual(await service.languages(), ['chi_sim', 'eng'], 'a scan waiting for response headers must not block connection checks');
   assert.equal(service.status(book).state, 'running'); release();
   const job = await until(() => ['ready', 'error'].includes(service.status(book)?.state) && service.status(book));

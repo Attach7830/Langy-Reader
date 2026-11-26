@@ -16,6 +16,7 @@ from starlette.concurrency import run_in_threadpool
 from paddle_pdf import LANGUAGES, LIMIT, MODELS, convert_pdf, offline_recognition
 
 app = FastAPI(title='Langy PaddleOCR PDF service'); lock = threading.Lock()
+active_scan = None
 
 
 def authorize(request):
@@ -33,11 +34,29 @@ def languages(request: Request):
     return {'engine': 'paddleocr', 'protocol': 1, 'languages': LANGUAGES, 'models': MODELS}
 
 
+@app.get('/ocr/progress/{job_id}')
+def progress(request: Request, job_id: str):
+    authorize(request)
+    current = active_scan
+    if current is None or not job_id.isascii() or not hmac.compare_digest(current[0], job_id):
+        raise HTTPException(404, 'This scan is not active.')
+    try:
+        data = json.loads((current[1] / 'progress.json').read_text())
+    except (OSError, ValueError):
+        data = {'phase': 'preparing', 'complete': 0, 'total': 0}
+    return {'job': job_id, **data}
+
+
 def child(folder, codes, mode, rotate):
     folder = Path(folder)
     try:
         details = {}
-        with offline_recognition(): pages, text_pages = convert_pdf(folder / 'input.pdf', folder / 'output.pdf', codes, mode, rotate, diagnostics=details)
+        def report(value):
+            temporary = folder / 'progress.tmp'
+            temporary.write_text(json.dumps(value))
+            temporary.replace(folder / 'progress.json')
+        with offline_recognition(): pages, text_pages = convert_pdf(folder / 'input.pdf', folder / 'output.pdf', codes, mode, rotate, diagnostics=details, progress=report)
+        report({'phase': 'saving', 'complete': pages, 'total': pages})
         result = {'pages': pages, 'textPages': text_pages, **details}
     except ValueError as error: result = {'error': str(error)[:300], 'status': 422}
     except Exception:
@@ -63,10 +82,15 @@ def scan(folder, codes, mode, rotate):
 
 @app.post('/ocr')
 async def ocr(request: Request):
+    global active_scan
     authorize(request)
     if not lock.acquire(blocking=False): raise HTTPException(409, 'An OCR scan is already running.')
     folder = Path(tempfile.mkdtemp(prefix='langy-paddle-')); delivered = False
     try:
+        job = request.headers.get('x-langy-ocr-job', '')
+        if job and (len(job) > 64 or not all(char.isascii() and (char.isalnum() or char == '-') for char in job)):
+            raise HTTPException(422, 'Choose a valid OCR job identifier.')
+        active_scan = (job, folder) if job else None
         codes = list(dict.fromkeys(request.query_params.get('languages', 'chi_sim').split('+'))); mode = request.query_params.get('mode', 'redo')
         if mode not in {'redo', 'skip'} or not codes or len(codes) > 20 or any(code not in LANGUAGES for code in codes): raise HTTPException(422, 'Choose supported PaddleOCR languages and an OCR mode.')
         size = 0
@@ -83,5 +107,6 @@ async def ocr(request: Request):
         return FileResponse(folder / 'output.pdf', media_type='application/pdf', filename='searchable.pdf', headers=headers,
             background=BackgroundTask(shutil.rmtree, folder, ignore_errors=True))
     finally:
+        active_scan = None
         lock.release()
         if not delivered: shutil.rmtree(folder, ignore_errors=True)

@@ -126,7 +126,7 @@ def mask_digital_text(image, page):
     finally: text.close()
 
 
-def convert_pdf(source, output, languages, mode='redo', rotate=True, recognize=None, diagnostics=None):
+def convert_pdf(source, output, languages, mode='redo', rotate=True, recognize=None, diagnostics=None, progress=None):
     if mode not in {'redo', 'skip'} or not languages or any(code not in LANGUAGES for code in languages): raise ValueError('Choose supported PaddleOCR languages and an OCR mode.')
     source, output = Path(source), Path(output)
     with source.open('rb') as stream: header = stream.read(5)
@@ -143,14 +143,17 @@ def convert_pdf(source, output, languages, mode='redo', rotate=True, recognize=N
     document = pdfium.PdfDocument(str(prepared)); engine = None
     stats = diagnostics if diagnostics is not None else {}
     stats.update(scannedPages=0, skippedPages=0, recognizedCharacters=0)
+    if progress: progress({'phase': 'preparing', 'complete': 0, 'total': len(writer.pages)})
     deadline = time.monotonic() + 3500
     try:
         for index, page in enumerate(writer.pages):
+            if progress: progress({'phase': 'scanning', 'complete': index, 'total': len(writer.pages)})
             if time.monotonic() > deadline: raise ValueError('OCR exceeded one hour. Scan a smaller volume.')
             retained_text = bool((page.extract_text() or '').strip())
             if mode == 'skip' and retained_text:
                 stats['skippedPages'] += 1
                 print(f'OCR page {index + 1}/{len(writer.pages)}: retained existing text (skip mode)', flush=True)
+                if progress: progress({'phase': 'scanning', 'complete': index + 1, 'total': len(writer.pages)})
                 continue
             raster = document[index]; width, height = raster.get_size()
             scale = min(400 / 72, math.sqrt(24_000_000 / max(1, width * height)))
@@ -161,13 +164,17 @@ def convert_pdf(source, output, languages, mode='redo', rotate=True, recognize=N
                 if recognize is not None: result = recognize(image)
                 else:
                     import numpy as np
-                    if engine is None: engine = pipeline()
+                    if engine is None:
+                        if progress: progress({'phase': 'preparing', 'complete': index, 'total': len(writer.pages)})
+                        engine = pipeline()
+                        if progress: progress({'phase': 'scanning', 'complete': index, 'total': len(writer.pages)})
                     prediction = next(iter(engine.predict(np.asarray(image)[:, :, ::-1].copy(), use_doc_orientation_classify=False,
                         use_doc_unwarping=False, use_textline_orientation=rotate, text_det_limit_side_len=1280, text_det_limit_type='max')))
                     result = prediction.json['res']
                 layer, count = text_layer(width, height, image.size, result, vertical=any(code.endswith('_vert') for code in languages), diagnostics=stats)
                 stats['scannedPages'] += 1
                 print(f'OCR page {index + 1}/{len(writer.pages)}: {count} regions, {stats["recognizedCharacters"] - before} new characters', flush=True)
+                if progress: progress({'phase': 'scanning', 'complete': index + 1, 'total': len(writer.pages)})
                 if count: page.merge_translated_page(layer, float(page.cropbox.left), float(page.cropbox.bottom), over=True)
             finally: image.close(); bitmap.close(); raster.close()
         writer.write(output)

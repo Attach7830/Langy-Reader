@@ -1,4 +1,5 @@
 import { proficiencyPage } from './proficiency.js';
+import { startup } from './startup.js';
 import '@fontsource/dm-sans/latin-400.css';
 import '@fontsource/dm-sans/latin-600.css';
 import '@fontsource/dm-sans/latin-700.css';
@@ -904,15 +905,20 @@ applyAppearance();
 void checkAI();
 setInterval(checkAI, 30_000);
 try {
+  startup.report({ label: 'Restoring your preferences…' });
   await account.start();
-  const snapshot = await library.refresh();
+  startup.report({ label: 'Loading your library…' });
+  const snapshot = await library.refresh({ onProgress: startup.report });
   void flushOfflineChanges();
   void readingSync.flushSaved();
   void refreshOfflineReader();
   settingsUI.setDemo(snapshot.demo);
   $('#about-link').hidden = false;
   window.addEventListener('hashchange', route);
+  startup.report({ label: location.hash.startsWith('#read/') ? 'Opening your book…' : 'Preparing your library…' });
   await route();
+  startup.finish();
 } catch (error) {
+  startup.fail(error);
   message('#library-error', error.message);
 }

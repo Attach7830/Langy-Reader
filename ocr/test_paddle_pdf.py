@@ -36,7 +36,10 @@ class PDFTests(unittest.TestCase):
                 def recognize(image):
                     width, height = image.size
                     return {'rec_texts': ['中文阅读'], 'rec_scores': [.99], 'rec_polys': [[[width*.1,height*.2],[width*.8,height*.2],[width*.8,height*.3],[width*.1,height*.3]]]}
-                output = folder / 'output.pdf'; self.assertEqual(convert_pdf(source, output, ['chi_sim'], recognize=recognize), (1, 1))
+                progress = []
+                output = folder / 'output.pdf'; self.assertEqual(convert_pdf(source, output, ['chi_sim'], recognize=recognize, progress=progress.append), (1, 1))
+                self.assertEqual(progress[0], {'phase': 'preparing', 'complete': 0, 'total': 1})
+                self.assertEqual(progress[-1], {'phase': 'scanning', 'complete': 1, 'total': 1})
                 result = PdfReader(output); self.assertIn('中文阅读', result.pages[0].extract_text()); self.assertNotIn('旧的错误文字', result.pages[0].extract_text())
                 self.assertEqual(result.metadata.title, 'Reading scan'); self.assertEqual(result.outline[0]['/Title'], 'First page'); self.assertEqual(source.read_bytes(), original)
                 self.assertEqual(self.pixels(output), before, 'a hidden text layer must not alter the visible page')
@@ -45,7 +48,9 @@ class PDFTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as value:
             folder = Path(value); source = self.fixture(folder, hidden=True)
             def unexpected(image): self.fail('A page with retained text must not be OCRed twice')
-            output = folder / 'skip.pdf'; convert_pdf(source, output, ['chi_sim'], mode='skip', recognize=unexpected)
+            progress = []
+            output = folder / 'skip.pdf'; convert_pdf(source, output, ['chi_sim'], mode='skip', recognize=unexpected, progress=progress.append)
+            self.assertEqual(progress[-1]['complete'], 1)
             self.assertIn('旧的错误文字', PdfReader(output).pages[0].extract_text())
 
     def test_redo_recognizes_images_even_with_visible_digital_text_without_duplicate_glyphs(self):
