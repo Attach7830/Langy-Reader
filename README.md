@@ -44,6 +44,8 @@ Selecting an EPUB or PDF in **Import book** fills in its title, author and prima
 
 The stack also includes a local `language` service for lemma analysis and audio alignment. Its first build installs Spanish, English and Portuguese spaCy models, lookup data for additional supported languages, and the multilingual Whisper **small** model. These models run offline after the build and require no paid API. Set `READER_WHISPER_MODEL=base`, `small`, `medium` or `large-v3` in `.env` before building to choose the recognizer; larger models require more download space, RAM and CPU time. Rebuild both `language` and `reader` after changing it. Narration connects to your existing Kokoro server.
 
+For NVIDIA hosts, [optional GPU alignment](docs/gpu-alignment.md) moves Whisper recognition to CUDA while keeping your existing Kokoro setup. Run `sudo bash scripts/enable-gpu-alignment.sh` after updating; it builds and checks real local inference before briefly restarting the reader and language service. Runtime logs show the actual device and time spent aligning each audio chunk. Keep `compose.gpu.yaml` in future language-service update commands.
+
 ## Accounts and shared books
 
 Set `READER_USER` and `READER_PASSWORD` in `.env` to enable accounts. On the first start after this update, that existing account becomes the instance administrator and keeps its library, categories, reader preferences, progress and reading history. There is no public registration. Open **Settings → Account** to create reader or administrator accounts, disable access, or reset a password. New passwords must contain 15–256 characters. Each user can change their own password there. Password changes, resets and disabling an account end its existing sessions.
