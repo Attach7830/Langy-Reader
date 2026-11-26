@@ -329,7 +329,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     }
     rate.value = value;
     if (!enabled) { audio.pause(); wantPlaying = false; clearHighlight(); }
-    else if (recording) void updateRecording({ connected: connection, previewAudio, audio: recording }).catch((error) => { status.textContent = error.message; });
+    else if (recording) void updateRecording({ connected: connection, previewAudio, absConnected, audio: recording }).catch((error) => { status.textContent = error.message; });
     if (!preferences().audioHighlight) clearHighlight();
     controls();
   }
