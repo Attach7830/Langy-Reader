@@ -18,3 +18,16 @@ test('account storage counts owned media once and reservations prevent concurren
   limit = null; const unrestricted = await storage.reserve('first', 1000000); unrestricted(); assert.equal((await storage.summary('first')).unlimited, true);
   active = false; await assert.rejects(storage.reserve('first', 0), { status: 403 });
 });
+
+test('missing filesystem stats preserve account usage without inventing drive capacity', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'langy-quota-unavailable-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  let limit = null;
+  const storage = userStorage(join(dir, 'missing'), { policy: () => ({ active: true, storageLimit: limit }), paths: () => [] });
+  const unlimited = await storage.summary('reader');
+  assert.equal(unlimited.available, true); assert.equal(unlimited.usedBytes, 0); assert.equal(unlimited.availableBytes, null);
+  assert.deepEqual(unlimited.drive, { available: false, scope: 'drive' });
+  limit = 100;
+  const limited = await storage.summary('reader');
+  assert.equal(limited.unlimited, false); assert.equal(limited.totalBytes, 100); assert.equal(limited.availableBytes, 100);
+  assert.equal(limited.drive.available, false);
+});

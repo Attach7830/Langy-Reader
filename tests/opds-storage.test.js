@@ -157,6 +157,10 @@ test('OPDS browses EPUBs, categories and search with bounded feeds, and download
   // Other tests can write between this API response and statfs; capacity is stable.
   assert.ok(storage.availableBytes > 0 && storage.availableBytes <= Number(fs.blocks * fs.bsize));
   assert.equal(storage.totalBytes, storage.usedBytes + storage.availableBytes);
+  assert.equal(storage.drive.available, true);
+  assert.equal(storage.drive.totalBytes, Number(fs.blocks * fs.bsize));
+  assert.equal(storage.drive.availableBytes, storage.availableBytes);
+  assert.equal(storage.drive.usedBytes + storage.drive.reservedBytes + storage.drive.availableBytes, storage.drive.totalBytes);
   assert.ok(!JSON.stringify(storage).includes(folder));
 });
 
