@@ -13,7 +13,14 @@ export function audiobookshelfProgress({ audio, request, reading }) {
     if (!session || remote.recording !== session.recording) return;
     const current = session;
     applying = true;
-    try { await (current.recording === 'reading' ? reading : audio).resumeAt(remote.currentTime); if (session !== current) return; session.time = remote.currentTime; session.version = remote.version; session.dirty = false; persist(); notice.hidden = true; tell(remote.approximate ? 'Audiobookshelf position synced by book percentage.' : 'Audiobookshelf position synced.'); }
+    try {
+      await (current.recording === 'reading' ? reading : audio).resumeAt(remote.currentTime); if (session !== current) return;
+      const actual = current.recording === 'reading' ? position() : null;
+      const page = actual?.book === current.book && actual.recording === current.recording ? actual : null;
+      session.time = page?.time ?? remote.currentTime; session.readingTarget = page?.readingTarget ?? session.readingTarget;
+      session.version = remote.version; session.dirty = false; persist(); notice.hidden = true;
+      tell(remote.approximate ? 'Audiobookshelf position synced by book percentage.' : 'Audiobookshelf position synced.');
+    }
     finally { applying = false; }
   }
   function offer(remote) {
@@ -97,7 +104,7 @@ export function audiobookshelfProgress({ audio, request, reading }) {
       }
     })().finally(() => { syncingSaved = null; }); return syncingSaved;
   }
-  $('#abs-sync-resume').addEventListener('click', () => { if (offered) void resume(offered); });
+  $('#abs-sync-resume').addEventListener('click', () => { if (offered) void resume(offered).catch((error) => tell(error.message)); });
   $('#abs-sync-keep').addEventListener('click', () => { if (session && offered) { session.version = offered.version; session.dirty = true; persist(); notice.hidden = true; void sync(); } });
   const element = $('#narration-audio');
   element.addEventListener('timeupdate', sample);

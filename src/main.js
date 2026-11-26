@@ -140,7 +140,7 @@ const absProgress = audiobookshelfProgress({ audio, request: api, reading: {
     const current = renderer?.syncPosition?.();
     return activeBook && current && audio.absConnected ? { book: activeBook.id, recording: 'reading', time: current.percentage, duration: 1, absConnected: true, readingTarget: current.target, hasSavedPosition: hadSavedPosition } : null;
   },
-  async resumeAt(percentage) { await move(0, { sync: { percentage } }); },
+  async resumeAt(percentage) { if (!await move(0, { sync: { percentage } })) throw new Error('The Audiobookshelf reading position could not be opened.'); },
 } });
 const processes = processQueue({ changePreferences: (values) => applySettings({ ...settings, ...values }) });
 const library = libraryScreen({
