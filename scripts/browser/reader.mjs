@@ -75,6 +75,11 @@ try {
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   }
   async function changed(before) { await page.waitForFunction(({ id, before }) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target !== before, { id: book.id, before }, { timeout: 4000 }); }
+  async function useAndroidApp(browserContext, currentPage) {
+    const bridge = (await readFile('android/app/src/main/assets/reader-fullscreen.js', 'utf8')).replace('__LANGY_FULLSCREEN_TOKEN__', 'browser-test-native-channel');
+    await browserContext.addInitScript({ content: bridge + `\ndocument.addEventListener('DOMContentLoaded', () => { const channel = new MessageChannel(); window.postMessage('browser-test-native-channel', location.origin, [channel.port2]); }, { once: true });` });
+    await currentPage.reload(); await currentPage.locator('#android-app-controls').waitFor({ state: 'attached' });
+  }
   await page.goto(base + '/#library');
   await page.locator('#books a[href="#read/' + book.id + '"]').waitFor();
   await check('unlimited accounts show the actual library drive capacity bar', async () => {
@@ -98,6 +103,7 @@ try {
     await page.locator('.book-mobile-menu').first().click();
     await page.locator('#book-actions-dialog').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#book-actions-dialog .book-word-count, #book-actions-dialog .book-metrics').count(), 0);
+    assert.equal(await page.locator('#book-actions-dialog').getByRole('button', { name: 'Save offline', exact: true }).count(), 0, 'a phone browser is still the web version');
     await page.locator('#book-actions-dialog [data-close]').click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({ path: output + '/mobile-library.png', fullPage: true });
@@ -222,6 +228,7 @@ try {
     await page.locator('#book-dialog [data-close]').first().click();
   });
   await check('completed book packs show Downloaded and open locally even when the source URL fails', async () => {
+    await useAndroidApp(context, page);
     await page.waitForFunction(() => Boolean(localStorage.getItem('langy-offline-owner')));
     const file = await context.request.get(base + '/api/books/' + book.id + '/file'); assert.equal(file.status(), 200);
     await page.evaluate(async ({ id, source }) => {
@@ -580,10 +587,42 @@ try {
   await check('desktop library and project pages retain their full layout', async () => {
     await desktopPage.goto(base + '/#library'); await desktopPage.locator('#books a').first().waitFor();
     assert.equal(await desktopPage.locator('.library-rail').isVisible(), true); assert.equal(await desktopPage.locator('#mobile-navigation').isVisible(), false);
+    await desktopPage.locator('.library-view-options > summary').click(); await desktopPage.locator('#library-covers-only').check();
+    await desktopPage.locator('.library-view-options > summary').click();
+    await desktopPage.locator('[data-book="' + book.id + '"] .book-mobile-menu').click();
+    await desktopPage.locator('#book-actions-dialog').waitFor({ state: 'visible' });
+    assert.equal(await desktopPage.locator('#book-actions-dialog').getByRole('button', { name: 'Analysis & audio', exact: true }).isVisible(), true);
+    assert.equal(await desktopPage.locator('#book-actions-dialog').getByRole('button', { name: 'Edit book details', exact: true }).isVisible(), true);
+    assert.equal(await desktopPage.locator('#book-actions-dialog').getByRole('button', { name: 'Save offline', exact: true }).count(), 0);
+    await desktopPage.locator('#book-actions-dialog').getByRole('button', { name: 'Analysis & audio', exact: true }).click();
+    await desktopPage.locator('#learning-dialog').waitFor({ state: 'visible' }); await desktopPage.locator('#learning-dialog > header [data-close]').click();
     await desktopPage.screenshot({ path: output + '/library-desktop.png' });
     await desktopPage.goto(base + '/#about'); await desktopPage.locator('#about-title').waitFor({ state: 'visible' });
     await desktopPage.screenshot({ path: output + '/about-desktop.png' });
     assert.equal(await desktopPage.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  });
+  await check('matched ABS books resume and sync reading progress on mobile and desktop without local narration', async () => {
+    const created = await context.request.post(base + '/api/books', { multipart: { title: 'Reading without narration', author: 'An Author', language: 'es', file: { name: 'reading-only.epub', mimeType: 'application/epub+zip', buffer: await zip.generateAsync({ type: 'nodebuffer' }) } } });
+    assert.equal(created.status(), 201); const readingBook = await created.json();
+    for (const currentPage of [page, desktopPage]) {
+      let remote = { linked: true, recording: 'reading', mode: 'reading', automatic: true, approximate: true, currentTime: .3, duration: 1, updated: 1000, version: 'initial' }, writes = [];
+      await currentPage.route('**/api/books/' + readingBook.id + '/narration*', (route) => route.fulfill({ json: { connected: false, absConnected: true, recordings: [], audio: { state: 'missing' } } }));
+      await currentPage.route('**/api/books/' + readingBook.id + '/chapters/*', (route) => route.fulfill({ json: { key: 'epub:0', tokens: [], audio: { timings: [] } } }));
+      await currentPage.route('**/api/books/' + readingBook.id + '/audiobookshelf/progress*', async (route) => {
+        if (route.request().method() === 'PUT') { const body = route.request().postDataJSON(); writes.push(body); remote = { ...remote, currentTime: body.currentTime, version: 'saved-' + writes.length }; }
+        await route.fulfill({ json: remote });
+      });
+      await currentPage.goto(base + '/#read/' + readingBook.id);
+      await currentPage.locator('#abs-sync-status').filter({ hasText: 'synced by book percentage' }).waitFor();
+      assert.equal(writes.length, 0, 'opening must not overwrite ABS progress');
+      const before = await currentPage.evaluate((id) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target, readingBook.id);
+      await currentPage.locator('#next').click();
+      await currentPage.waitForFunction(({ id, before }) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target !== before, { id: readingBook.id, before });
+      await currentPage.evaluate(() => document.querySelector('#narration-audio').dispatchEvent(new Event('pause')));
+      for (let n = 0; n < 80 && !writes.length; n++) await delay(50);
+      assert.ok(writes.length > 0); assert.equal(writes[0].recording, 'reading'); assert.ok(writes[0].currentTime > .3);
+      await currentPage.goto(base + '/#library');
+    }
   });
   await check('desktop reader supports trackpad text size, section shortcuts, contextual phrase help and one process queue', async () => {
     await desktopPage.goto(base + '/#read/' + book.id);
@@ -685,6 +724,7 @@ try {
   });
   let retainedPack, retainedOwner;
   await check('Switch user keeps downloaded books by default and clears the active account', async () => {
+    await useAndroidApp(memberContext, memberPage);
     await memberContext.setExtraHTTPHeaders(adminHeaders);
     assert.equal((await (await memberContext.request.get(base + '/api/account')).json()).user.username, 'member');
     const otherTab = await memberContext.newPage(); await otherTab.goto(base + '/#library'); await otherTab.locator('#shared-books-control').waitFor({ state: 'visible' });
