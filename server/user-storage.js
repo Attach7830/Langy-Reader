@@ -38,9 +38,17 @@ export function userStorage(dir, { policy, paths, now = Date.now }) {
   }
   async function summary(owner) {
     const current = policy(owner), usedBytes = await used(owner), totalBytes = current.storageLimit;
-    let free = null; try { const info = await statfs(dir, { bigint: true }); free = Number(info.bavail * info.bsize); } catch {}
+    let free = null, drive = { available: false, scope: 'drive' };
+    try {
+      const info = await statfs(dir, { bigint: true }), capacity = Number(info.blocks * info.bsize);
+      if (capacity > 0) {
+        free = Number(info.bavail * info.bsize);
+        drive = { available: true, scope: 'drive', totalBytes: capacity, availableBytes: free,
+          usedBytes: Number((info.blocks - info.bfree) * info.bsize), reservedBytes: Number((info.bfree - info.bavail) * info.bsize) };
+      }
+    } catch {}
     return { available: true, scope: 'account', usedBytes, totalBytes: totalBytes ?? usedBytes + (free || 0), unlimited: totalBytes === null || totalBytes === undefined,
-      availableBytes: totalBytes == null ? free : Math.max(0, Math.min(totalBytes - usedBytes, free ?? Infinity)), overLimit: totalBytes != null && usedBytes > totalBytes };
+      availableBytes: totalBytes == null ? free : Math.max(0, Math.min(totalBytes - usedBytes, free ?? Infinity)), overLimit: totalBytes != null && usedBytes > totalBytes, drive };
   }
   return { reserve, used, summary, invalidate: (owner) => cached.delete(owner) };
 }
