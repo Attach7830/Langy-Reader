@@ -8,7 +8,7 @@ const state = (value) => ['error', 'failed', 'needs_review'].includes(value) ? '
 
 // A small read-only projection: no NLP, filesystem scans, remote connections or
 // provider calls belong on this polling endpoint.
-export function openProcesses(dir, { library, archive, webImports, discovery, learning, demo = false, account }) {
+export function openProcesses(dir, { library, archive, webImports, discovery, learning, demo = false, account, scheduler }) {
   const databases = new Map();
   function rows(file, sql) {
     let db = databases.get(file);
@@ -93,8 +93,19 @@ export function openProcesses(dir, { library, archive, webImports, discovery, le
     for (const row of webImports?.list(visitor) || []) add(row.kind==='conversion'?'conversion':row.kind==='kavita'?'kavita-import':'web-import',row,row.kind==='conversion'?'Convert document to EPUB':row.kind==='kavita'?'Import book from Kavita':'Download book from web',{book:row.book,progress:row.kind==='conversion'?null:row.total ? row.bytes/row.total*100 : null,detail:row.bytes ? `${(row.bytes/1024**2).toFixed(1)} MiB ${row.kind==='conversion'?'source uploaded':'downloaded'}` : ''});
     const found = discovery.status(visitor);
     if (found.id && (found.busy || found.error)) add('discovery', { id: found.id, state: found.state, error: found.error }, 'Discover similar books');
-    jobs.sort((a, b) => Number(['completed', 'cancelled'].includes(a.state)) - Number(['completed', 'cancelled'].includes(b.state)) || b.created - a.created);
-    return { accountId: account(visitor).id, libraryRevision: createHash('sha256').update(JSON.stringify([...books.values()].map((book) => [book.id,book.updatedAt,book.contentRevision]))).digest('hex'), jobs: jobs.filter((job) => job.state !== 'failed' || latest.get(groups.get(job.id))?.id === job.id).slice(0, 200), unavailable };
+    const schedule = scheduler?.snapshot(), queued = new Map(schedule?.queued.map((job) => [job.id, job]) || []);
+    const nested = new Set(schedule?.active?.children || []);
+    const visible = jobs.filter((job) => !nested.has(job.id) && (job.state !== 'failed' || latest.get(groups.get(job.id))?.id === job.id));
+    for (const job of visible) {
+      const waiting = queued.get(job.id), owned = job.bookId ? books.get(job.bookId) : null;
+      if (waiting) {
+        job.state = 'queued'; job.queuePosition = waiting.position; job.priority = waiting.priority;
+        job.canPrioritize = owned?.canEdit !== false && !job.decision;
+      } else job.canPrioritize = false;
+      if (schedule?.active?.id === job.id && ['queued','running','waiting'].includes(job.state)) { job.state = 'running'; job.startedAt = schedule.active.startedAt; }
+    }
+    visible.sort((a, b) => Number(b.state === 'running') - Number(a.state === 'running') || (a.queuePosition ?? Infinity) - (b.queuePosition ?? Infinity) || b.created - a.created);
+    return { accountId: account(visitor).id, libraryRevision: createHash('sha256').update(JSON.stringify([...books.values()].map((book) => [book.id,book.updatedAt,book.contentRevision]))).digest('hex'), jobs: visible.slice(0, 200), unavailable, sequential: Boolean(scheduler), serverBusy: Boolean(schedule?.active) };
   }
   return { list, close() { for (const db of databases.values()) db.close(); } };
 }

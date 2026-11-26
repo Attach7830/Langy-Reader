@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { baseLanguage } from '../shared/language.js';
 import { normalizeLanguage, RequestError } from './books.js';
 import { waitForOpenLibrary } from './open-library-rate.js';
+import { consumeProcesses } from './process-scheduler.js';
 
 const clean = (value, limit) => typeof value === 'string' ? value.replace(/[\x00-\x1f]/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, limit) : '';
 const titleKey = (value) => clean(value, 500).normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -47,7 +48,7 @@ async function jsonResponse(response) {
 }
 
 export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl = process.env.READER_SEARCH_URL ?? 'http://search:8080',
-  fetcher = (...args) => fetch(...args), catalogueDelay = 1100, timeoutMs = 240000, withAI = (_visitor, task) => task(), visitorForOwner = (id, expires) => id ? { id, expires } : undefined } = {}) {
+  fetcher = (...args) => fetch(...args), catalogueDelay = 1100, timeoutMs = 240000, withAI = (_visitor, task) => task(), visitorForOwner = (id, expires) => id ? { id, expires } : undefined, scheduler } = {}) {
   const db = new DatabaseSync(join(dir, 'discovery.sqlite'));
   db.exec(`PRAGMA journal_mode=WAL;
     CREATE TABLE IF NOT EXISTS discoveries (
@@ -202,15 +203,18 @@ export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl = 
   }
   function pump() {
     if (running || stopped) return running;
-    prune(); const row = db.prepare("SELECT * FROM discoveries WHERE state='queued' ORDER BY created LIMIT 1").get();
-    if (!row) return;
-    active = { id: row.id, control: new AbortController() };
-    const signal = AbortSignal.any([active.control.signal, AbortSignal.timeout(timeoutMs)]);
-    running = abortable(() => withAI(visitorForOwner(row.owner, row.expires), () => generate(row, signal)), signal).catch((error) => {
-      if (stopped || active?.control.signal.aborted) return;
-      const message = error instanceof RequestError ? error.message : error.name === 'TimeoutError' ? 'Book discovery timed out. Retry or choose a faster local model.' : 'Book discovery failed. Check the AI connection and search service, then retry.';
-      db.prepare("UPDATE discoveries SET state='error',error=? WHERE owner=? AND id=? AND state!='cancelled'").run(message, row.owner, row.id);
-    }).finally(() => { active = running = undefined; if (!stopped) queueMicrotask(() => void pump()); });
+    prune();
+    running = consumeProcesses(scheduler, () => stopped ? [] : db.prepare("SELECT * FROM discoveries WHERE state='queued' ORDER BY created").all()
+      .map((row) => ({ id: `discovery:${row.id}`, created: row.created, data: row })), async (row) => {
+      active = { id: row.id, control: new AbortController() };
+      const signal = AbortSignal.any([active.control.signal, AbortSignal.timeout(timeoutMs)]);
+      try { await abortable(() => withAI(visitorForOwner(row.owner, row.expires), () => generate(row, signal)), signal); }
+      catch (error) {
+        if (stopped || active?.control.signal.aborted) return;
+        const message = error instanceof RequestError ? error.message : error.name === 'TimeoutError' ? 'Book discovery timed out. Retry or choose a faster local model.' : 'Book discovery failed. Check the AI connection and search service, then retry.';
+        db.prepare("UPDATE discoveries SET state='error',error=? WHERE owner=? AND id=? AND state!='cancelled'").run(message, row.owner, row.id);
+      } finally { active = undefined; }
+    }).finally(() => { running = undefined; });
     return running;
   }
   const timer = setInterval(() => void pump(), 1000); timer.unref();

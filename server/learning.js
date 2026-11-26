@@ -21,13 +21,14 @@ import { hasUsableTimings, synchronizeChunk } from './audio-timing.js';
 import { uploadedAudio } from './uploaded-audio.js';
 import { audioRescans } from './audio-rescan.js';
 import { openIvoox } from './ivoox.js';
+import { consumeProcesses } from './process-scheduler.js';
 import { migrateSpanishFutureSubjunctive, migrateSpanishVerbForms, migrateSpanishTaggedMorphology, migrateLexicalFilters } from './analysis-migrations.js';
 
 const run = promisify(execFile);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const asText = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 
-export async function openLearning(dir, library, demo, ai, { autoRepair = true, nativeLanguage = () => '', withAI = (_visitor, task) => task(), now = Date.now, reserveStorage = async () => () => {} } = {}) {
+export async function openLearning(dir, library, demo, ai, { autoRepair = true, nativeLanguage = () => '', withAI = (_visitor, task) => task(), now = Date.now, reserveStorage = async () => () => {}, scheduler } = {}) {
   const workerContext = new AsyncLocalStorage(); let activeExecution;
   const operationSignal = (milliseconds) => AbortSignal.any([AbortSignal.timeout(milliseconds), ...[workerContext.getStore()?.signal].filter(Boolean)]);
   const folder = join(dir, 'narration');
@@ -92,7 +93,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
   migrateSpanishTaggedMorphology(db);
   migrateLexicalFilters(db);
   const vocabulary = readerVocabulary(db, { completedBooks: library.readBooks ? (visitor) => library.readBooks(visitor) : null, nativeLanguage });
-  const estimates = readingEstimates({ db, ai, withAI, visitorForBook(id) {
+  const estimates = readingEstimates({ db, ai, withAI, scheduler, visitorForBook(id) {
     const row = db.prepare('SELECT owner FROM analyses WHERE book=?').get(id);
     const book = library.getBook(id, { id: row?.owner });
     return { id: book.owner, expires: book.expires };
@@ -118,7 +119,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
   let rescans;
   const recordings = uploadedAudio({ db, folder, library, languageCall, reserveStorage, wake: () => void work(), isRescanning: (id) => rescans?.busy(id) });
   rescans = audioRescans({ db, folder, library, languageCall, publishUploaded: recordings.publish, wake: () => void work() });
-  const ivoox = demo ? null : await openIvoox({ db, folder, library, recordings });
+  const ivoox = demo ? null : await openIvoox({ db, folder, library, recordings, scheduler });
 
   async function languageCall(path, body, type = 'application/json') {
     const synchronizing = ['/align', '/transcribe', '/match-recording', '/rescan'].includes(path);
@@ -219,14 +220,14 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     const signature = bookCountSignature(book), previous = textJobs.get(book.id);
     if (previous?.signature === signature) {
       if (!retry && previous.state === 'cancelled') return Promise.resolve(false);
-      if (previous.promise) return previous.promise;
+      if (previous.promise) return scheduler ? scheduler.join(`indexing:${book.id}`, previous.promise) : previous.promise;
       if (!retry && previous.state === 'error') return Promise.reject(previous.error);
     }
     const job = { signature, state: 'queued', controller: new AbortController() }, lane = book.format === 'pdf' ? 'pdf' : 'epub';
     textJobs.set(book.id, job);
     const current = () => job.state !== 'cancelled' && textJobs.get(book.id) === job && db.prepare('SELECT book FROM analyses WHERE book=? AND language=? AND languageSelection=? AND contentRevision=?')
       .get(book.id, book.language, selectionOf(book), book.contentRevision || '');
-    job.promise = textLanes[lane].then(async () => {
+    const extract = async () => {
       if (!current()) return false;
       job.state = 'running';
       const sections = await workerContext.run(job.controller, () => extractBook(book, library.filePath(book), languageCall));
@@ -250,7 +251,8 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       vocabulary.reindexReading(book);
       job.state = 'ready';
       return true;
-    }).catch((error) => {
+    };
+    job.promise = (scheduler ? scheduler.run(`indexing:${book.id}`, extract, { valid: current }) : textLanes[lane].then(extract)).catch((error) => {
       if (job.state === 'cancelled') return false;
       job.state = 'error';
       job.error = error instanceof RequestError ? error : new RequestError(502, book.format === 'pdf'
@@ -258,8 +260,8 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
         : 'The EPUB text could not be extracted. Check the file and retry analysis.');
       throw job.error;
     }).finally(() => { job.promise = null; if (job.state === 'ready' && textJobs.get(book.id) === job) textJobs.delete(book.id); });
-    textLanes[lane] = job.promise.catch(() => {});
-    return job.promise;
+    if (!scheduler) textLanes[lane] = job.promise.catch(() => {});
+    return scheduler ? scheduler.join(`indexing:${book.id}`, job.promise) : job.promise;
   }
 
   function ensure(book, retry = false) {
@@ -476,7 +478,84 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     }
   }
 
+  function failed(type, job, error) {
+    const text = error instanceof RequestError ? error.message
+      : type === 'rescan' ? 'Audio rescan failed. Your existing alignment is unchanged. Check the language service and retry.'
+        : type === 'recording' ? 'Recording synchronization failed. Check the language service and retry Sync with book.'
+        : ['audio', 'book'].includes(type) ? 'Narration failed. Check Kokoro and the language service, then try again.'
+        : 'This book could not be analyzed. Check the language service and try again.';
+    if (job && type === 'book') completeAudio.fail(job, text);
+    else if (job && type === 'rescan') rescans.fail(job, text);
+    else if (job && type === 'recording') recordings.fail(job, text);
+    else if (job && type === 'analysis') {
+      db.prepare("UPDATE analyses SET state='error',error=? WHERE book=? AND language=? AND languageSelection=? AND contentRevision=? AND state IN ('queued','running')")
+        .run(text, job.book, job.language, job.languageSelection, job.contentRevision || '');
+    } else if (job) db.prepare("UPDATE audio SET state='error', error=? WHERE id=? AND state!='cancelled'").run(text, job.id);
+    console.error(type === 'rescan' ? 'Audio rescan failed' : type === 'recording' ? 'Recording synchronization failed' : type === 'audio' ? 'Narration job failed' : 'Book analysis failed', error.name);
+  }
+
+  async function scheduledWork() {
+    void estimates.pump();
+    if (working) return;
+    working = true;
+    try {
+      scheduledAudio.pump();
+      // Admit text extraction first; analysis can then acquire the shared slot
+      // without waiting on a different queued worker that needs that same slot.
+      for (const row of db.prepare("SELECT * FROM analyses WHERE state='queued'").all()) {
+        try { void prepareText(library.getBook(row.book, { id: row.owner })).catch((error) => failed('analysis', row, error)); }
+        catch (error) { failed('analysis', row, error); }
+      }
+      const candidates = () => {
+        const rows = [], parents = db.prepare("SELECT * FROM book_audio WHERE state='queued' AND kind='generated' ORDER BY created,rowid").all();
+        const parts = new Set(parents.flatMap((row) => JSON.parse(row.parts).map((part) => part.id)));
+        const add = (type, id, row, created) => {
+          const text = textJobs.get(row.book), blocked = text && ['queued','running'].includes(text.state);
+          rows.push({ id, created, ready: !blocked, dependencies: blocked ? [`indexing:${row.book}`] : [], data: { type, job: row } });
+        };
+        for (const row of db.prepare("SELECT * FROM analyses WHERE state='queued' ORDER BY rowid").all()) add('analysis', `analysis:${row.book}`, row);
+        for (const row of parents) add('book', `narration:${row.id}`, row, row.created);
+        for (const row of db.prepare("SELECT * FROM audio WHERE state='queued' ORDER BY created,rowid").all()) if (!parts.has(row.id)) add('audio', `audio-section:${row.id}`, row, row.created);
+        if (!demo) {
+          for (const row of db.prepare("SELECT * FROM recordings WHERE state IN ('queued','syncing','assembling') ORDER BY created,id").all()) add('recording', `recording:${row.id}`, row, row.created);
+          for (const row of db.prepare("SELECT * FROM audio_rescans WHERE state='queued' ORDER BY created,id").all()) add('rescan', `repair:${row.id}`, row, row.created);
+        }
+        return rows;
+      };
+      await consumeProcesses(scheduler, candidates, async ({ type, job }) => {
+        const controller = new AbortController(); activeExecution = { type, job, controller };
+        try {
+          await workerContext.run(controller, async () => {
+            if (type === 'book') {
+              for (const part of JSON.parse(job.parts)) {
+                if (!db.prepare("SELECT id FROM book_audio WHERE id=? AND state='queued'").get(job.id)) return;
+                const row = db.prepare('SELECT * FROM audio WHERE id=?').get(part.id);
+                if (!row || ['error','cancelled'].includes(row.state)) throw new RequestError(502, row?.error || 'A section could not be narrated. Retry book audio.');
+                if (row.state !== 'ready') { activeExecution = { type: 'audio', job: row, controller }; await generate(row); }
+              }
+              activeExecution = { type: 'book', job, controller }; await completeAudio.assemble(job);
+            } else if (type === 'recording' || type === 'rescan') {
+              const table = type === 'recording' ? 'recordings' : 'audio_rescans';
+              const process = type === 'recording' ? recordings.process : rescans.process;
+              for (;;) {
+                const row = db.prepare(`SELECT * FROM ${table} WHERE id=?`).get(job.id);
+                if (!row || !['queued','syncing','assembling'].includes(row.state)) break;
+                await process(row);
+              }
+            } else await (type === 'analysis' ? analyze : generate)(job);
+          });
+          if (autoRepair && !demo && ['analysis','book','recording'].includes(type)) autoRepairBook(job.book);
+        } catch (error) {
+          if (type === 'book' && activeExecution?.type === 'audio') failed('audio', activeExecution.job, error);
+          failed(type, job, error);
+        }
+        finally { activeExecution = undefined; }
+      });
+    } finally { working = false; }
+  }
+
   async function work() {
+    if (scheduler) return scheduledWork();
     void estimates.pump();
     if (working) return;
     working = true;
@@ -502,22 +581,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       }
       if (job && autoRepair && !demo && ['analysis', 'book', 'recording'].includes(type)) autoRepairBook(job.book);
     } catch (error) {
-      const text = error instanceof RequestError ? error.message
-        : type === 'rescan' ? 'Audio rescan failed. Your existing alignment is unchanged. Check the language service and retry.'
-          : type === 'recording' ? 'Recording synchronization failed. Check the language service and retry Sync with book.'
-          : ['audio', 'book'].includes(type) ? 'Narration failed. Check Kokoro and the language service, then try again.'
-          : 'This book could not be analyzed. Check the language service and try again.';
-      if (job && type === 'book') completeAudio.fail(job, text);
-      else if (job && type === 'rescan') rescans.fail(job, text);
-      else if (job && type === 'recording') recordings.fail(job, text);
-      else if (job && type === 'analysis') {
-        db.prepare("UPDATE analyses SET state='error',error=? WHERE book=? AND language=? AND languageSelection=? AND contentRevision=? AND state='running'")
-          .run(text, job.book, job.language, job.languageSelection, job.contentRevision || '');
-      }
-      else if (job) {
-        db.prepare("UPDATE audio SET state='error', error=? WHERE id=? AND state!='cancelled'").run(text, job.id);
-      }
-      console.error(type === 'rescan' ? 'Audio rescan failed' : type === 'recording' ? 'Recording synchronization failed' : type === 'audio' ? 'Narration job failed' : 'Book analysis failed', error.name);
+      failed(type, job, error);
     } finally {
       activeExecution = undefined;
       working = false;

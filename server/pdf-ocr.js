@@ -9,9 +9,10 @@ import { maxUpload, RequestError } from './books.js';
 import { ocrBookLanguages } from '../shared/ocr-languages.js';
 import { ocrSettings } from './ocr-settings.js';
 import { ocrHTTP, ocrRequestTimeout } from './ocr-http.js';
+import { consumeProcesses } from './process-scheduler.js';
 
 export async function openPDFOCR(dir, { library, demo = false, onImport = () => {}, request,
-  workerURL = process.env.READER_LANGUAGE_URL || 'http://127.0.0.1:8091', now = Date.now, progressInterval = 2000 }) {
+  workerURL = process.env.READER_LANGUAGE_URL || 'http://127.0.0.1:8091', now = Date.now, progressInterval = 2000, scheduler }) {
   const transport = request ? null : ocrHTTP();
   request ||= transport.request;
   const db = new DatabaseSync(join(dir, 'pdf-ocr.sqlite'));
@@ -54,19 +55,19 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
   }
   async function pump() {
     if (running || closed || demo) return;
+    if (![...jobs.values()].some((job) => job.state === 'queued')) return;
     clearTimeout(retryTimer);
     running = true;
     try {
-      for (const job of jobs.values()) {
-        if (closed || job.state !== 'queued') continue;
-        if (job.retryAt > now()) break;
+      await consumeProcesses(scheduler, () => closed || [...jobs.values()].some((job) => job.state === 'queued' && job.retryAt > now()) ? [] : [...jobs.values()].filter((job) => job.state === 'queued')
+        .map((job) => ({ id: `ocr:${job.id}`, created: job.created, data: job })), async (job) => {
         const temporary = join(library.uploads, `ocr-${job.id}.pdf`);
         const controller = new AbortController(); controllers.set(job.id, controller);
         let stopProgress = () => {};
         try {
           job.state = 'running'; job.startedAt = job.updatedAt = now(); job.scanProgress = null; job.error = null; job.errorCode = null; job.notice = null; job.retryAt = null; persist(job);
           const book = library.getBook(job.source);
-          if (book.contentRevision === job.id) { job.result = book; job.state = 'ready'; persist(job); try { onImport(book); } catch {} continue; }
+          if (book.contentRevision === job.id) { job.result = book; job.state = 'ready'; persist(job); try { onImport(book); } catch {} return; }
           if (job.connection && job.connection !== connection.fingerprint()) throw new RequestError(409, 'The OCR connection changed while this scan was queued. Queue the PDF again to use the new connection.');
           const selected = connection.connection(job.provider || 'builtin');
           if (selected.provider === 'paddle') stopProgress = watchProgress(job, selected, controller.signal);
@@ -77,7 +78,7 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
             let body; try { body = await response.json(); } catch {}
             if (response.status === 409) {
               job.state = 'queued'; job.retryAt = now() + Math.min(60000, Math.max(5000, (Number(response.headers.get('Retry-After')) || 5) * 1000));
-              job.notice = 'Waiting for the OCR service’s current scan to finish. This PDF remains queued.'; persist(job); break;
+              job.notice = 'Waiting for the OCR service’s current scan to finish. This PDF remains queued.'; persist(job); return false;
             }
             throw new RequestError(502, [401, 403].includes(response.status) ? 'The OCR service rejected the API key.' : typeof body?.detail === 'string' ? body.detail.slice(0, 300) : 'The OCR service could not scan this PDF.');
           }
@@ -107,7 +108,7 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
           if (!(error instanceof RequestError)) console.error('PDF OCR request failed', { code: job.errorCode });
         } persist(job); }
         finally { stopProgress(); controllers.delete(job.id); await rm(temporary, { force: true }); }
-      }
+      });
     } finally {
       running = false;
       const next = [...jobs.values()].find((job) => job.state === 'queued');

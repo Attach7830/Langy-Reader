@@ -87,13 +87,13 @@ async function episodeDownload(episode, request, signal) {
   }
   return ivooxPage(Buffer.concat(chunks).toString('utf8'), episode);
 }
-export async function openIvoox({ db, folder, library, recordings, request = publicDownload }) {
+export async function openIvoox({ db, folder, library, recordings, request = publicDownload, scheduler }) {
   db.exec(`CREATE TABLE IF NOT EXISTS ivoox_imports(
     id TEXT PRIMARY KEY, book TEXT NOT NULL REFERENCES analyses(book) ON DELETE CASCADE,
     episodes TEXT NOT NULL, state TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0,
     completed INTEGER NOT NULL DEFAULT 0, recording TEXT, error TEXT, created INTEGER NOT NULL
   ) STRICT;
-  UPDATE ivoox_imports SET state='error',error='Import interrupted by a restart. Try importing again.' WHERE state IN ('downloading','importing');`);
+  UPDATE ivoox_imports SET state='error',error='Import interrupted by a restart. Try importing again.' WHERE state IN ('queued','downloading','importing');`);
   for (const job of db.prepare('SELECT id FROM ivoox_imports').all()) await rm(join(folder, `ivoox-${job.id}`), { recursive: true, force: true });
   const active = new Map();
   const publicJob = (job) => job ? { id: job.id, state: job.state, bytes: job.bytes, completed: job.completed,
@@ -143,16 +143,23 @@ export async function openIvoox({ db, folder, library, recordings, request = pub
     if (!links.length || links.length > chapterFileLimit) throw new RequestError(422, `Paste 1–${chapterFileLimit} iVoox episode links in chapter order.`);
     const episodes = links.map(ivooxEpisode);
     if (new Set(episodes.map((episode) => episode.id)).size !== episodes.length) throw new RequestError(422, 'Remove duplicate episode links.');
-    if (active.size) throw new RequestError(409, 'Wait for the current iVoox import to finish, or cancel it first.');
+    if (db.prepare("SELECT id FROM ivoox_imports WHERE book=? AND state IN ('queued','downloading','importing')").get(book.id)) throw new RequestError(409, 'Wait for the current iVoox import to finish, or cancel it first.');
     library.getBook(book.id);
     const id = randomUUID();
-    db.prepare("INSERT INTO ivoox_imports(id,book,episodes,state,created) VALUES(?,?,?,'downloading',?)")
-      .run(id, book.id, JSON.stringify(episodes.map(({ id }) => id)), Date.now());
+    const created = Date.now();
+    db.prepare('INSERT INTO ivoox_imports(id,book,episodes,state,created) VALUES(?,?,?,?,?)')
+      .run(id, book.id, JSON.stringify(episodes.map(({ id }) => id)), scheduler ? 'queued' : 'downloading', created);
     active.set(id, new AbortController());
-    void execute({ id, book: book.id, name: typeof body.name === 'string' ? body.name.trim().slice(0, 120) : '' }, episodes);
+    const task = async () => {
+      db.prepare("UPDATE ivoox_imports SET state='downloading' WHERE id=?").run(id);
+      await execute({ id, book: book.id, name: typeof body.name === 'string' ? body.name.trim().slice(0, 120) : '' }, episodes);
+    };
+    void (scheduler ? scheduler.run(`ivoox:${id}`, task, { created, valid: () => db.prepare("SELECT id FROM ivoox_imports WHERE id=? AND state='queued'").get(id) }) : task()).finally(() => active.delete(id));
     return latest(book);
   }
   return { latest, queue,
-    cancel(book) { for (const row of db.prepare("SELECT id FROM ivoox_imports WHERE book=? AND state IN ('downloading','importing')").all(book.id)) active.get(row.id)?.abort(); },
+    cancel(book) { for (const row of db.prepare("SELECT id FROM ivoox_imports WHERE book=? AND state IN ('queued','downloading','importing')").all(book.id)) {
+      db.prepare("UPDATE ivoox_imports SET state='cancelled',error=NULL WHERE id=?").run(row.id); active.get(row.id)?.abort();
+    } scheduler?.wake(); },
   };
 }

@@ -44,6 +44,31 @@ test('interrupted downloads restart after reopening, offline jobs wait, and anot
   f.account('one'); await f.queue.resume(); await f.queue.idle(); assert.equal(calls.at(-1), 'private');
 });
 
+test('raising a book-pack priority preserves the active transfer and survives reopening the device queue', async (t) => {
+  const release = gate(), calls = [];
+  const f = fixture(t, { async download(book) { calls.push(book.id); if (book.id === 'a') await release.promise; } });
+  t.after(() => release.resolve());
+  await f.queue.enqueue(book('a'), {}); await f.queue.enqueue(book('b'), {}); await f.queue.enqueue(book('c'), {});
+  await f.queue.raisePriority('one:c');
+  assert.deepEqual(calls, ['a']); assert.equal(f.queue.snapshot().find((job) => job.book.id === 'a').state, 'downloading');
+  assert.equal(f.values.get('one:c').priority, 1);
+  await f.queue.raisePriority('one:a'); assert.equal(f.values.get('one:a').priority, 0, 'the active transfer cannot be promoted');
+  release.resolve(); await f.queue.idle(); assert.deepEqual(calls, ['a', 'c', 'b']);
+
+  f.online(false); await f.queue.enqueue(book('d'), {}); await f.queue.enqueue(book('e'), {}); await f.queue.raisePriority('one:e');
+  f.queue.close();
+  const reopened = readingPackQueue({ store: f.store, owner: () => 'one', online: () => true, download: async (book) => calls.push(book.id) });
+  t.after(() => reopened.close());
+  await reopened.resume(); await reopened.idle(); assert.deepEqual(calls.slice(-2), ['e', 'd']);
+});
+
+test('an account cannot raise another account’s device download priority', async (t) => {
+  const f = fixture(t, { async download() {} }); f.online(false);
+  await f.queue.enqueue(book('private'), {}); f.account('two');
+  await f.queue.raisePriority('one:private');
+  assert.equal(f.values.get('one:private').priority, 0); assert.deepEqual(f.queue.snapshot(), []);
+});
+
 test('cancelling an active transfer releases the next book; connection failures wait and can be retried', async (t) => {
   let attempts = 0, started = false;
   const f = fixture(t, { async download(book, { signal }) {

@@ -28,7 +28,8 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
     $('#clear-finished-processes').hidden = !entries.some((job) => !active(job)) && !local.downloads.some((job) => !active(job));
     const next = JSON.stringify(entries);
     if (next !== signature) {
-      signature = next; entries.sort((a, b) => Number(!active(a)) - Number(!active(b)) || b.created - a.created);
+      signature = next; entries.sort((a, b) => Number(!active(a)) - Number(!active(b)) || Number(b.state === 'running') - Number(a.state === 'running')
+        || (a.queuePosition ?? Infinity) - (b.queuePosition ?? Infinity) || b.created - a.created);
       list.replaceChildren(...entries.map((job) => {
         const card = element('article', 'download-card process-card'); card.dataset.process = job.id;
         card.append(element('h3', '', job.label));
@@ -43,6 +44,8 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
         const state = ({ queued: 'Queued', running: 'In progress', waiting: 'Waiting', failed: 'Needs attention', completed: 'Finished', cancelled: 'Cancelled' })[job.state] || job.state;
         const detail = job.detail || (job.nextAttempt ? `Retry at ${new Date(job.nextAttempt).toLocaleTimeString()}` : '');
         card.append(element('p', 'field-note', [state, detail].filter(Boolean).join(' · ')));
+        if (job.queuePosition) card.append(element('p', 'field-note', `${translateUI('Queue position')}: ${job.queuePosition}`));
+        if (job.priority > 0) card.append(element('span', 'book-read-badge', translateUI('Priority raised')));
         if (active(job)) {
           const progress = processProgress(job), bar = document.createElement('progress'); bar.max = 100;
           if (progress.percent != null) bar.value = progress.percent;
@@ -54,6 +57,15 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
           if (job.startedAt) { const clock = element('p', 'field-note process-elapsed', processElapsed(job, now())); clock.dataset.started = job.startedAt; card.append(clock); }
         }
         const actions = element('div', 'download-actions');
+        if (job.canPrioritize) {
+          const raise = element('button', 'button secondary small', 'Raise priority'); raise.type = 'button';
+          raise.title = 'Run sooner after the current background task finishes';
+          raise.addEventListener('click', async () => {
+            raise.disabled = true;
+            try { await api(`/api/processes/${encodeURIComponent(job.id)}/priority`, { method: 'POST' }); await refresh(); }
+            catch (error) { message('#process-error', error.message); raise.disabled = false; }
+          }); actions.append(raise);
+        }
         for (const [label, path] of [
           ...(job.retryOcr ? [['Retry OCR', `/api/books/${encodeURIComponent(job.bookId)}/ocr/jobs/${encodeURIComponent(job.retryOcr)}/retry`]] : []),
           ...(job.checkUpload ? [['Check ABS upload', `/api/books/${encodeURIComponent(job.bookId)}/audiobookshelf/jobs/${encodeURIComponent(job.checkUpload)}/check`]] : []),

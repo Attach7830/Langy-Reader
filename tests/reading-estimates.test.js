@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { openProcessScheduler } from '../server/process-scheduler.js';
 
 function fixture(t, ai, timeoutMs = 1000) {
   const db = new DatabaseSync(':memory:'); t.after(() => db.close());
@@ -70,8 +71,9 @@ test('legacy interrupted estimates recover on startup and short text does not re
   assert.throws(() => estimates.queue('two'), { status: 409 });
 });
 
-test('the application starts a reading estimate while an audio job is still waiting on Kokoro', async (t) => {
+test('the shared process queue waits for Kokoro audio before starting a reading estimate', async (t) => {
   const folder = await mkdtemp(join(tmpdir(), 'langy-estimate-lane-'));
+  const scheduler = openProcessScheduler(folder);
   const oldFetch = globalThis.fetch, oldURL = process.env.READER_KOKORO_URL;
   process.env.READER_KOKORO_URL = 'http://kokoro.test/v1';
   const wav = join(folder, 'sample.wav');
@@ -89,14 +91,14 @@ test('the application starts a reading estimate while an audio job is still wait
   };
   const books = { audio: { id: 'audio', title: 'Audio book', language: 'en' }, reading: { id: 'reading', title: 'Reading book', language: 'en' } };
   const learning = await openLearning(folder, { getBook: (id) => books[id] }, false,
-    { async readingLevel() { return { band: 'Intermediate', text: 'Completed while audio was pending.' }; } });
+    { async readingLevel() { return { band: 'Intermediate', text: 'Completed after audio.' }; } }, { scheduler, autoRepair: false });
   const db = new DatabaseSync(join(folder, 'learning.sqlite'));
   const until = async (check) => { for (let n = 0; n < 300; n++) { if (check()) return; await delay(20); } throw new Error('Background lane timed out'); };
   t.after(async () => {
     release();
     try { await until(() => ['ready', 'error'].includes(db.prepare("SELECT state FROM audio WHERE id='held-audio'").get()?.state)); }
     finally {
-      await learning.remove('audio'); await learning.remove('reading'); db.close(); globalThis.fetch = oldFetch;
+      await learning.remove('audio'); await learning.remove('reading'); await scheduler.close(); db.close(); globalThis.fetch = oldFetch;
       if (oldURL === undefined) delete process.env.READER_KOKORO_URL; else process.env.READER_KOKORO_URL = oldURL;
       await rm(folder, { recursive: true, force: true });
     }
@@ -110,7 +112,11 @@ test('the application starts a reading estimate while an audio job is still wait
   db.prepare('INSERT INTO audio(id,book,chapter,digest,options,state,created) VALUES(?,?,?,?,?,?,?)').run('held-audio', 'audio', 'epub:0', 'audio', JSON.stringify(options), 'queued', Date.now());
   learning.ensure(books.audio); await generating;
   learning.estimates.queue(books.reading);
-  await until(() => learning.estimates.status(books.reading)?.state === 'ready');
+  await delay(50);
+  assert.equal(learning.estimates.status(books.reading).state, 'queued');
   assert.equal(db.prepare("SELECT state FROM audio WHERE id='held-audio'").get().state, 'generating');
-  assert.equal(learning.estimates.status(books.reading).text, 'Completed while audio was pending.');
+  release();
+  await until(() => learning.estimates.status(books.reading)?.state === 'ready');
+  assert.equal(db.prepare("SELECT state FROM audio WHERE id='held-audio'").get().state, 'ready');
+  assert.equal(learning.estimates.status(books.reading).text, 'Completed after audio.');
 });

@@ -10,10 +10,11 @@ import { importNarrationOptions } from './import-narration.js';
 import { publicDownload, downloadURL } from './public-download.js';
 import { bookConverter } from './book-conversion.js';
 import { conversionLimit, convertsToEPUB } from '../shared/import-formats.js';
+import { consumeProcesses } from './process-scheduler.js';
 
 const pending = new Set(['queued','downloading','converting','importing']);
 
-export async function openBookImports(dir,{library,demo=false,request=publicDownload,autoStart=true,onImport=()=>{},visitorForOwner=(id)=>({id}),activeOwner=()=>true,convert=bookConverter(),connector=null,reserveStorage=async()=>()=>{}}) {
+export async function openBookImports(dir,{library,demo=false,request=publicDownload,autoStart=true,onImport=()=>{},visitorForOwner=(id)=>({id}),activeOwner=()=>true,convert=bookConverter(),connector=null,reserveStorage=async()=>()=>{},scheduler}) {
   const db=new DatabaseSync(join(dir,'book-imports.sqlite'));
   db.exec('PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,json TEXT NOT NULL) STRICT;');
   const jobs=new Map(db.prepare('SELECT * FROM jobs ORDER BY rowid').all().map((row)=>[row.id,JSON.parse(row.json)])), controllers=new Map();
@@ -25,16 +26,17 @@ export async function openBookImports(dir,{library,demo=false,request=publicDown
   const publicJob=({id,state,created,bytes,total,error,book,details,kind='web',name})=>({id,state,created,bytes,total,error,book,kind,title:details?.title||name||'',retryable:kind!=='conversion'});
   const find=(id,visitor)=>{const job=jobs.get(id);if(!job||!owned(job,visitor))throw new RequestError(404,'Book download not found.');return job;};
   async function pump(){
-    if(running||closed)return;running=true;
-    try{for(const job of jobs.values()){
-      if(closed||job.state!=='queued')continue;
+    if(running||closed||![...jobs.values()].some((job)=>job.state==='queued'))return;running=true;
+    try{await consumeProcesses(scheduler,()=>closed?[]:[...jobs.values()].filter((job)=>job.state==='queued').map((job)=>({
+      id:`${job.kind==='conversion'?'conversion':job.kind==='kavita'?'kavita-import':'web-import'}:${job.id}`,created:job.created,data:job,
+    })),async(job)=>{
       const path=join(library.uploads,'web-'+job.id+'.part'),source=join(library.uploads,'source-'+job.id),controller=new AbortController();controllers.set(job.id,controller);let response,converted,release=()=>{};
       try{
         if (demo && (!job.expires || job.expires <= Date.now())) throw new RequestError(410,'Your demo session expired. Upload the document again.');
         if(!activeOwner(job.owner))throw new RequestError(403,'This account is no longer active.');
         const visitor={...visitorForOwner(job.owner),...(job.expires?{expires:job.expires}:{})};
         let previous;try{previous=library.getBook(job.id,visitor);}catch{}
-        if(previous){job.book=previous.id;job.state='ready';persist(job);continue;}
+        if(previous){job.book=previous.id;job.state='ready';persist(job);return;}
         let file;
         if(job.kind==='conversion'){
           file={path:source,size:(await stat(source)).size,originalname:job.name};
@@ -66,7 +68,7 @@ export async function openBookImports(dir,{library,demo=false,request=publicDown
         job.book=book.id;job.state='ready';persist(job);try{onImport(book,job.details);}catch{}
       }catch(error){if(job.state!=='cancelled'){job.state='error';job.error=error instanceof RequestError?error.message:job.kind==='conversion'?'Document conversion failed. Upload the source again to retry.':'Book download failed. Check the source and retry.';}persist(job);}
       finally{response?.destroy();controllers.delete(job.id);release();await converted?.cleanup();await Promise.all([path,source].map((file)=>rm(file,{force:true})));}
-    }}finally{running=false;}
+    });}finally{running=false;if(autoStart&&!closed&&[...jobs.values()].some((job)=>job.state==='queued'))queueMicrotask(()=>void pump());}
   }
   function validate(visitor){
     if(!activeOwner(visitor?.id||''))throw new RequestError(403,'This account is no longer active.');
