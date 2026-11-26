@@ -25,10 +25,11 @@ export function createProcessTasks({ delay = 450, now = Date.now, setTimer = set
   const snapshot = () => ({ tasks: [...tasks.values()].filter((task) => task.visible).map(({ timer, visible, ...task }) => task), downloads });
   const emit = () => { const value = snapshot(); for (const listener of listeners) listener(value); };
   function begin(label, detail = {}) {
-    const {cancel,...metadata}=detail;
-    const id = `request:${++sequence}`, task = { id, label, ...metadata, cancellable:typeof cancel === 'function', created: now(), state: 'running', visible: false };
+    const {cancel,immediate=false,...metadata}=detail;
+    const id = `request:${++sequence}`, task = { id, label, ...metadata, cancellable:typeof cancel === 'function', created: now(), state: 'running', visible: immediate };
     if (cancel) cancellations.set(id,cancel);
-    task.timer = setTimer(() => { if (tasks.has(id)) { task.visible = true; emit(); } }, delay); task.timer?.unref?.(); tasks.set(id, task);
+    if (!immediate) { task.timer = setTimer(() => { if (tasks.has(id)) { task.visible = true; emit(); } }, delay); task.timer?.unref?.(); }
+    tasks.set(id, task); if (immediate) emit();
     let ended = false;
     return (error) => {
       if (ended || !tasks.has(id)) return; ended = true;
