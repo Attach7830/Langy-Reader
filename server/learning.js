@@ -54,12 +54,22 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       FOREIGN KEY(book, chapter) REFERENCES chapters(book, key) ON DELETE CASCADE
     ) STRICT;
     CREATE INDEX IF NOT EXISTS audio_chapter ON audio(book, chapter, created);
+    CREATE TABLE IF NOT EXISTS worker_progress (
+      id TEXT PRIMARY KEY, book TEXT NOT NULL REFERENCES analyses(book) ON DELETE CASCADE, json TEXT NOT NULL
+    ) STRICT;
     CREATE TABLE IF NOT EXISTS estimates (
       book TEXT PRIMARY KEY REFERENCES analyses(book) ON DELETE CASCADE, state TEXT NOT NULL, json TEXT, error TEXT
     ) STRICT;
     UPDATE analyses SET state='queued', error=NULL WHERE state='running';
     UPDATE audio SET state='queued', error=NULL WHERE state IN ('generating', 'aligning');
+    DELETE FROM worker_progress;
   `);
+  function trackWork(id, book) {
+    const startedAt = Date.now();
+    const save = db.prepare('INSERT INTO worker_progress(id,book,json) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json');
+    return (phase, complete, total, unit, detail = '') => save.run(id, book,
+      JSON.stringify({ phase, complete, total, unit, detail, startedAt, updatedAt: Date.now() }));
+  }
   if (!db.prepare('PRAGMA table_info(chapters)').all().some(({ name }) => name === 'markers')) {
     db.exec("ALTER TABLE chapters ADD COLUMN markers TEXT NOT NULL DEFAULT '[]'; UPDATE analyses SET state='queued',error=NULL WHERE state='ready';");
   }
@@ -350,6 +360,8 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     const stillCurrent = () => db.prepare("SELECT book FROM analyses WHERE book=? AND language=? AND languageSelection=? AND contentRevision=? AND state='running'").get(book.id, row.language, row.languageSelection, row.contentRevision);
     if (!stillCurrent()) return;
     const unique = new Set();
+    const report = trackWork(`analysis:${book.id}`, book.id);
+    report('analyzing', 0, sections.length, 'sections');
     const vocabularyGroups = new Map(), chinesePassages = [];
     let wordCount = 0;
     let method = 'contextual';
@@ -357,7 +369,9 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       const tokens = [];
       const lemmas = new Set();
       const sectionGroups = new Map(), chinese = [];
-      for (const chunk of languageChunks(section, 95000, book.language)) {
+      const chunks = languageChunks(section, 95000, book.language);
+      for (const [index, chunk] of chunks.entries()) {
+        report('analyzing', ordinal, sections.length, 'sections', `Section ${ordinal + 1} of ${sections.length} · passage ${index + 1} of ${chunks.length}`);
         const result = await languageCall('/analyze', { text: chunk.text, language: chunk.language });
         if (!stillCurrent()) return;
         addVocabulary(vocabularyGroups, chunk.language, result); addVocabulary(sectionGroups, chunk.language, result);
@@ -374,12 +388,14 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
         JSON.stringify(section.markers || [{ title: section.title, from: 0 }]),
         JSON.stringify(section.languages || []), JSON.stringify(vocabularySummary(chinese.join('\n'), sectionGroups, book.language)),
       );
+      report('analyzing', ordinal + 1, sections.length, 'sections');
     }
     if (!stillCurrent()) return;
     const metrics = vocabularySummary(chinesePassages.join('\n'), vocabularyGroups, book.language);
     db.prepare("UPDATE analyses SET state='ready', lemmas=?, wordCount=?, method=?,metrics=? WHERE book=?")
       .run(JSON.stringify([...unique].sort()), wordCount, metrics.unit === 'characters' ? 'characters' : method, JSON.stringify(metrics), book.id);
     vocabulary.reindex(book);
+    db.prepare('DELETE FROM worker_progress WHERE id=?').run(`analysis:${book.id}`);
     estimates.queue(book);
   }
 
@@ -398,13 +414,17 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     const words = textWords(row.text, language);
     const timings = words.map((word) => ({ ...word, start: null, end: null }));
     const files = [];
+    const chunks = narrationChunks(row, language);
+    const report = trackWork(`audio:${job.id}`, job.book);
+    report('generating', 0, chunks.length, 'passages');
     let offset = 0;
     try {
-      for (const [index, chunk] of narrationChunks(row, language).entries()) {
+      for (const [index, chunk] of chunks.entries()) {
         if (!db.prepare("SELECT id FROM audio WHERE id=? AND state!='cancelled'").get(job.id)) return;
         const chunkWords = words.map((word, tokenIndex) => ({ ...word, tokenIndex })).filter((word) => word.from >= chunk.from && word.from < chunk.to);
         if (!chunkWords.length) continue;
         db.prepare("UPDATE audio SET state='generating' WHERE id=?").run(job.id);
+        report('generating', index, chunks.length, 'passages');
         const response = await kokoro('/audio/speech', {
           model: captured.model, voice: options.voiceMap?.[chunk.language] || captured.voice, speed: captured.speed, input: chunk.input,
           response_format: 'wav', stream: false,
@@ -419,6 +439,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
         const duration = Number(stdout.trim());
         if (!Number.isFinite(duration) || duration <= 0) throw new Error('Kokoro returned invalid audio.');
         db.prepare("UPDATE audio SET state='aligning' WHERE id=?").run(job.id);
+        report('aligning', index, chunks.length, 'passages');
         const aligned = await languageCall('/align', {
           audio: (await readFile(wav)).toString('base64'), words: chunkWords.map((word) => word.word),
           language: chunk.language, text: chunk.text,
@@ -434,7 +455,9 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
           files.push(padded);
         } else files.push(wav);
         offset += duration + chunk.pauseAfter;
+        report('generating', index + 1, chunks.length, 'passages');
       }
+      report('saving', chunks.length, chunks.length, 'passages');
       const concat = join(temporary, 'parts.txt');
       await writeFile(concat, files.map((file) => `file '${file}'`).join('\n'));
       const result = join(temporary, 'narration.mp3');
@@ -446,6 +469,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
         const saved = db.prepare("UPDATE audio SET state='ready', timings=?, duration=?, error=NULL WHERE id=? AND state!='cancelled'")
           .run(JSON.stringify(timings), offset, job.id);
         if (!saved.changes) await rm(join(folder, `${job.id}.mp3`), { force: true });
+        db.prepare('DELETE FROM worker_progress WHERE id=?').run(`audio:${job.id}`);
       } finally { release(); }
     } finally {
       await rm(temporary, { recursive: true, force: true });
