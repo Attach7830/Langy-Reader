@@ -602,7 +602,11 @@ try {
     assert.equal(await desktopPage.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   });
   await check('matched ABS books resume and sync reading progress on mobile and desktop without local narration', async () => {
-    const created = await context.request.post(base + '/api/books', { multipart: { title: 'Reading without narration', author: 'An Author', language: 'es', file: { name: 'reading-only.epub', mimeType: 'application/epub+zip', buffer: await zip.generateAsync({ type: 'nodebuffer' }) } } });
+    const readingZip = await JSZip.loadAsync(await zip.generateAsync({ type: 'nodebuffer' }));
+    // KOSync identifies identical EPUB bytes as the same document, even when
+    // library titles differ. Keep this fixture's progress separate.
+    readingZip.file('OEBPS/book.opf', (await readingZip.file('OEBPS/book.opf').async('string')).replace('langy-browser-fixture', 'langy-browser-reading-sync-fixture').replace('Reader interactions', 'Reading without narration'));
+    const created = await context.request.post(base + '/api/books', { multipart: { title: 'Reading without narration', author: 'An Author', language: 'es', file: { name: 'reading-only.epub', mimeType: 'application/epub+zip', buffer: await readingZip.generateAsync({ type: 'nodebuffer' }) } } });
     assert.equal(created.status(), 201); const readingBook = await created.json();
     for (const currentPage of [page, desktopPage]) {
       try {
@@ -633,9 +637,14 @@ try {
     await desktopPage.waitForFunction((title) => document.querySelector('#reading-title').textContent === title, book.title);
     await desktopPage.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 1 of 3');
     await desktopPage.locator('#reader-message').waitFor({ state: 'hidden' });
+    await desktopPage.waitForFunction(() => !document.querySelector('#contents-button').disabled);
     await desktopPage.frameLocator('#viewer iframe').locator('#source').waitFor({ state: 'attached' });
     const before = await desktopPage.evaluate(() => ({ size: 20, ...JSON.parse(localStorage.getItem('langy-settings-v1')) }));
-    assert.equal(await desktopPage.frameLocator('#viewer iframe').locator('body').evaluate((body) => { const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -24, clientX: 120, clientY: 180 }); body.dispatchEvent(event); return event.defaultPrevented; }), true);
+    assert.equal(await desktopPage.frameLocator('#viewer iframe').locator('body').evaluate((body) => {
+      const visible = parent.document.querySelector('#viewer').getBoundingClientRect(), frame = window.frameElement.getBoundingClientRect();
+      const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -24, clientX: visible.left + visible.width / 2 - frame.left, clientY: visible.top + visible.height / 2 - frame.top });
+      body.dispatchEvent(event); return event.defaultPrevented;
+    }), true);
     await desktopPage.waitForFunction((size) => JSON.parse(localStorage.getItem('langy-settings-v1')).size > size, before.size);
     assert.equal((await desktopPage.evaluate(() => JSON.parse(localStorage.getItem('langy-settings-v1')))).touchSize, before.touchSize);
     assert.equal(await desktopPage.evaluate(() => visualViewport.scale), 1); await delay(700);
