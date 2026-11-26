@@ -1,6 +1,11 @@
 // Interface text only. Book content, generated explanations and dictionary
 // meanings keep their independently selected languages.
 const phrases = [
+  ['Raise priority', 'Subir prioridad', 'Aumentar prioridade', '提高优先级'],
+  ['Priority raised', 'Prioridad elevada', 'Prioridade elevada', '已提高优先级'],
+  ['Queue position', 'Posición en la cola', 'Posição na fila', '队列位置'],
+  ['Run sooner after the current background task finishes', 'Ejecutar antes cuando termine la tarea actual', 'Executar antes quando a tarefa atual terminar', '当前后台任务完成后优先运行'],
+  ['One background task runs at a time. Raise a queued task’s priority to run it sooner. The current task finishes first.', 'Se ejecuta una tarea en segundo plano a la vez. Sube la prioridad de una tarea en cola para adelantarla. La tarea actual termina primero.', 'Uma tarefa em segundo plano é executada por vez. Aumente a prioridade de uma tarefa na fila para executá-la antes. A tarefa atual termina primeiro.', '一次仅运行一个后台任务。提高排队任务的优先级可使其提前运行，当前任务会先完成。'],
   ['Opening your library', 'Abriendo tu biblioteca', 'Abrindo sua biblioteca', '正在打开书库'],
   ['Starting Langy…', 'Iniciando Langy…', 'Iniciando o Langy…', '正在启动 Langy…'],
   ['Checking your sign-in…', 'Comprobando tu sesión…', 'Verificando sua sessão…', '正在验证登录…'],
