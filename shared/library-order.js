@@ -1,6 +1,8 @@
 import { compareVocabularyDensity } from './vocabulary-ranking.js';
+import { compareSeries } from './book-series.js';
 
 export function compareLibraryBooks(a, b, sort = 'recent') {
+  if (sort === 'series') { const order = compareSeries(a, b); if (order) return order; }
   const pinned = Number(Boolean(b.starredAt)) - Number(Boolean(a.starredAt));
   if (pinned) return pinned;
   if (['familiar', 'known'].includes(sort)) {
