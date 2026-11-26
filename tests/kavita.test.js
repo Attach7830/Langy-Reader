@@ -23,6 +23,7 @@ test('personal Kavita OPDS browsing, search and queued acquisitions use private 
   const saved = await service.save({ url: base + '/feed/secret-key', username: 'reader', password: 'private-password' }, owner);
   assert.equal(saved.connected, true); assert.equal((await stat(join(dir, 'kavita.sqlite'))).mode & 0o777, 0o600);
   assert.equal(service.settings(other).connected, false);
+  const preview=await openKavita(dir,{demo:true});assert.deepEqual(preview.settings(owner),{available:false,connected:false,origin:'',hasCredentials:false});assert.throws(()=>preview.remove(owner),{status:403});preview.close();assert.equal(service.settings(owner).connected,true);
   const catalogue = await service.catalogue(owner); assert.equal(catalogue.entries[0].acquisitions.length, 1); assert.equal(catalogue.searchable, true); assert.ok(catalogue.entries[1].node);
   assert.doesNotMatch(JSON.stringify([saved, catalogue]), /secret-key|private-password|Authorization/u);
   await assert.rejects(service.catalogue(other, { node: catalogue.node }), { status: 409 });
