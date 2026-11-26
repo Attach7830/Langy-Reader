@@ -59,6 +59,17 @@ try {
     await navigating; await page.locator('#startup-loading').waitFor({ state: 'hidden' });
     await page.locator(`[data-book="${books[0].id}"]`).waitFor(); await page.unroute('**/api/library', hold);
     results.push({ name: `${mode} shows startup until the library is ready`, pass: true });
+    const syncedLibrary = await (await context.request.get(base + '/api/library')).json();
+    const syncedBooks = async (route) => route.fulfill({ json: { ...syncedLibrary, books: syncedLibrary.books.map((book) => ({ ...book, audioSynced: book.id === books[0].id })) } });
+    await page.route('**/api/library', syncedBooks);
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('langy-audio-updated')));
+    const syncedBadge = page.locator(`[data-book="${books[0].id}"] .book-audio-badge`); await syncedBadge.waitFor();
+    assert.equal(await syncedBadge.innerText(), 'Audio synced');
+    assert.equal(await page.locator(`[data-book="${books[1].id}"] .book-audio-badge`).count(), 0);
+    assert.equal(await syncedBadge.isVisible(), true);
+    await page.screenshot({ path: `browser-results/audio-synced-${mode}.png` });
+    await page.unroute('**/api/library', syncedBooks);
+    results.push({ name: `${mode} refreshes the library’s Audio synced label after an audio update`, pass: true });
     if (mode === 'desktop') {
       const refreshing = gate(), refreshArrived = gate(), patching = gate(), patchArrived = gate();
       const holdRefresh = async (route) => { refreshArrived.release(); await refreshing.promise; await route.continue(); };
@@ -95,7 +106,24 @@ try {
         id: 'narration:progress-fixture', kind: 'narration', label: 'Generate audiobook', state: 'running', phase: 'aligning',
         startedAt: Date.now() - 65000, progress: 12.5, counter: { complete: 1, total: 10, unit: 'sections' }, activity: { complete: 2, total: 8, unit: 'passages' },
       }, ...queuedJobs()] } }));
-      await page.locator('#open-process-queue').click();
+      const queueButton = page.locator('#open-process-queue'), queueLabel = queueButton.locator('.process-queue-label');
+      await page.evaluate(() => window.dispatchEvent(new CustomEvent('langy-processes-changed')));
+      await page.waitForFunction(() => document.querySelector('#process-queue-count').textContent === '3');
+      await page.mouse.move(1100, 800); await queueButton.evaluate((node) => node.blur()); await delay(230);
+      const compact = await queueButton.boundingBox(); assert.equal(compact.width, 44); assert.equal(compact.height, 44);
+      assert.equal(await queueButton.locator('svg').count(), 1);
+      assert.equal(await queueLabel.evaluate((node) => getComputedStyle(node).opacity), '0');
+      assert.equal(await queueButton.getAttribute('aria-label'), 'Process queue');
+      await page.screenshot({ path: 'browser-results/process-queue-compact.png' });
+      await queueButton.hover(); await delay(230);
+      assert.ok((await queueButton.boundingBox()).width > compact.width + 40);
+      assert.equal(await queueLabel.evaluate((node) => getComputedStyle(node).opacity), '1');
+      await page.screenshot({ path: 'browser-results/process-queue-expanded.png' });
+      await page.mouse.move(1100, 800); await page.keyboard.press('Tab'); await queueButton.focus(); await delay(230);
+      assert.equal(await queueButton.evaluate((node) => node.matches(':focus-visible')), true);
+      assert.ok((await queueButton.boundingBox()).width > compact.width + 40);
+      await page.keyboard.press('Enter'); await page.locator('#downloads-dialog').waitFor({ state: 'visible' });
+      results.push({ name: 'queue launcher is square at rest, retains its badge, expands on hover or keyboard focus, and opens with Enter', pass: true });
       const card = page.locator('[data-process="narration:progress-fixture"]'); await card.waitFor();
       assert.match(await card.innerText(), /1 \/ 10 sections completed/u); assert.match(await card.innerText(), /2 \/ 8 passages completed/u);
       assert.match(await card.innerText(), /Synchronizing spoken words/u); assert.match(await card.locator('.process-elapsed').innerText(), /1:0[5-9]/u);

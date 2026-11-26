@@ -74,6 +74,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   surface.addEventListener('langy-open-process', openProcess);
   const libraryChanged = () => { if (!disposed) void refresh().catch((error) => message('#library-error', error.message)); };
   surface.addEventListener('langy-library-changed', libraryChanged);
+  surface.addEventListener('langy-audio-updated', libraryChanged);
   surface.addEventListener('langy-packs-changed', refreshDownloaded); surface.addEventListener('langy-offline-account', refreshDownloaded);
   const unwatchApp = watchAppCapability(() => { render(); void refreshDownloaded(); });
   void refreshDownloaded();
@@ -169,6 +170,10 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     });
     card.append(star);
     if (downloaded.has(book.id)) card.append(element('span', 'book-download-badge', 'Downloaded'));
+    if (book.audioSynced) {
+      const badge = element('span', 'book-read-badge book-audio-badge'); badge.title = 'Audio is ready for synchronized reading.';
+      badge.append(icon('headphones'), element('span', '', 'Audio synced')); card.append(badge);
+    }
     const analysis = book.learning;
     const detail = element('details', 'book-learning'); detail.open = expandedDetails.has(book.id);
     detail.append(element('summary', '', 'Book options'));
@@ -937,5 +942,5 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   bookDialog.addEventListener('close', () => metadataFields.cancel());
   categoryDialog.addEventListener('cancel', (event) => { if (categoryPending) event.preventDefault(); });
 
-  return { refresh, render, dispose() { disposed = true; for (const controller of pendingCovers.values()) controller.abort(); pendingCovers.clear(); learningVisit++; unwatchApp(); surface.removeEventListener('langy-library-changed', libraryChanged); surface.removeEventListener('langy-open-process', openProcess); surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); ocr.dispose(); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
+  return { refresh, render, dispose() { disposed = true; for (const controller of pendingCovers.values()) controller.abort(); pendingCovers.clear(); learningVisit++; unwatchApp(); surface.removeEventListener('langy-library-changed', libraryChanged); surface.removeEventListener('langy-audio-updated', libraryChanged); surface.removeEventListener('langy-open-process', openProcess); surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); ocr.dispose(); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
 }

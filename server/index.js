@@ -365,7 +365,7 @@ app.post('/api/discovery', ...(demo ? [limitJobs({ perMinute: 6, perVisitor: 2 }
 app.delete('/api/discovery', (req, res) => res.json(discovery.cancel(req.visitor)));
 app.get('/api/library', async (req, res) => {
   const snapshot = library.snapshot(req.visitor);
-  const books = snapshot.books.map((book) => ({ ...book, learning: learningLanguages(learning.info(library.getBook(book.id, req.visitor)), nativeLanguage(req.visitor)) }));
+  const books = snapshot.books.map((book) => ({ ...book, learning: learningLanguages(learning.info(library.getBook(book.id, req.visitor)), nativeLanguage(req.visitor)), audioSynced: learning.audioSynced(book) }));
   const reader = learning.vocabulary.profile(req.visitor);
   res.json({
     ...snapshot,

@@ -111,7 +111,7 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
         libraryRevision = result.libraryRevision || libraryRevision;
         if (result.jobs.some((job) => job.kind === 'ocr' && job.state === 'completed' && !jobs.some((previous) => previous.id === job.id && previous.state === 'completed'))) window.dispatchEvent(new CustomEvent('langy-library-changed'));
         if (!result.unavailable && jobs.some((job) => ['ocr','conversion','web-import','kavita-import'].includes(job.kind) && active(job) && !result.jobs.some((next) => next.id === job.id))) window.dispatchEvent(new CustomEvent('langy-library-changed'));
-        if (!result.unavailable) for (const job of jobs) if (job.kind === 'audiobookshelf' && job.phase === 'syncing' && !result.jobs.some((next) => next.id === job.id)) window.dispatchEvent(new CustomEvent('langy-audio-updated', { detail: { book: job.bookId } }));
+        if (!result.unavailable) for (const job of jobs) if ((['narration', 'recording'].includes(job.kind) && active(job) || job.kind === 'audiobookshelf' && job.phase === 'syncing') && !result.jobs.some((next) => next.id === job.id)) window.dispatchEvent(new CustomEvent('langy-audio-updated', { detail: { book: job.bookId } }));
         if (result.unavailable) jobs = [...result.jobs, ...jobs.filter((job) => !result.jobs.some((next) => next.id === job.id))];
         else jobs = result.jobs;
         message('#process-error', result.unavailable ? 'Some process statuses are temporarily unavailable.' : '');
