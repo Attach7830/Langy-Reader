@@ -1,4 +1,4 @@
-import { $, api, element, message } from './ui.js';
+import { $, api, element, message, toast } from './ui.js';
 import { bookLanguages } from '../shared/language.js';
 import { selectedOCRLanguages, preferredOCRLanguages } from '../shared/ocr-languages.js';
 import { defaults } from './settings.js';
@@ -51,7 +51,10 @@ export function pdfOCR({ changed, readingLanguages = () => defaults.readingLangu
     try {
       const job = await api(`/api/books/${encodeURIComponent(book.id)}/ocr`, { method: 'POST', body: { languages: [...languages.selectedOptions].map((option) => option.value), rotate: form.elements.rotate.checked, mode: form.elements.mode.value } });
       if (version !== epoch) return;
-      render(job); void load(version);
+      render(job);
+      if (active(job) || job.state === 'ready') {
+        dialog.close(); toast(job.state === 'ready' ? 'PDF updated' : 'PDF queued for OCR. Follow its progress in Process queue.');
+      } else void load(version);
     } catch (error) { if (version === epoch) { message('#ocr-error', error.message); submit.disabled = false; } }
   });
   const stop = () => { epoch++; clearTimeout(poll); };

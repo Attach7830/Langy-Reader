@@ -67,15 +67,15 @@
       <div class="library-toolbar">
         <label class="search-field">
           <i data-lucide="search"></i>
-          <input type="search" id="search" placeholder="Search…" aria-label="Search title or author" autocomplete="off">
+          <input type="search" id="search" placeholder="Search…" aria-label="Search title, author or series" autocomplete="off">
         </label>
         <button class="button quiet small mobile-filters-toggle" id="mobile-filters-toggle" type="button" aria-expanded="false" aria-controls="library-filters"><i data-lucide="settings-2"></i><span>Filters</span></button>
         <div class="library-filters" id="library-filters"><select id="book-format-filter" aria-label="Book format"><option value="">All formats</option><option value="epub">EPUB</option><option value="pdf">PDF</option></select><select id="reading-filter" aria-label="Estimated reading demand">
           <option value="">Any level</option><option>Novice</option><option>Intermediate</option>
           <option>Advanced</option><option>Superior</option><option>Distinguished</option>
         </select>
-        <select id="book-sort" aria-label="Sort books" title="Unique unfamiliar lemmas per 1,000 words, or Mandarin characters per 1,000 characters. Lower comes first."><option value="recent">Recent</option><option value="familiar">Unfamiliar ↓</option><option value="known">Below threshold ↓</option></select>
-        <select id="book-status-filter" aria-label="Reading status"><option value="shelf" selected>On shelf</option><option value="">All books</option><option value="unread">Unread</option><option value="read">Read</option><option value="set-aside">Set aside</option></select></div>
+        <select id="book-sort" aria-label="Sort books" title="Unique unfamiliar lemmas per 1,000 words, or Mandarin characters per 1,000 characters. Lower comes first."><option value="recent">Recent</option><option value="series">Series order</option><option value="familiar">Unfamiliar ↓</option><option value="known">Below threshold ↓</option></select>
+        <select id="book-series-filter" aria-label="Book series"><option value="">All series</option><option value="none">No series</option></select><select id="book-status-filter" aria-label="Reading status"><option value="shelf" selected>On shelf</option><option value="">All books</option><option value="unread">Unread</option><option value="read">Read</option><option value="set-aside">Set aside</option></select></div>
         <span class="muted" id="book-count"></span>
       </div>
       <p class="field-note" id="offline-status" role="status" hidden></p>
@@ -605,6 +605,7 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
         <p class="field-note" id="book-metadata-status" role="status" aria-live="polite" hidden></p>
         <label class="field">Title <input name="title" maxlength="250" placeholder="From the book or filename"></label>
         <label class="field">Author <input name="author" maxlength="200" placeholder="Optional"></label>
+        <div class="form-grid"><label class="field">Series<input name="series" list="book-series-options" maxlength="200" placeholder="Optional series name" autocomplete="off"><datalist id="book-series-options"></datalist></label><label class="field">Book number<input name="seriesIndex" type="number" min="0" max="1000000" step="any" placeholder="Optional · e.g. 1 or 2.5" disabled></label></div>
         <fieldset class="book-cover-picker"><legend>Book cover</legend><div id="book-cover-options" class="book-cover-options"></div><p class="field-note">Choose a design, or keep Original / automatic to use the stored cover image.</p><label class="field">Cover image URL<input name="coverUrl" type="url" maxlength="4096" placeholder="https://example.org/cover.jpg" autocomplete="off"></label><p class="field-note">Optional direct public HTTPS image URL. Langy saves a local copy, up to 4 MiB. JPEG, PNG, WebP, GIF and AVIF are supported. Leave blank to keep the current or embedded cover.</p><div class="form-grid"><label class="field">Cover search source<select id="book-cover-provider"><option value="auto">Automatic · no key required</option><option value="openlibrary">Open Library</option><option value="google">Google Books</option><option value="amazon">Amazon</option></select></label><button id="find-book-covers" class="button secondary small" type="button">Find covers automatically</button></div><div id="book-cover-search-results" class="cover-search-results"></div><button id="book-import-cover" class="button secondary small" type="button" hidden>Import cover from URL</button><p id="book-cover-error" class="form-error" role="status" hidden></p></fieldset>
         <div class="form-grid">
           <label class="field">Primary language <input name="language" list="book-languages" maxlength="70" placeholder="Automatic" autocomplete="off"></label>

@@ -56,7 +56,7 @@ export async function openBookImports(dir,{library,demo=false,request=publicDown
     const url=downloadURL(body.url.trim()).href;
     if([...jobs.values()].filter((job)=>owned(job,visitor)&&['queued','downloading','importing'].includes(job.state)).length>=10)throw new RequestError(409,'Ten book downloads are already queued for this account.');
     if([...jobs.values()].some((job)=>owned(job,visitor)&&job.url===url&&['queued','downloading','importing'].includes(job.state)))throw new RequestError(409,'This link is already queued.');
-    const details=Object.fromEntries(['title','author','language','languages','categoryId','coverStyle','coverUrl','shared'].filter((key)=>body[key]!==undefined).map((key)=>[key,body[key]]));
+    const details=Object.fromEntries(['title','author','language','languages','categoryId','coverStyle','coverUrl','shared','series','seriesIndex'].filter((key)=>body[key]!==undefined).map((key)=>[key,body[key]]));
     Object.assign(details,importNarrationOptions(body));
     if(details.categoryId&&!library.snapshot(visitor).categories.some((category)=>category.id===details.categoryId))throw new RequestError(422,'Choose one of your Langy folders.');
     const job={id:randomUUID(),owner:visitor?.id||'',url,details,state:'queued',created:Date.now(),bytes:0,total:null,error:null};jobs.set(job.id,job);persist(job);

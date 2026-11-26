@@ -83,6 +83,7 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
     pending = (async () => {
       try { const result = await api('/api/processes');
         if (disposed || result.accountId !== account) return;
+        if (result.jobs.some((job) => job.kind === 'ocr' && job.state === 'completed' && !jobs.some((previous) => previous.id === job.id && previous.state === 'completed'))) window.dispatchEvent(new CustomEvent('langy-library-changed'));
         if (!result.unavailable) for (const job of jobs) if (job.kind === 'audiobookshelf' && job.phase === 'syncing' && !result.jobs.some((next) => next.id === job.id)) window.dispatchEvent(new CustomEvent('langy-audio-updated', { detail: { book: job.bookId } }));
         if (result.unavailable) jobs = [...result.jobs, ...jobs.filter((job) => !result.jobs.some((next) => next.id === job.id))];
         else jobs = result.jobs;

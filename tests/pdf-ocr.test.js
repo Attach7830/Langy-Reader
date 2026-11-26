@@ -61,7 +61,7 @@ test('PDF OCR updates the same book, keeps metadata and original bytes, and expo
   const dir = await mkdtemp(join(tmpdir(), 'langy-pdf-ocr-')); t.after(() => rm(dir, { recursive: true, force: true }));
   const library = await openLibrary(dir), source = Buffer.from('%PDF-1.4\noriginal scanned pages\n%%EOF'), output = Buffer.from('%PDF-1.4\nsearchable text layer\n%%EOF');
   const path = join(library.uploads, 'scan.pdf'); await writeFile(path, source);
-  const book = await library.importBook('scan', { path, originalname: 'scan.pdf', size: source.length }, { title: 'Scanned book', author: 'Author', language: 'zh', languages: ['zh', 'en'], categoryId: 'spanish', coverStyle: 'forest' });
+  const book = await library.importBook('scan', { path, originalname: 'scan.pdf', size: source.length }, { title: 'Scanned book', author: 'Author', language: 'zh', languages: ['zh', 'en'], categoryId: 'spanish', coverStyle: 'forest', series: 'Reader stories', seriesIndex: '2.5' });
   assert.equal(book.ocrComplete, false);
   library.saveBookmark(book.id, { target: 2, label: 'Continue here', note: 'Saved before OCR' }); library.setCurrentlyReading(book.id, { currentlyReading: true });
   const originalCount = library.snapshot().books.length;
@@ -80,6 +80,7 @@ test('PDF OCR updates the same book, keeps metadata and original bytes, and expo
   assert.equal(job.book.ocrComplete, true); assert.equal(library.getBook(book.id).ocrComplete, true); assert.equal(library.snapshot().books.find((item) => item.id === book.id).ocrComplete, true);
   assert.equal(job.recognizedCharacters, 24); assert.equal(job.scannedPages, 2); assert.equal(job.skippedPages, 0);
   assert.equal(job.book.title, 'Scanned book'); assert.equal(job.book.author, 'Author'); assert.equal(job.book.coverStyle, 'forest');
+  assert.equal(job.book.series, 'Reader stories'); assert.equal(job.book.seriesIndex, 2.5);
   assert.deepEqual(job.book.languages, ['zh', 'en']); assert.equal(job.book.categoryId, 'spanish'); assert.equal(job.pages, 2);
   assert.deepEqual(library.bookmarks(book.id).map(({ target, note }) => ({ target, note })), [{ target: 2, note: 'Saved before OCR' }]);
   assert.ok(library.getBook(book.id).starredAt); assert.equal(library.snapshot().books.length, originalCount);
