@@ -146,6 +146,21 @@ export function readerVocabulary(db, { completedBooks = null, nativeLanguage = (
     prune(); syncCompletions(visitor);
     return { ...summarize(exposureRows(visitor), preferences(visitor).threshold), nativeLanguage: baseLanguage(nativeLanguage(visitor), ''), reading: readingTotals(visitor) };
   }
+  function insights(visitor) {
+    prune(); syncCompletions(visitor);
+    const native = baseLanguage(nativeLanguage(visitor), ''), threshold = preferences(visitor).threshold, groups = new Map();
+    for (const row of exposureRows(visitor)) {
+      const language = baseLanguage(row.language, ''); if (!language || language === native) continue;
+      if (!groups.has(language)) groups.set(language, { language, unit: language === 'zh' ? 'characters' : 'lemmas', seen: 0, likelyKnown: 0, exposures: 0, familiarExposures: 0, trackedExposures: 0, completionExposures: 0, days: new Map(), books: new Set() });
+      const group = groups.get(language); group.seen++; group.likelyKnown += Number(row.exposures >= threshold); group.exposures += row.exposures; if (row.exposures >= threshold) group.familiarExposures += row.exposures;
+      group.trackedExposures += row.trackedExposures; group.completionExposures += row.completionExposures;
+      const day = new Date(row.firstSeen).toISOString().slice(0, 10); group.days.set(day, (group.days.get(day) || 0) + 1);
+    }
+    for (const row of db.prepare('SELECT DISTINCT language,book FROM vocabulary_seen WHERE owner=? UNION SELECT DISTINCT language,book FROM vocabulary_completed_terms WHERE owner=?').all(ownerOf(visitor), ownerOf(visitor))) groups.get(baseLanguage(row.language, ''))?.books.add(row.book);
+    return { threshold, byLanguage: [...groups.values()].map(({ days, books, ...group }) => {
+      let count = 0; return { ...group, books: [...books], history: [...days].sort(([a], [b]) => a.localeCompare(b)).map(([date, amount]) => ({ date, seen: count += amount })) };
+    }) };
+  }
   function familiarity(book, reader) {
     const groups = inventory(book);
     if (!groups) return null;
@@ -436,5 +451,5 @@ export function readerVocabulary(db, { completedBooks = null, nativeLanguage = (
     }).filter(Boolean).sort((a, b) => b.score - a.score || compareVocabularyDensity(a.familiarity, b.familiarity) || a.title.localeCompare(b.title)).slice(0, 8);
   }
   if (backfill || completionUpgrade || readingUpgrade) for (const row of db.prepare('SELECT book AS id FROM reading_exposures UNION SELECT book AS id FROM vocabulary_completions').all()) reindex(row);
-  return { profile, familiarity, section, record, reindex, reindexReading, catalogue, recommendations, preferences, savePreferences, syncCompletions, belowThreshold, term, bookCounts, saveBookCounts };
+  return { profile, insights, familiarity, section, record, reindex, reindexReading, catalogue, recommendations, preferences, savePreferences, syncCompletions, belowThreshold, term, bookCounts, saveBookCounts };
 }
