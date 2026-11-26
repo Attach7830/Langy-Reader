@@ -84,7 +84,7 @@ test('real library import waits for metadata, submits manual overrides once, and
   assert.equal(imports[0].get('language'), 'pt'); assert.equal(imports[0].get('languages'), '[]'); assert.equal(imports[0].get('file').name, file.name);
   assert.equal(imports[0].get('coverStyle'), 'auto');
   assert.equal(imports[0].get('autoAudiobook'), 'true'); assert.equal(imports[0].get('audiobookDelayMinutes'), '7');
-  assert.equal([...imports[0].keys()].filter((name) => name !== 'file').length, 8, 'metadata, cover and narration options stay within the multipart field limit');
+  assert.equal([...imports[0].keys()].filter((name) => name !== 'file').length, 9, 'metadata, series, cover and narration options stay within the multipart field limit');
   document.querySelector('[aria-label="Edit Detected book"]').click();
   assert.equal(form.elements.title.required, false); assert.equal(form.elements.language.required, false);
   assert.equal(document.querySelector('#book-language-note').hidden, false);
