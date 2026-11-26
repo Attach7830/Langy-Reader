@@ -19,6 +19,8 @@ import { folderAudiobookshelf } from './folder-audiobookshelf.js';
 import { offlineDownloads } from './offline-downloads.js';
 import { downloadedBooks } from './book-source.js';
 import { androidApp, watchAppCapability } from './platform.js';
+import { processTasks } from './process-tasks.js';
+import { seriesKey, seriesLabel } from '../shared/book-series.js';
 
 const vocabularyLabel = (vocabulary) => vocabulary?.byLanguage?.map((item) => `${item.count.toLocaleString()} ${item.language === 'zh' ? 'Mandarin Han characters' : `${languageName(item.language)} ${item.unit}`}`).join(' · ');
 const wordCountLabel = (analysis) => bookCountLabel(analysis?.counts)
@@ -42,7 +44,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   const folderABS = folderAudiobookshelf();
   $('#category-dialog').addEventListener('close', () => folderABS.cancel());
   const learningDialog = $('#learning-dialog');
-  let learningBook, learningTimer, libraryTimer, learningVisit = 0, learningParts = {}, learningPending = {};
+  let learningBook, learningTimer, libraryTimer, learningVisit = 0, libraryVisit = 0, learningParts = {}, learningPending = {};
   let snapshot = { categories: [], books: [], maxUpload: 120 * 1024 ** 2, demo: false };
   let category = 'all', editingBook, editingCategory, selectedFile, slowImport;
   let bookPending = false, categoryPending = false;
@@ -65,15 +67,18 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   }
   const openProcess = (event) => {
     const job = event.detail, book = snapshot.books.find((item) => item.id === job?.bookId);
-    if (book) { location.hash = '#library'; if (job.kind === 'ocr') void ocr.show(book); else void showLearning(book); }
+    if (book) { location.hash = '#library'; if (job.kind === 'ocr') void ocr.show(book); else if (job.kind === 'cover') showBook(book); else void showLearning(book); }
     else if (job?.kind === 'archive') { location.hash = '#library'; const panel = $('#archive-downloads'); panel.open = true; panel.scrollIntoView?.({ block: 'center' }); }
   };
   surface.addEventListener('langy-open-process', openProcess);
+  const libraryChanged = () => { if (!disposed) void refresh().catch((error) => message('#library-error', error.message)); };
+  surface.addEventListener('langy-library-changed', libraryChanged);
   surface.addEventListener('langy-packs-changed', refreshDownloaded); surface.addEventListener('langy-offline-account', refreshDownloaded);
   const unwatchApp = watchAppCapability(() => { render(); void refreshDownloaded(); });
   void refreshDownloaded();
   $('#show-shared-books').addEventListener('change', (event) => { changePreferences({ showSharedBooks: event.target.checked }); render(); });
   $('#book-format-filter').addEventListener('change', (event) => { changePreferences({ libraryFormat: event.target.value }); render(); });
+  $('#book-series-filter').addEventListener('change', (event) => { if (event.target.value.startsWith('series:')) $('#book-sort').value = 'series'; render(); });
   $('#refresh-storage').addEventListener('click', () => void refreshStorage());
   const storageTimer = setInterval(() => {
     if (!document.hidden && !$('#library-screen').hidden) void refreshStorage();
@@ -119,6 +124,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     const info = element('div', 'book-info');
     const meta = [book.author, languageName(book.language)].filter(Boolean).join(' · ');
     info.append(element('span', 'book-format', bookFormatLabel(book)), element('span', 'book-title', book.title), element('span', 'book-meta', meta));
+    if (book.series) info.append(element('span', 'book-meta book-series', seriesLabel(book)));
     const actions = element('div', 'book-reading-actions');
     if (book.sharedWithMe) actions.append(element('span', 'book-read-badge shared-book-badge', 'Shared with you'));
     else if (book.shared) actions.append(element('span', 'book-read-badge shared-book-badge', 'Shared'));
@@ -235,6 +241,12 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
 
   function render() {
     const libraryBooks = snapshot.books.filter((book) => preferences().showSharedBooks !== false || !book.sharedWithMe);
+    const seriesNames = new Map();
+    for (const book of libraryBooks) if (book.series) seriesNames.set(seriesKey(book.series), book.series);
+    const series = [...seriesNames].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })), selectedSeries = $('#book-series-filter').value;
+    $('#book-series-filter').replaceChildren(new Option('All series', ''), new Option('No series', 'none'), ...series.map(([key, name]) => new Option(name, 'series:' + key)));
+    $('#book-series-filter').value = selectedSeries === 'none' || seriesNames.has(selectedSeries.slice(7)) ? selectedSeries : '';
+    $('#book-series-options').replaceChildren(...series.map(([, name]) => new Option(name, name)));
     $('#shared-books-control').hidden = !snapshot.sharingAvailable;
     $('#show-shared-books').checked = preferences().showSharedBooks !== false;
     $('#book-format-filter').value = preferences().libraryFormat || '';
@@ -273,15 +285,16 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     const visible = libraryBooks.filter((book) =>
       (category === 'all' || (book.categoryId ?? 'uncategorized') === category) &&
       (!$('#book-format-filter').value || book.format === $('#book-format-filter').value) &&
+      (!$('#book-series-filter').value || ($('#book-series-filter').value === 'none' ? !book.series : 'series:' + seriesKey(book.series) === $('#book-series-filter').value)) &&
       (!$('#reading-filter').value || book.learning?.reading?.band === $('#reading-filter').value) &&
       (!$('#book-status-filter').value || $('#book-status-filter').value === 'shelf' && !book.setAsideAt || $('#book-status-filter').value === 'set-aside' && book.setAsideAt
         || ['read', 'unread'].includes($('#book-status-filter').value) && Boolean(book.readAt) === ($('#book-status-filter').value === 'read')) &&
-      (!filter || `${book.title} ${book.author}`.toLocaleLowerCase().includes(filter)));
+      (!filter || `${book.title} ${book.author} ${book.series || ''}`.toLocaleLowerCase().includes(filter)));
     $('#book-count').textContent = `${visible.length} ${visible.length === 1 ? 'book' : 'books'}`;
     visible.sort((a, b) => compareLibraryBooks(a, b, $('#book-sort').value));
     books.replaceChildren(...visible.map(bookCard));
     $('#empty-library').hidden = visible.length > 0;
-    const filtering = filter || $('#book-format-filter').value || $('#reading-filter').value || !['', 'shelf'].includes($('#book-status-filter').value);
+    const filtering = filter || $('#book-format-filter').value || $('#book-series-filter').value || $('#reading-filter').value || !['', 'shelf'].includes($('#book-status-filter').value);
     $('#empty-title').textContent = filtering ? 'No matching books' : 'No books here yet';
     $('#empty-detail').textContent = filtering ? 'Try a different search or filter.' : 'Import an EPUB or PDF to get started.';
     drawIcons();
@@ -290,8 +303,9 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     renderDownloads(snapshot.archive?.jobs || []);
   }
 
-  async function refresh() {
-    snapshot = await api('/api/library');
+  async function refresh({ signal } = {}) {
+    const version = ++libraryVisit, next = await api('/api/library', { signal }); signal?.throwIfAborted(); if (disposed || version !== libraryVisit) return snapshot;
+    snapshot = next;
     onSnapshot(snapshot);
     showReadingTime(snapshot.readingTime);
     vocabularyUI.update(snapshot.vocabulary);
@@ -577,6 +591,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
 
   function showBook(book) {
     if (book?.canEdit === false) return;
+    if (pendingCovers.has(book?.id)) { toast('This cover is still importing. Follow its progress in Process queue.'); return; }
     if (bookPending) { if (!bookDialog.open) bookDialog.showModal(); return; }
     metadataFields.reset(); coverSearchUI.reset();
     editingBook = book;
@@ -611,6 +626,9 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     fields.title.value = book?.title ?? '';
     fields.title.required = false;
     fields.author.value = book?.author ?? '';
+    fields.series.value = book?.series ?? '';
+    fields.seriesIndex.value = book?.seriesIndex ?? '';
+    fields.seriesIndex.disabled = !fields.series.value.trim();
     fields.coverUrl.value = ''; $('#book-import-cover').hidden = !isEdit; message('#book-cover-error');
     coverPicker.set(book || {});
     fields.language.value = book?.language ?? '';
@@ -736,21 +754,29 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   bookForm.elements.autoAudiobook.addEventListener('change', () => { bookForm.elements.audiobookDelayMinutes.disabled = !bookForm.elements.autoAudiobook.checked; });
   $('#book-file').addEventListener('change', (event) => stageFile(event.target.files[0]));
   bookForm.elements.coverUrl.addEventListener('input', () => { if (bookForm.elements.coverUrl.value.trim()) { bookForm.elements.coverStyle.value = 'auto'; coverPicker.refresh(); } });
-  let coverPending = false;
-  async function importBookCover(target = editingBook) {
-    const url = bookForm.elements.coverUrl.value.trim(); if (!url || !target) return;
-    const imported = await api(`/api/books/${target.id}/cover`, { method: 'POST', body: { url } });
-    if (editingBook?.id === target.id && bookDialog.open) {
-      editingBook = imported; if (bookForm.elements.coverUrl.value.trim() === url) bookForm.elements.coverUrl.value = ''; coverPicker.set(imported);
-    }
-    await refresh();
+  bookForm.elements.series.addEventListener('input', () => { bookForm.elements.seriesIndex.disabled = !bookForm.elements.series.value.trim(); });
+  const pendingCovers = new Map();
+  function importBookCover(target, url) {
+    if (!target || !url || pendingCovers.has(target.id)) return;
+    const controller = new AbortController(); pendingCovers.set(target.id, controller);
+    const finish = processTasks.begin('Import book cover', { immediate: true, kind: 'cover', bookId: target.id, title: target.title, cancel: () => controller.abort() });
+    void (async () => {
+      try {
+        await api(`/api/books/${target.id}/cover`, { method: 'POST', body: { url }, signal: controller.signal, process: false });
+        controller.signal.throwIfAborted();
+        if (!disposed) await refresh({ signal: controller.signal }).catch((error) => { if (!controller.signal.aborted) message('#library-error', error.message); });
+        controller.signal.throwIfAborted(); finish(); if (!disposed) toast('Cover imported.');
+      } catch (error) {
+        finish(error);
+        if (!disposed && !controller.signal.aborted) message('#library-error', `Cover for “${target.title}”: ${error.message}`);
+      } finally { pendingCovers.delete(target.id); }
+    })();
+    bookForm.elements.coverUrl.value = ''; bookDialog.close(); toast('Importing cover. Follow its progress in Process queue.');
   }
   $('#book-import-cover').addEventListener('click', async (event) => {
-    if (bookPending || coverPending) return;
+    if (bookPending || pendingCovers.has(editingBook?.id)) return;
     if (!bookForm.elements.coverUrl.reportValidity() || !bookForm.elements.coverUrl.value.trim()) return message('#book-cover-error', 'Paste a direct image URL first.');
-    const target = editingBook; coverPending = true; event.target.disabled = true; $('#book-submit').disabled = true; message('#book-cover-error', 'Importing cover…');
-    try { await importBookCover(target); if (editingBook?.id === target?.id) message('#book-cover-error', 'Cover imported.'); } catch (error) { if (editingBook?.id === target?.id) message('#book-cover-error', error.message); }
-    finally { coverPending = false; event.target.disabled = false; $('#book-submit').disabled = bookPending; }
+    importBookCover(editingBook, bookForm.elements.coverUrl.value.trim());
   });
   $('#file-field').addEventListener('dragover', (event) => {
     event.preventDefault();
@@ -766,7 +792,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
 
   bookForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (bookPending || coverPending) return;
+    if (bookPending || pendingCovers.has(editingBook?.id)) return;
     const submittedBook = editingBook, submittedFile = selectedFile, submittedSource = $('#book-source').value;
     await metadataFields.ready();
     if (bookPending || !bookDialog.open || submittedBook !== editingBook || submittedFile !== selectedFile || submittedSource !== $('#book-source').value) return;
@@ -798,9 +824,10 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     message('#book-error');
     try {
       if (editingBook) {
-        await importBookCover(submittedBook); data.delete('coverUrl');
+        const coverUrl = data.get('coverUrl'); data.delete('coverUrl');
         data.delete('file');
-        await api(`/api/books/${submittedBook.id}`, { method: 'PATCH', body: Object.fromEntries(data) });
+        const updated = await api(`/api/books/${submittedBook.id}`, { method: 'PATCH', body: Object.fromEntries(data) });
+        if (coverUrl) { importBookCover(updated, String(coverUrl).trim()); void refresh().catch((error) => message('#library-error', error.message)); return; }
       } else if (webImport) {
         data.delete('file'); await api('/api/imports/web',{method:'POST',body:{...Object.fromEntries(data),url:webURL}}); bookDialog.close(); toast('Book download queued'); await refresh();return;
       } else if (archiveImport) {
@@ -821,7 +848,9 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
         bookDialog.close(); toast(job.state === 'ready' ? 'Book imported' : 'Book download queued'); await refresh(); return;
       } else {
         data.set('file', selectedFile);
-        await api('/api/books', { method: 'POST', body: data });
+        const coverUrl = data.get('coverUrl'); data.delete('coverUrl');
+        const imported = await api('/api/books', { method: 'POST', body: data });
+        if (coverUrl) { importBookCover(imported, String(coverUrl).trim()); void refresh().catch((error) => message('#library-error', error.message)); return; }
       }
       if ((editingBook?.id || '') === (submittedBook?.id || '') && submittedFile === selectedFile) bookDialog.close();
       toast(submittedBook ? 'Book updated' : 'Book imported');
@@ -887,5 +916,5 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   bookDialog.addEventListener('close', () => metadataFields.cancel());
   categoryDialog.addEventListener('cancel', (event) => { if (categoryPending) event.preventDefault(); });
 
-  return { refresh, render, dispose() { disposed = true; learningVisit++; unwatchApp(); surface.removeEventListener('langy-open-process', openProcess); surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); ocr.dispose(); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
+  return { refresh, render, dispose() { disposed = true; for (const controller of pendingCovers.values()) controller.abort(); pendingCovers.clear(); learningVisit++; unwatchApp(); surface.removeEventListener('langy-library-changed', libraryChanged); surface.removeEventListener('langy-open-process', openProcess); surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); ocr.dispose(); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
 }
