@@ -8,6 +8,7 @@ import { pipeline } from 'node:stream/promises';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { RequestError } from './books.js';
 import { maxAudioUpload } from './uploaded-audio.js';
+import { consumeProcesses } from './process-scheduler.js';
 
 const encode = encodeURIComponent;
 const hash = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -23,7 +24,7 @@ const sameBook = (book, item) => Boolean(titleKey(book.title) && titleKey(book.a
   && titleKey(book.title) === titleKey(item?.media?.metadata?.title)
   && [authorKey(item?.media?.metadata), titleKey(item?.media?.metadata?.authorName), titleKey(item?.media?.metadata?.authors?.map((author) => typeof author === 'string' ? author : author?.name).filter(Boolean).join(', '))].includes(titleKey(book.author)));
 
-export async function openAudiobookshelf(dir, { library, learning, demo = false, request = fetch, autoStart = true, now = Date.now }) {
+export async function openAudiobookshelf(dir, { library, learning, demo = false, request = fetch, autoStart = true, now = Date.now, scheduler }) {
   const settingsPath = join(dir, 'audiobookshelf-settings.json');
   const operation = new AsyncLocalStorage(), controllers = new Map();
   let config = { baseUrl: '', apiKey: '', libraryId: '', folderId: '', categoryDestinations: {}, autoExport: true, autoLink: true }, writing = Promise.resolve(), running = false, closed = false;
@@ -451,19 +452,26 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
         try { if (automaticDestinationChanged(job)) persist(job); } catch { job.state='cancelled';persist(job); }
       }
       enqueueAutomatic();
-      for (const job of jobs.values()) {
-        if (job.state === 'exported' && !job.linked && job.exportedAt && job.server === server()) { job.state = 'linking'; job.phase = 'indexing'; }
-        if (!['queued', 'syncing', 'linking'].includes(job.state) || closed) continue;
+      for (const job of jobs.values()) if (job.state === 'exported' && !job.linked && job.exportedAt && job.server === server()) { job.state = 'linking'; job.phase = 'indexing'; }
+      await consumeProcesses(scheduler, () => closed ? [] : [...jobs.values()].filter((job) => ['queued','syncing','linking'].includes(job.state))
+        .map((job) => {
+          let ready = true;
+          if (job.state === 'syncing') {
+            try { const state = learning.recordings.list(library.getBook(job.book)).find((row) => row.id === job.recording)?.state; ready = !state || ['ready','error','uploaded'].includes(state); }
+            catch { /* Let the worker report the missing book. */ }
+          }
+          return { id: `audiobookshelf:${job.id}`, created: job.created, ready, dependencies: job.recording ? [`recording:${job.recording}`] : [], data: job };
+        }), async (job) => {
         const controller = new AbortController(); controllers.set(job.id,controller);
         try {
-          if (job.server !== server()) { job.state = 'cancelled'; job.notice = 'The Audiobookshelf connection changed.'; continue; }
-          if (job.matchedExport && job.state === 'queued' && automaticDestinationChanged(job)) continue;
+          if (job.server !== server()) { job.state = 'cancelled'; job.notice = 'The Audiobookshelf connection changed.'; return; }
+          if (job.matchedExport && job.state === 'queued' && automaticDestinationChanged(job)) return;
           if (job.kind === 'export' && !job.exportedAt) {
-            if (job.automatic && config.autoExport === false) { job.state = 'cancelled'; job.notice = 'Automatic export disabled.'; continue; }
-            if (!refreshAutomaticDestination(job, library.getBook(job.book))) continue;
+            if (job.automatic && config.autoExport === false) { job.state = 'cancelled'; job.notice = 'Automatic export disabled.'; return; }
+            if (!refreshAutomaticDestination(job, library.getBook(job.book))) return;
           }
-          if (job.retryAt > now()) continue;
-          if (job.state === 'linking') { await operation.run(controller,() => reconcileExport(job, library.getBook(job.book))); continue; }
+          if (job.retryAt > now()) return;
+          if (job.state === 'linking') { await operation.run(controller,() => reconcileExport(job, library.getBook(job.book))); return; }
           if (job.state === 'syncing') {
             const book = library.getBook(job.book), recording = learning.recordings.list(book).find((item) => item.id === job.recording);
             if (!recording) throw new RequestError(404, 'The imported recording was removed.');
@@ -476,13 +484,13 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
               job.state = 'ready'; job.linked = true; job.notice = 'Audio imported, aligned and linked to Audiobookshelf.';
             }
             else if (recording.state === 'uploaded' && learning.info(book).state === 'ready') learning.recordings.queue(book, recording.id);
-            continue;
+            return;
           }
           job.state = 'running'; job.error = null; job.phase = 'checking'; job.retryAt = null; persist(job);
           const book = library.getBook(job.book);
           await operation.run(controller,() => job.kind === 'export' ? runExport(job,book) : runImport(job,book));
         } catch (error) {
-          if (job.userCancelled) continue;
+          if (job.userCancelled) return;
           job.error = error instanceof RequestError ? error.message : 'Audiobookshelf transfer failed. Check the connection and retry.';
           if (job.kind === 'export' && job.phase === 'uploading') {
             job.state = 'needs_review'; job.error = 'The upload outcome could not be confirmed. Check Audiobookshelf before retrying to avoid a duplicate.';
@@ -493,7 +501,7 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
             job.retryAt = now() + Math.min(300000, 15000 * 2 ** Math.min(5, job.attempts - 1));
           } else job.state = 'error';
         } finally { controllers.delete(job.id); persist(job); }
-      }
+      });
     } finally { running = false; if (closed) db.close(); }
   }
   function queue(book, kind, body, automatic = false) {
