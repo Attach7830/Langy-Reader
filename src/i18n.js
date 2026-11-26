@@ -109,6 +109,7 @@ const phrases = [
   ['Category', 'Categoría', 'Categoria', '分类'], ['Book cover', 'Portada', 'Capa', '封面'],
   ['Search…', 'Buscar…', 'Pesquisar…', '搜索…'], ['Search title or author', 'Buscar título o autor', 'Pesquisar título ou autor', '搜索书名或作者'],
   ['Any level', 'Cualquier nivel', 'Qualquer nível', '所有难度'], ['Recent', 'Recientes', 'Recentes', '最近添加'],
+  ['All formats', 'Todos los formatos', 'Todos os formatos', '所有格式'], ['Book format', 'Formato del libro', 'Formato do livro', '图书格式'],
   ['Unfamiliar ↓', 'No vistos ↓', 'Não vistos ↓', '未见词 ↓'], ['Below threshold ↓', 'Bajo el umbral ↓', 'Abaixo do limiar ↓', '低于阈值 ↓'],
   ['Reading status', 'Estado de lectura', 'Estado de leitura', '阅读状态'], ['Sort books', 'Ordenar libros', 'Ordenar livros', '图书排序'],
   ['Estimated reading demand', 'Dificultad estimada', 'Dificuldade estimada', '预估阅读难度'],

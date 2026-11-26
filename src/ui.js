@@ -7,6 +7,7 @@ import { processTasks, requestProcessLabel } from './process-tasks.js';
 
 export const $ = (selector, root = document) => root.querySelector(selector);
 export const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+export const bookFormatLabel = (book) => book.format === 'pdf' && book.ocrComplete ? 'PDF · OCR' : book.format.toUpperCase();
 
 export function element(tag, className = '', text = '') {
   const node = document.createElement(tag);

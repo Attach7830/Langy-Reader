@@ -182,6 +182,7 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
   if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'coverStyle')) db.exec("ALTER TABLE books ADD COLUMN coverStyle TEXT NOT NULL DEFAULT 'auto'");
   if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'coverRevision')) db.exec("ALTER TABLE books ADD COLUMN coverRevision TEXT NOT NULL DEFAULT ''");
   if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'contentRevision')) db.exec("ALTER TABLE books ADD COLUMN contentRevision TEXT NOT NULL DEFAULT ''");
+  if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'ocrComplete')) db.exec('ALTER TABLE books ADD COLUMN ocrComplete INTEGER NOT NULL DEFAULT 0');
   if (!db.prepare('PRAGMA table_info(categories)').all().some(({ name }) => name === 'language')) {
     db.exec('ALTER TABLE categories ADD COLUMN language TEXT');
   }
@@ -229,7 +230,8 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
   const editable = (visitor) => visitor?.id ?? shared;
   const l1Folder = (book, visitor) => (!visitor || book.owner === editable(visitor))
     && Boolean(db.prepare('SELECT l1Folder FROM categories WHERE id=? AND owner=?').get(book.categoryId ?? '', book.owner)?.l1Folder);
-  const publicBook = ({ owner, expires, bytes, ...book }, visitor) => ({ ...book, shared: Boolean(book.shared),
+  const hasOCR = (book) => book.format === 'pdf' && Boolean(book.ocrComplete || book.contentRevision);
+  const publicBook = ({ owner, expires, bytes, ...book }, visitor) => ({ ...book, shared: Boolean(book.shared), ocrComplete: hasOCR(book),
     l1Folder: l1Folder({ ...book, owner }, visitor),
     canEdit: !visitor || owner === editable(visitor), sharedWithMe: Boolean(!limits && book.shared && visitor && owner !== editable(visitor)),
     categoryId: !limits && visitor && owner !== editable(visitor) ? null : book.categoryId,
@@ -253,7 +255,7 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
     const visible = scope(visitor);
     const book = db.prepare(`SELECT * FROM books WHERE id=? AND ${visible.sql}`).get(id, ...visible.args);
     if (!book) throw new RequestError(404, 'Book not found.');
-    return { ...book, l1Folder: l1Folder(book, visitor), canEdit: !visitor || book.owner === editable(visitor), sharedWithMe: Boolean(!limits && book.shared && visitor && book.owner !== editable(visitor)), languages: JSON.parse(book.languages), readAt: readAt(id, visitor), starredAt: starredAt(id, visitor), setAsideAt: setAsideAt(id, visitor) };
+    return { ...book, ocrComplete: hasOCR(book), l1Folder: l1Folder(book, visitor), canEdit: !visitor || book.owner === editable(visitor), sharedWithMe: Boolean(!limits && book.shared && visitor && book.owner !== editable(visitor)), languages: JSON.parse(book.languages), readAt: readAt(id, visitor), starredAt: starredAt(id, visitor), setAsideAt: setAsideAt(id, visitor) };
   }
 
   function categoryId(value, visitor) {
@@ -287,6 +289,9 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
 
   return {
     uploads, getBook, filePath, coverPath, instanceId,
+    markOCRComplete(id) {
+      if (db.prepare("UPDATE books SET ocrComplete=1 WHERE id=? AND format='pdf' AND ocrComplete=0").run(id).changes) touch();
+    },
     ownedBooks: (owner) => db.prepare('SELECT * FROM books WHERE owner=?').all(owner),
     storageFiles(owner) { return db.prepare('SELECT * FROM books WHERE owner=?').all(owner).flatMap((book) => [filePath(book), filePath({ ...book, contentRevision: '' }), coverPath(book), coverPath({ ...book, coverRevision: '' })]); },
     bookmarks(id, visitor) {
@@ -470,7 +475,7 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
         // before this point leaves the old PDF selected and readable.
         db.exec('BEGIN');
         try {
-          db.prepare('UPDATE books SET contentRevision=?,bytes=?,updatedAt=?,language=?,languages=? WHERE id=?')
+          db.prepare('UPDATE books SET contentRevision=?,bytes=?,updatedAt=?,language=?,languages=?,ocrComplete=1 WHERE id=?')
             .run(revision, size, Date.now(), assignment.language, JSON.stringify(assignment.languages), id);
           touch(); db.exec('COMMIT'); published = true;
         } catch (error) { db.exec('ROLLBACK'); throw error; }

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { openLibrary } from '../server/books.js';
 import { openPDFOCR } from '../server/pdf-ocr.js';
+import { DatabaseSync } from 'node:sqlite';
 async function until(check) { for (let i = 0; i < 250; i++) { const value = check(); if (value) return value; await delay(10); } throw new Error('OCR job timed out'); }
 
 test('PDF OCR updates the same book, keeps metadata and original bytes, and exposes installed languages', async (t) => {
@@ -13,6 +14,7 @@ test('PDF OCR updates the same book, keeps metadata and original bytes, and expo
   const library = await openLibrary(dir), source = Buffer.from('%PDF-1.4\noriginal scanned pages\n%%EOF'), output = Buffer.from('%PDF-1.4\nsearchable text layer\n%%EOF');
   const path = join(library.uploads, 'scan.pdf'); await writeFile(path, source);
   const book = await library.importBook('scan', { path, originalname: 'scan.pdf', size: source.length }, { title: 'Scanned book', author: 'Author', language: 'zh', languages: ['zh', 'en'], categoryId: 'spanish', coverStyle: 'forest' });
+  assert.equal(book.ocrComplete, false);
   library.saveBookmark(book.id, { target: 2, label: 'Continue here', note: 'Saved before OCR' }); library.setCurrentlyReading(book.id, { currentlyReading: true });
   const originalCount = library.snapshot().books.length;
   let analyzed, calls = 0;
@@ -27,6 +29,7 @@ test('PDF OCR updates the same book, keeps metadata and original bytes, and expo
   service.queue(book, { languages: ['chi_sim', 'eng'] });
   const job = await until(() => { const job = service.status(book); return ['ready', 'error'].includes(job?.state) && job; });
   assert.equal(job.state, 'ready', job.error); assert.equal(calls, 1); assert.equal(job.book.id, book.id); assert.equal(job.inPlace, true); assert.equal(analyzed, job.book.id);
+  assert.equal(job.book.ocrComplete, true); assert.equal(library.getBook(book.id).ocrComplete, true); assert.equal(library.snapshot().books.find((item) => item.id === book.id).ocrComplete, true);
   assert.equal(job.book.title, 'Scanned book'); assert.equal(job.book.author, 'Author'); assert.equal(job.book.coverStyle, 'forest');
   assert.deepEqual(job.book.languages, ['zh', 'en']); assert.equal(job.book.categoryId, 'spanish'); assert.equal(job.pages, 2);
   assert.deepEqual(library.bookmarks(book.id).map(({ target, note }) => ({ target, note })), [{ target: 2, note: 'Saved before OCR' }]);
@@ -35,6 +38,21 @@ test('PDF OCR updates the same book, keeps metadata and original bytes, and expo
   service.close(); const reopened = await openPDFOCR(dir, { library, request() { assert.fail('Ready OCR copies do not get scanned again'); } });
   t.after(() => reopened.close()); assert.equal(reopened.status(book).book.id, job.book.id);
   assert.throws(() => reopened.queue(book, { languages: ['eng;evil'] }), { status: 422 });
+});
+
+test('completed legacy OCR copies gain a persistent label while failed and queued scans stay unmarked', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'langy-legacy-ocr-label-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const library = await openLibrary(dir), bytes = Buffer.from('%PDF-1.4\nlegacy PDF\n%%EOF');
+  const db = new DatabaseSync(join(dir, 'pdf-ocr.sqlite')); db.exec('CREATE TABLE jobs(id TEXT PRIMARY KEY,json TEXT NOT NULL) STRICT');
+  for (const [id, state] of [['old-copy', 'ready'], ['failed-copy', 'error'], ['queued-copy', 'queued']]) {
+    const path = join(library.uploads, id); await writeFile(path, bytes);
+    await library.importBook(id, { path, originalname: id + '.pdf', size: bytes.length }, { title: id });
+    db.prepare('INSERT INTO jobs VALUES(?,?)').run(id, JSON.stringify({ id, source: id, state, result: state === 'ready' ? { id, format: 'pdf' } : null }));
+  }
+  db.close(); const service = await openPDFOCR(dir, { library, demo: true }); t.after(() => service.close());
+  assert.equal(library.getBook('old-copy').ocrComplete, true); assert.equal(library.getBook('failed-copy').ocrComplete, false); assert.equal(library.getBook('queued-copy').ocrComplete, false);
+  const saved = new DatabaseSync(join(dir, 'library.sqlite'), { readOnly: true });
+  assert.equal(saved.prepare('SELECT ocrComplete FROM books WHERE id=?').get('old-copy').ocrComplete, 1); saved.close();
 });
 
 test('PDF replacement validates output, rejects stale revisions and retains only the original backup plus the latest OCR file', async (t) => {
@@ -95,6 +113,7 @@ test('cancelling active OCR aborts the scan and retains the same original PDF',a
   }});t.after(()=>service.close());
   const job=service.queue(book,{languages:['chi_sim']});await until(()=>started);service.cancel(book,job.id);await until(()=>aborted);await service.pump();
   assert.equal(service.status(book).state,'cancelled');assert.deepEqual(await readFile(library.filePath(library.getBook(book.id))),source);assert.equal(library.getBook(book.id).contentRevision,'');
+  assert.equal(library.getBook(book.id).ocrComplete, false);
 });
 
 test('a busy OCR service keeps PDFs queued and retries them sequentially instead of failing every waiting scan', async (t) => {

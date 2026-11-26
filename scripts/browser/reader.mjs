@@ -105,6 +105,14 @@ try {
     assert.equal(await page.locator('#book-actions-dialog .book-word-count, #book-actions-dialog .book-metrics').count(), 0);
     assert.equal(await page.locator('#book-actions-dialog').getByRole('button', { name: 'Save offline', exact: true }).count(), 0, 'a phone browser is still the web version');
     await page.locator('#book-actions-dialog [data-close]').click();
+    await page.locator('#mobile-filters-toggle').click(); await page.locator('#book-format-filter').selectOption('pdf');
+    await page.locator('#empty-title').filter({ hasText: 'No matching books' }).waitFor();
+    await page.waitForFunction(() => { const saved = JSON.parse(localStorage.getItem('langy-account-settings-v1') || '{}'); return saved.accountId && !Object.keys(saved.pending || {}).length; });
+    await page.reload(); await page.locator('#empty-title').filter({ hasText: 'No matching books' }).waitFor();
+    await page.locator('#mobile-filters-toggle').click(); assert.equal(await page.locator('#book-format-filter').inputValue(), 'pdf');
+    await page.screenshot({ path: output + '/mobile-format-filter.png' });
+    await page.locator('#book-format-filter').selectOption('epub'); await page.locator('#books a[href="#read/' + book.id + '"]').waitFor();
+    await page.locator('#book-format-filter').selectOption(''); await page.locator('#mobile-filters-toggle').click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({ path: output + '/mobile-library.png', fullPage: true });
   });

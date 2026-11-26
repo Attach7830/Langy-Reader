@@ -24,6 +24,7 @@ export function pdfOCR({ changed, readingLanguages = () => defaults.readingLangu
       : ({ queued: job?.notice || 'PDF queued for local OCR…', running: 'Scanning PDF pages. You can close this dialog; processing continues on your server.', importing: 'Updating this book’s PDF…', error: job?.error })[job?.state]);
   }
   async function load(version, initial = false) {
+    if (version !== epoch) return;
     clearTimeout(poll);
     try {
       const result = await api(`/api/books/${encodeURIComponent(book.id)}/ocr`);
@@ -42,14 +43,18 @@ export function pdfOCR({ changed, readingLanguages = () => defaults.readingLangu
   }
   form.addEventListener('submit', async (event) => {
     event.preventDefault(); if (!loaded || active(current) || !form.reportValidity()) return;
+    const version = epoch;
     submit.disabled = true; message('#ocr-error');
     try {
-      render(await api(`/api/books/${encodeURIComponent(book.id)}/ocr`, { method: 'POST', body: { languages: [...languages.selectedOptions].map((option) => option.value), rotate: form.elements.rotate.checked, mode: form.elements.mode.value } }));
-      void load(epoch);
-    } catch (error) { message('#ocr-error', error.message); submit.disabled = false; }
+      const job = await api(`/api/books/${encodeURIComponent(book.id)}/ocr`, { method: 'POST', body: { languages: [...languages.selectedOptions].map((option) => option.value), rotate: form.elements.rotate.checked, mode: form.elements.mode.value } });
+      if (version !== epoch) return;
+      render(job); void load(version);
+    } catch (error) { if (version === epoch) { message('#ocr-error', error.message); submit.disabled = false; } }
   });
+  const stop = () => { epoch++; clearTimeout(poll); };
+  dialog.addEventListener('close', stop);
   $('#ocr-result').addEventListener('click', () => dialog.close());
-  return { show(value) { book = value; epoch++; clearTimeout(poll); current = null; loaded = false;
+  return { dispose() { stop(); dialog.removeEventListener('close', stop); }, show(value) { book = value; epoch++; clearTimeout(poll); current = null; loaded = false;
     $('#ocr-book-title').textContent = `Scan ${book.title}`; languages.replaceChildren(); form.elements.rotate.checked = true; form.elements.mode.value = 'redo';
     message('#ocr-error'); render(null); dialog.showModal(); void load(epoch, true); } };
 }
