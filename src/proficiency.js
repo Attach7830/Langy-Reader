@@ -7,7 +7,7 @@ import { proficiencyChart } from './proficiency-chart.js';
 const format = (value) => new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value);
 export function proficiencyPage({ preferences }) {
   const preferenceKey = () => JSON.stringify([preferences().nativeLanguage,preferences().readingLanguages]);
-  let preferenceRevision, active = false, epoch = 0, result, controller, saving = false;
+  let clearChart, preferenceRevision, active = false, epoch = 0, result, controller, saving = false;
   const language = $('#proficiency-language'), metric = $('#proficiency-metric'), form = $('#proficiency-form');
   for (const id of ['reading','listening']) $('#proficiency-' + id).replaceChildren(...comprehensionLevels.map((level) => new Option(level.label, level.value)));
   const native = () => baseLanguage(preferences().nativeLanguage, '');
@@ -38,7 +38,7 @@ export function proficiencyPage({ preferences }) {
     const kind = metric.value, hours = kind === 'hours';
     const points = kind === 'seen' ? data.history.seen.map((point) => ({ date: point.date, value: point.seen })) : data.history.observations.filter((point) => hours || point.threshold === result.threshold).map((point) => ({ date: point.date, value: point[hours ? 'hours' : 'known'] }));
     const label = hours ? 'Input hours' : kind === 'known' ? `Likely familiar ${data.unit === 'characters' ? 'Han characters' : 'lemmas'}` : `Encountered ${data.unit === 'characters' ? 'Han characters' : 'lemmas'}`;
-    $('#proficiency-chart-label').textContent = label; proficiencyChart($('#proficiency-chart'), points, { label, hours });
+    $('#proficiency-chart-label').textContent = label; clearChart?.(); clearChart=proficiencyChart($('#proficiency-chart'), points, { label, hours });
     $('#proficiency-chart-note').textContent = kind === 'seen' ? 'Vocabulary history uses recorded first encounters, including books you marked read. Lines connect actual records.' : hours ? 'Input-hour observations begin when you first open this page. Outside hours are your cumulative estimate; edits do not invent an earlier history.' : 'Familiar-vocabulary observations begin on this page. Only observations using your current exposure threshold are shown.';
     const table = $('#proficiency-history'); table.replaceChildren(...points.slice(-30).reverse().map((point) => { const row = document.createElement('tr'); row.append(element('td', '', point.date), element('td', '', format(point.value))); return row; }));
   }
@@ -54,12 +54,12 @@ export function proficiencyPage({ preferences }) {
     async open() {
       active = true; preferenceRevision = preferenceKey(); const visit = ++epoch; controller?.abort(); const task = controller = new AbortController();
       // Remove stale graphs immediately when accounts or L1 settings change.
-      result = null; language.replaceChildren(); $('#proficiency-content').hidden = true; $('#proficiency-empty').hidden = true;
+      clearChart?.(); clearChart=undefined; $('#proficiency-chart').replaceChildren(); result = null; language.replaceChildren(); $('#proficiency-content').hidden = true; $('#proficiency-empty').hidden = true;
       message('#proficiency-status', 'Loading your reading history…');
       try { const value = await api('/api/proficiency', { signal: task.signal }); if (active && visit === epoch) { result = value; renderChoices(); message('#proficiency-status'); } }
       catch (error) { if (active && visit === epoch && !task.signal.aborted) message('#proficiency-status', error.message); }
     },
     preferencesChanged() { if (active && preferenceRevision !== preferenceKey()) void this.open(); },
-    leave() { active = false; epoch++; controller?.abort(); result = null; $('#proficiency-chart').replaceChildren(); },
+    leave() { clearChart?.(); clearChart=undefined; active = false; epoch++; controller?.abort(); result = null; $('#proficiency-chart').replaceChildren(); },
   };
 }
