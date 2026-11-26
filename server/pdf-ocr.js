@@ -17,7 +17,11 @@ export async function openPDFOCR(dir, { library, demo = false, onImport = () => 
   let running = false, closed = false, retryTimer; const controllers = new Map();
   const connection = await ocrSettings(dir, { demo, request, workerURL, busy: () => running });
   const persist = (job) => db.prepare('INSERT INTO jobs VALUES(?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(job.id, JSON.stringify(job));
-  for (const job of jobs.values()) if (['running', 'importing'].includes(job.state)) { job.state = 'queued'; persist(job); }
+  for (const job of jobs.values()) {
+    // Older releases imported OCR output as a separate book without a revision.
+    if (job.state === 'ready' && job.result?.id) library.markOCRComplete(job.result.id);
+    if (['running', 'importing'].includes(job.state)) { job.state = 'queued'; persist(job); }
+  }
   const publicJob = (job) => { if (!job) return null; const { owner, expires, bytes, ...book } = job.result || {};
     return { id: job.id, state: job.state, languages: job.languages, error: job.error, notice: job.notice, retryAt: job.retryAt, book: job.result ? book : undefined, inPlace: job.result?.id === job.source, pages: job.pages, textPages: job.textPages }; };
   const status = (book) => publicJob([...jobs.values()].filter((job) => job.source === book.id).at(-1));
