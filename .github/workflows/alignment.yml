@@ -1,0 +1,43 @@
+name: Whisper alignment checks
+on:
+  pull_request:
+    paths: ['language/**', 'compose.yaml', 'compose.gpu.yaml', 'scripts/enable-gpu-alignment.sh', '.github/workflows/alignment.yml']
+  push:
+    branches: [main]
+    paths: ['language/**', 'compose.yaml', 'compose.gpu.yaml', 'scripts/enable-gpu-alignment.sh', '.github/workflows/alignment.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install 'fastapi>=0.115,<1' 'numpy<3' opencc-python-reimplemented==0.1.7 ctranslate2==4.9.1
+      - name: Verify pinned inference wheel retains CPU support
+        run: python -c 'import ctranslate2; assert "int8" in ctranslate2.get_supported_compute_types("cpu"); print(ctranslate2.__version__)'
+      - name: CPU defaults, explicit CUDA selection, errors and alignment regression tests
+        env:
+          PYTHONPATH: language
+        run: python -m unittest discover -s language -p 'test_*alignment.py' -v && python -m unittest discover -s language -p test_whisper_runtime.py -v
+      - name: Validate CPU and optional GPU Compose configuration
+        run: |
+          docker compose config --quiet
+          docker compose -f compose.yaml -f compose.gpu.yaml config --quiet
+          docker compose -f compose.yaml -f compose.ocr.yaml -f compose.gpu.yaml config --quiet
+          bash -n scripts/enable-gpu-alignment.sh
+  cuda-libraries:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build pinned CUDA 12 and cuDNN 9 runtime libraries
+        run: docker build --target cuda-libraries -t langy-cuda-libraries language
+      - name: Verify shared libraries load without requiring a GPU
+        run: >-
+          docker run --rm langy-cuda-libraries python -c
+          'import ctypes; [ctypes.CDLL(name) for name in ("libcublas.so.12", "libcublasLt.so.12", "libnvrtc.so.12", "libcudnn.so.9")]; cudnn = ctypes.CDLL("libcudnn.so.9"); assert cudnn.cudnnGetVersion() >= 90000; print("CUDA libraries loaded; actual GPU inference still requires the server preflight.")'
