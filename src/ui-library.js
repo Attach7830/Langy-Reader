@@ -1,4 +1,4 @@
-import { $, api, drawIcons, element, icon, message, toast } from './ui.js';
+import { $, api, bookFormatLabel, drawIcons, element, icon, message, toast } from './ui.js';
 import { languageName } from './settings.js';
 import { parseLanguage } from './languages.js';
 import { refreshStorage, showStorage } from './storage.js';
@@ -65,7 +65,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   }
   const openProcess = (event) => {
     const job = event.detail, book = snapshot.books.find((item) => item.id === job?.bookId);
-    if (book) { location.hash = '#library'; void showLearning(book); }
+    if (book) { location.hash = '#library'; if (job.kind === 'ocr') void ocr.show(book); else void showLearning(book); }
     else if (job?.kind === 'archive') { location.hash = '#library'; const panel = $('#archive-downloads'); panel.open = true; panel.scrollIntoView?.({ block: 'center' }); }
   };
   surface.addEventListener('langy-open-process', openProcess);
@@ -73,6 +73,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   const unwatchApp = watchAppCapability(() => { render(); void refreshDownloaded(); });
   void refreshDownloaded();
   $('#show-shared-books').addEventListener('change', (event) => { changePreferences({ showSharedBooks: event.target.checked }); render(); });
+  $('#book-format-filter').addEventListener('change', (event) => { changePreferences({ libraryFormat: event.target.value }); render(); });
   $('#refresh-storage').addEventListener('click', () => void refreshStorage());
   const storageTimer = setInterval(() => {
     if (!document.hidden && !$('#library-screen').hidden) void refreshStorage();
@@ -117,7 +118,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     const cover = bookCover(book);
     const info = element('div', 'book-info');
     const meta = [book.author, languageName(book.language)].filter(Boolean).join(' · ');
-    info.append(element('span', 'book-format', book.format.toUpperCase()), element('span', 'book-title', book.title), element('span', 'book-meta', meta));
+    info.append(element('span', 'book-format', bookFormatLabel(book)), element('span', 'book-title', book.title), element('span', 'book-meta', meta));
     const actions = element('div', 'book-reading-actions');
     if (book.sharedWithMe) actions.append(element('span', 'book-read-badge shared-book-badge', 'Shared with you'));
     else if (book.shared) actions.append(element('span', 'book-read-badge shared-book-badge', 'Shared'));
@@ -236,6 +237,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     const libraryBooks = snapshot.books.filter((book) => preferences().showSharedBooks !== false || !book.sharedWithMe);
     $('#shared-books-control').hidden = !snapshot.sharingAvailable;
     $('#show-shared-books').checked = preferences().showSharedBooks !== false;
+    $('#book-format-filter').value = preferences().libraryFormat || '';
     const quiet = preferences().quietLibrary !== false;
     books.dataset.layout = preferences().libraryLayout || 'auto'; books.dataset.coversOnly = String(Boolean(preferences().coversOnly));
     $('#library-layout').value = books.dataset.layout; $('#library-covers-only').checked = Boolean(preferences().coversOnly);
@@ -270,6 +272,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     const filter = search.value.trim().toLocaleLowerCase();
     const visible = libraryBooks.filter((book) =>
       (category === 'all' || (book.categoryId ?? 'uncategorized') === category) &&
+      (!$('#book-format-filter').value || book.format === $('#book-format-filter').value) &&
       (!$('#reading-filter').value || book.learning?.reading?.band === $('#reading-filter').value) &&
       (!$('#book-status-filter').value || $('#book-status-filter').value === 'shelf' && !book.setAsideAt || $('#book-status-filter').value === 'set-aside' && book.setAsideAt
         || ['read', 'unread'].includes($('#book-status-filter').value) && Boolean(book.readAt) === ($('#book-status-filter').value === 'read')) &&
@@ -278,7 +281,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     visible.sort((a, b) => compareLibraryBooks(a, b, $('#book-sort').value));
     books.replaceChildren(...visible.map(bookCard));
     $('#empty-library').hidden = visible.length > 0;
-    const filtering = filter || $('#reading-filter').value || !['', 'shelf'].includes($('#book-status-filter').value);
+    const filtering = filter || $('#book-format-filter').value || $('#reading-filter').value || !['', 'shelf'].includes($('#book-status-filter').value);
     $('#empty-title').textContent = filtering ? 'No matching books' : 'No books here yet';
     $('#empty-detail').textContent = filtering ? 'Try a different search or filter.' : 'Import an EPUB or PDF to get started.';
     drawIcons();
@@ -884,5 +887,5 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   bookDialog.addEventListener('close', () => metadataFields.cancel());
   categoryDialog.addEventListener('cancel', (event) => { if (categoryPending) event.preventDefault(); });
 
-  return { refresh, render, dispose() { disposed = true; learningVisit++; unwatchApp(); surface.removeEventListener('langy-open-process', openProcess); surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
+  return { refresh, render, dispose() { disposed = true; learningVisit++; unwatchApp(); surface.removeEventListener('langy-open-process', openProcess); surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); ocr.dispose(); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
 }
