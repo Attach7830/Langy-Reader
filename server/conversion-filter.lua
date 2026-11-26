@@ -14,6 +14,7 @@ function Meta(meta)
   if not safe.title or #pandoc.utils.stringify(safe.title) == 0 then
     safe.title = pandoc.MetaString(pandoc.utils.stringify(meta['langy-fallback-title'] or 'Untitled'))
   end
+  if not safe.lang or #pandoc.utils.stringify(safe.lang) == 0 then safe.lang = pandoc.MetaString('und') end
   return safe
 end
 function Image(el)
