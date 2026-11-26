@@ -42,6 +42,7 @@ test('the actual book form uploads one EPUB/PDF with its language field, while i
   const dom = new JSDOM(await readFile(join(root, 'index.html'), 'utf8')); t.after(() => dom.window.close());
   const form = dom.window.document.querySelector('#book-form');
   form.elements.title.value = 'Upload regression'; form.elements.author.value = 'Test author'; form.elements.language.value = 'es';
+  form.elements.series.value = 'A reader series'; form.elements.seriesIndex.disabled = false; form.elements.seriesIndex.value = '2.5';
   form.elements.autoAudiobook.checked = true; form.elements.audiobookDelayMinutes.disabled = false; form.elements.audiobookDelayMinutes.value = '7';
   const epub = await sampleBook();
   function requestData({ languages = [], format = 'epub', field = 'file' } = {}) {
@@ -62,6 +63,7 @@ test('the actual book form uploads one EPUB/PDF with its language field, while i
     const { data, bytes } = requestData(options);
     const response = await fetch(base + '/api/books', { method: 'POST', body: data });
     const book = await response.json(); assert.equal(response.status, 201, JSON.stringify(book));
+    assert.equal(book.series, 'A reader series'); assert.equal(book.seriesIndex, 2.5);
     assert.equal(book.title, 'Upload regression'); assert.equal(book.format, options.format);
     assert.deepEqual(book.languages, options.languages);
     const narration = await (await fetch(base + `/api/books/${book.id}/narration`)).json();
