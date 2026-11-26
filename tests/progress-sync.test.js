@@ -465,6 +465,33 @@ test('process overview and book pinyin require login and keep book data persiste
   assert.deepEqual(await response(base, '/api/books/sync-book/pinyin', { method: 'POST', headers: json, body: JSON.stringify({ text: '有意思' }) }), data);
 });
 
+test('library audio-synced status follows completed alignment, persists on restart and excludes stale book text', async (t) => {
+  const f = await fixture(t); let base = await f.start();
+  let snapshot;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    snapshot = await response(base, '/api/library', { headers: json });
+    if (snapshot.books.find((book) => book.id === 'sync-book').learning.counts) break;
+    await delay(20);
+  }
+  assert.equal(snapshot.books.find((book) => book.id === 'sync-book').audioSynced, false);
+  const db = new DatabaseSync(join(f.folder, 'learning.sqlite')); t.after(() => db.close());
+  const chapters = db.prepare('SELECT key,digest,markers FROM chapters WHERE book=? ORDER BY ordinal').all('sync-book');
+  assert.ok(chapters.length);
+  const digest = createHash('sha256').update(JSON.stringify(chapters.map(({ key, digest, markers }) => [key, digest, markers]))).digest('hex');
+  const saved = () => response(base, '/api/library', { headers: json }).then((value) => value.books.find((book) => book.id === 'sync-book').audioSynced);
+  db.prepare("INSERT INTO book_audio(id,book,digest,options,state,parts,segments,duration,created,kind) VALUES('synced-fixture','sync-book',?,'{}','queued','[]',?,10,?,'uploaded')")
+    .run(digest, JSON.stringify([{ key: chapters[0].key, start: 0, end: 10 }]), Date.now());
+  assert.equal(await saved(), false, 'a queued upload is not synced');
+  db.prepare("UPDATE book_audio SET state='ready' WHERE id='synced-fixture'").run();
+  assert.equal(await saved(), true);
+  base = await f.start(); assert.equal(await saved(), true, 'ready alignment survives restarting the server');
+  db.prepare("UPDATE book_audio SET digest='outdated' WHERE id='synced-fixture'").run();
+  assert.equal(await saved(), false);
+  db.prepare("UPDATE book_audio SET digest=? WHERE id='synced-fixture'").run(digest);
+  assert.equal(await saved(), true);
+  db.prepare("DELETE FROM book_audio WHERE id='synced-fixture'").run(); assert.equal(await saved(), false);
+});
+
 test('the priority API keeps one active task and permits only the owner to promote queued work', async (t) => {
   let release, entered;
   const held = new Promise((resolve) => { release = resolve; }), requested = new Promise((resolve) => { entered = resolve; });
