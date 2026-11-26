@@ -605,6 +605,7 @@ try {
     const created = await context.request.post(base + '/api/books', { multipart: { title: 'Reading without narration', author: 'An Author', language: 'es', file: { name: 'reading-only.epub', mimeType: 'application/epub+zip', buffer: await zip.generateAsync({ type: 'nodebuffer' }) } } });
     assert.equal(created.status(), 201); const readingBook = await created.json();
     for (const currentPage of [page, desktopPage]) {
+      try {
       let remote = { linked: true, recording: 'reading', mode: 'reading', automatic: true, approximate: true, currentTime: .3, duration: 1, updated: 1000, version: 'initial' }, writes = [];
       await currentPage.route('**/api/books/' + readingBook.id + '/narration*', (route) => route.fulfill({ json: { connected: false, absConnected: true, recordings: [], audio: { state: 'missing' } } }));
       await currentPage.route('**/api/books/' + readingBook.id + '/chapters/*', (route) => route.fulfill({ json: { key: 'epub:0', tokens: [], audio: { timings: [] } } }));
@@ -616,16 +617,20 @@ try {
       await currentPage.locator('#abs-sync-status').filter({ hasText: 'synced by book percentage' }).waitFor();
       assert.equal(writes.length, 0, 'opening must not overwrite ABS progress');
       const before = await currentPage.evaluate((id) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target, readingBook.id);
+      const countBeforeTurn = writes.length;
       await currentPage.locator('#next').click();
       await currentPage.waitForFunction(({ id, before }) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.target !== before, { id: readingBook.id, before });
+      const expected = await currentPage.evaluate((id) => JSON.parse(localStorage.getItem('langy-progress-v1') || '{}')[id]?.syncPayload?.percentage, readingBook.id);
+      assert.ok(Number.isFinite(expected));
       await currentPage.evaluate(() => document.querySelector('#narration-audio').dispatchEvent(new Event('pause')));
-      for (let n = 0; n < 80 && !writes.length; n++) await delay(50);
-      assert.ok(writes.length > 0); assert.equal(writes[0].recording, 'reading'); assert.ok(writes[0].currentTime > .3);
-      await currentPage.goto(base + '/#library');
+      for (let n = 0; n < 80 && !writes.slice(countBeforeTurn).some((body) => Math.abs(body.currentTime - expected) < .000001); n++) await delay(50);
+      assert.ok(writes.slice(countBeforeTurn).some((body) => body.recording === 'reading' && Math.abs(body.currentTime - expected) < .000001), JSON.stringify({ expected, writes }));
+      } finally { await currentPage.goto(base + '/#library'); await currentPage.locator('#books .book-card').first().waitFor(); }
     }
   });
   await check('desktop reader supports trackpad text size, section shortcuts, contextual phrase help and one process queue', async () => {
     await desktopPage.goto(base + '/#read/' + book.id);
+    await desktopPage.waitForFunction((title) => document.querySelector('#reading-title').textContent === title, book.title);
     await desktopPage.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 1 of 3');
     await desktopPage.locator('#reader-message').waitFor({ state: 'hidden' });
     const before = await desktopPage.evaluate(() => ({ size: 20, ...JSON.parse(localStorage.getItem('langy-settings-v1')) }));
