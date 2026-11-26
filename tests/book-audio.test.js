@@ -51,10 +51,15 @@ test('complete narration keeps sample timing, chapters, cache, cancellation, and
     db.exec("ALTER TABLE analyses ADD COLUMN state TEXT DEFAULT 'ready'");
     let service = bookNarration(settings);
     const queued = service.queue(book);
+    assert.equal(service.isSynced(book), false, 'queued narration does not display a synced badge');
     assert.equal(service.queue(book).id, queued.id);
     await service.assemble(service.next());
     const complete = service.status(book).audio;
     assert.equal(complete.state, 'ready');
+    assert.equal(service.isSynced(book), true);
+    db.prepare("UPDATE chapters SET digest='changed' WHERE key='epub:0'").run();
+    assert.equal(service.isSynced(book), false, 'alignment for old text cannot label revised text as synced');
+    db.prepare("UPDATE chapters SET digest='digest-0' WHERE key='epub:0'").run();
     assert.equal(complete.segments.length, 2);
     assert.equal(complete.markers.length, 2);
     assert.ok(Math.abs(complete.duration - lengths.reduce((sum, value) => sum + value, 0) / 24000) < 1 / 24000);
@@ -67,6 +72,7 @@ test('complete narration keeps sample timing, chapters, cache, cancellation, and
     assert.equal(reused, 2);
 
     const replacement = service.queue(book, true);
+    assert.equal(service.isSynced(book), true, 'a ready recording remains usable while its replacement is queued');
     assert.notEqual(replacement.id, complete.id);
     assert.equal(service.cancel(book), 1);
     assert.equal(service.status(book).audio.state, 'cancelled');
@@ -91,5 +97,9 @@ test('complete narration keeps sample timing, chapters, cache, cancellation, and
     assert.equal(service.status(book).audio.state, 'error');
     assert.equal(service.audioFile(book, unsynchronized.id), null);
     assert.ok(service.audioFile(book, retry.id));
+    db.prepare("UPDATE book_audio SET kind='uploaded' WHERE state='ready'").run();
+    assert.equal(service.isSynced(book), true, 'imported and generated recordings use the same saved alignment');
+    db.prepare("DELETE FROM book_audio WHERE state='ready'").run();
+    assert.equal(service.isSynced(book), false, 'removing the last synced recording clears the badge');
   } finally { db.close(); await rm(folder, { recursive: true, force: true }); }
 });
