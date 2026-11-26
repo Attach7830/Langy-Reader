@@ -1,3 +1,4 @@
+import { proficiencyPage } from './proficiency.js';
 import '@fontsource/dm-sans/latin-400.css';
 import '@fontsource/dm-sans/latin-600.css';
 import '@fontsource/dm-sans/latin-700.css';
@@ -148,6 +149,7 @@ const library = libraryScreen({
   progress, readingLanguages: () => settings.readingLanguages, onSnapshot: (snapshot) => { processes.setAccount(snapshot.readingTime?.accountId); readingTime.setAccount(snapshot.readingTime?.accountId); void setOfflineAccount(snapshot.readingTime?.accountId).catch(() => {}); updateActiveBook(snapshot); },
   onRemove(id) { delete progress[id]; saveProgress(progress); },
 });
+const proficiency = proficiencyPage({ preferences: () => settings });
 const bookmarks = readingBookmarks({ book: () => activeBook, position: () => activePosition, go: (target) => returnHistory.follow(target), request: api });
 const settingsUI = settingsPage({ preferences: () => settings, apply: applySettings, navigate: openSettings, back: leaveSettings });
 const account = accountSettings({ request: api, preferences: () => settings,
@@ -237,6 +239,7 @@ function applySettings(updated, aiChanged, notify = true) {
   const cacheChanged = settings.cacheAI !== updated.cacheAI;
   const libraryFormatChanged = settings.libraryFormat !== updated.libraryFormat;
   settings = saveSettings(updated, { notify });
+  proficiency.preferencesChanged();
   if (settings.cacheCovers === false) void coverCache.clear().catch(() => {});
   document.documentElement.dataset.immersion = String(settings.immersionMode);
   $('#immersion-toggle').setAttribute('aria-pressed', String(settings.immersionMode));
@@ -307,6 +310,8 @@ function showScreen(screen) {
   $('#about-screen').hidden = screen !== 'about';
   $('#howto-screen').hidden = screen !== 'howto';
   $('#discovery-screen').hidden = screen !== 'discovery';
+  $('#proficiency-screen').hidden = screen !== 'proficiency';
+  if (screen !== 'proficiency') proficiency.leave();
   $('#settings').hidden = screen !== 'settings';
   for (const button of document.querySelectorAll('#mobile-navigation [data-settings]')) {
     if (screen === 'settings') button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
@@ -662,6 +667,12 @@ async function route() {
     window.scrollTo(0, 0); return;
   }
   if (settingsUI.active) { settingsUI.leave(); void account.resume(); }
+  if (location.hash === '#proficiency') {
+    if (activeBook) closeReader();
+    await Promise.allSettled([readingTime.flush(),vocabulary.flush(),account.flush()]);
+    showScreen('proficiency'); document.title='Reading profile · Langy Reader';
+    $('#proficiency-title').focus({preventScroll:true}); await proficiency.open(); return;
+  }
   if (location.hash === '#discover') {
     if (activeBook) { closeReader(); await vocabulary.flush(); }
     showScreen('discovery'); document.title = 'Discover books · Langy Reader';
@@ -880,7 +891,7 @@ document.addEventListener('visibilitychange', () => {
   else { void readingSync.check(); void account.resume(); }
 });
 beforeSignOut(async () => { closeReader(); await Promise.allSettled([account.flush(), readingTime.flush(), vocabulary.flush(), readingSync.flushSaved()]); });
-window.addEventListener('langy-signing-out', () => { account.close(); closeReader(); library.dispose(); processes.dispose(); });
+window.addEventListener('langy-signing-out', () => { account.close(); closeReader(); proficiency.leave(); library.dispose(); processes.dispose(); });
 window.addEventListener('pagehide', () => { void readingSync.flush(); void account.flush({ keepalive: true }); });
 window.addEventListener('online', () => { void account.resume(); void flushOfflineChanges(); void readingSync.flushSaved(); void refreshOfflineReader(); });
 window.addEventListener('langy-offline-synced', () => { if (!$('#library-screen').hidden) void library.refresh().catch((error) => message('#library-error', error.message)); });
