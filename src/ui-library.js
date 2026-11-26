@@ -18,6 +18,7 @@ import { coverSearch } from './cover-search.js';
 import { folderAudiobookshelf } from './folder-audiobookshelf.js';
 import { offlineDownloads } from './offline-downloads.js';
 import { downloadedBooks } from './book-source.js';
+import { androidApp, watchAppCapability } from './platform.js';
 
 const vocabularyLabel = (vocabulary) => vocabulary?.byLanguage?.map((item) => `${item.count.toLocaleString()} ${item.language === 'zh' ? 'Mandarin Han characters' : `${languageName(item.language)} ${item.unit}`}`).join(' · ');
 const wordCountLabel = (analysis) => bookCountLabel(analysis?.counts)
@@ -57,7 +58,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   const offline = offlineDownloads();
   let downloaded = new Set(), downloadScan = 0, disposed = false;
   async function refreshDownloaded() {
-    const version = ++downloadScan, next = await downloadedBooks();
+    const version = ++downloadScan, next = androidApp() ? await downloadedBooks() : new Set();
     if (disposed || version !== downloadScan) return;
     const changed = next.size !== downloaded.size || [...next].some((id) => !downloaded.has(id)); downloaded = next;
     if (changed) render();
@@ -69,6 +70,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   };
   surface.addEventListener('langy-open-process', openProcess);
   surface.addEventListener('langy-packs-changed', refreshDownloaded); surface.addEventListener('langy-offline-account', refreshDownloaded);
+  const unwatchApp = watchAppCapability(() => { render(); void refreshDownloaded(); });
   void refreshDownloaded();
   $('#show-shared-books').addEventListener('change', (event) => { changePreferences({ showSharedBooks: event.target.checked }); render(); });
   $('#refresh-storage').addEventListener('click', () => void refreshStorage());
@@ -180,8 +182,10 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     tools.setAttribute('aria-label', `Analysis and audio for ${book.title}`);
     tools.addEventListener('click', () => void showLearning(book));
     detail.append(tools);
-    const download = element('button', 'button quiet small', 'Save offline'); download.type = 'button';
-    download.addEventListener('click', () => void offline.open(book)); detail.append(download);
+    if (androidApp()) {
+      const download = element('button', 'button quiet small', 'Save offline'); download.type = 'button';
+      download.addEventListener('click', () => void offline.open(book)); detail.append(download);
+    }
     if (book.format === 'pdf' && !snapshot.demo) {
       const scan = element('button', 'button quiet small', 'Scan PDF with OCR'); scan.type = 'button';
       scan.setAttribute('aria-label', `Scan ${book.title} with OCR`); scan.addEventListener('click', () => ocr.show(book)); detail.append(scan);
@@ -880,5 +884,5 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   bookDialog.addEventListener('close', () => metadataFields.cancel());
   categoryDialog.addEventListener('cancel', (event) => { if (categoryPending) event.preventDefault(); });
 
-  return { refresh, render, dispose() { disposed = true; learningVisit++; surface.removeEventListener('langy-open-process', openProcess); surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
+  return { refresh, render, dispose() { disposed = true; learningVisit++; unwatchApp(); surface.removeEventListener('langy-open-process', openProcess); surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
 }

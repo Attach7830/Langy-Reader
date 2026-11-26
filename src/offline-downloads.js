@@ -7,6 +7,7 @@ import { processTasks } from './process-tasks.js';
 import { notifyDownloadedBooks } from './book-source.js';
 import { getSettings, subscribeSettings } from './settings.js';
 import { userFonts } from './user-fonts.js';
+import { androidApp, watchAppCapability } from './platform.js';
 
 let shellUpdate;
 const fetchOK = fetchPackResource;
@@ -30,11 +31,12 @@ export function cacheReaderShell(progress = () => {}) {
   })().finally(() => { shellUpdate = null; }); return shellUpdate;
 }
 export async function refreshOfflineReader() {
-  if (!globalThis.caches || !navigator.serviceWorker || !isSecureContext) return;
+  if (!androidApp() || !globalThis.caches || !navigator.serviceWorker || !isSecureContext) return;
   if (!(await packCaches()).length) return;
   try { await cacheReaderShell(); } catch { /* The last complete reader stays available offline. */ }
 }
 export async function saveReadingPack(book, { recording, audio, progress = () => {}, signal }) {
+  if (!androidApp()) throw new Error('Offline book downloads are available in the Langy Android app.');
   if (!navigator.serviceWorker || !isSecureContext) throw new Error('Offline packs need HTTPS, localhost or the Langy Android app.');
   await navigator.serviceWorker.ready;
   signal?.throwIfAborted();
@@ -93,6 +95,7 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
   const describe = (job) => `${({ queued: 'Queued', downloading: 'Downloading', waiting: 'Waiting for connection', complete: 'Downloaded', failed: 'Download failed', cancelled: 'Cancelled' })[job.state]} · ${job.error || downloadProgressLabel(job.progress)}`;
   let expiry; const observedFinished = new Map();
   function renderJobs(jobs) {
+    if (!androidApp()) { list.replaceChildren(); processTasks.setDownloads([]); return; }
     const active = jobs.find((job) => job.state === 'downloading'), remaining = jobs.filter(pending), waiting = jobs.some((job) => job.state === 'waiting');
     message('#offline-status', active ? `${active.book.title} · ${downloadProgressLabel(active.progress)}${remaining.length > 1 ? ` · ${remaining.length - 1} queued` : ''}`
       : waiting ? 'Book downloads are waiting for a connection. Open Process queue to retry.' : jobs.some((job) => job.state === 'failed') ? 'A book download needs attention. Open Process queue to retry.' : '');
@@ -141,7 +144,7 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
     }
   }
   const unsubscribe = queue.subscribe(renderJobs), unsubscribeSettings = subscribeSettings(() => renderJobs(queue.snapshot()));
-  async function resume() { if (!authorized) return; try { await queue.resume(); } catch (error) { message('#offline-download-error', error.message); } }
+  async function resume() { if (!authorized || !androidApp()) return; try { await queue.resume(); } catch (error) { message('#offline-download-error', error.message); } }
   const accountReady = () => { authorized = true; void resume(); };
   window.addEventListener('langy-offline-account', accountReady);
   window.addEventListener('online', resume); window.addEventListener('focus', resume);
@@ -165,7 +168,9 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
       message('#offline-progress', 'Offline copy removed from this device. The server’s copy is unchanged.');
     } catch (error) { message('#offline-error', error.message); }
   });
-  return { dispose() { unsubscribe(); unsubscribeSettings(); clearTimeout(expiry); surface.removeEventListener('langy-clear-finished-downloads', clearFinished); queue.close(); surface.removeEventListener('langy-offline-account', accountReady); surface.removeEventListener('online', resume); surface.removeEventListener('focus', resume); }, async open(book) {
+  const unwatch = watchAppCapability(() => { renderJobs(queue.snapshot()); void resume(); });
+  return { dispose() { unwatch(); unsubscribe(); unsubscribeSettings(); clearTimeout(expiry); surface.removeEventListener('langy-clear-finished-downloads', clearFinished); queue.close(); surface.removeEventListener('langy-offline-account', accountReady); surface.removeEventListener('online', resume); surface.removeEventListener('focus', resume); }, async open(book) {
+    if (!androidApp()) throw new Error('Offline book downloads are available in the Langy Android app.');
     selected = book; const version = ++epoch; message('#offline-error'); message('#offline-progress'); $('#offline-book-title').textContent = book.title;
     loading = true; $('#offline-save').disabled = true; $('#offline-remove').disabled = false; $('#offline-audio').checked = false; $('#offline-recording').replaceChildren(); dialog.showModal();
     try { const result = await api(`/api/books/${book.id}/narration`); if (version !== epoch) return;

@@ -54,7 +54,7 @@ export function audiobookshelfSettings() {
         const next = await api('/api/settings/audiobookshelf'); if (version !== epoch) return;
         config = next; $('#abs-connection').hidden = !config.configurable; $('#abs-demo-note').hidden = config.configurable;
         if (config.managed) $('#abs-demo-note').textContent = 'The administrator manages their Audiobookshelf connection. Your private books and listening progress are not exported through their account.';
-        url.value = config.baseUrl; key.value = ''; removeKey.refresh(config); $('#abs-auto-export').checked = config.autoExport !== false;
+        url.value = config.baseUrl; key.value = ''; removeKey.refresh(config); $('#abs-auto-export').checked = config.autoExport !== false; $('#abs-auto-link').checked = config.autoLink !== false;
         key.placeholder = config.hasKey ? 'Saved key' : 'Audiobookshelf API key';
         if (config.connected) void loadLibraries(version).catch((error) => { if (version === epoch) message('#abs-settings-status', error.message); });
         else { library.replaceChildren(); folder.replaceChildren(); library.disabled = folder.disabled = true; }
@@ -69,7 +69,7 @@ export function audiobookshelfSettings() {
       const lib = row.querySelector('[data-abs-library]'), target = row.querySelector('[data-abs-folder]');
       return lib.value ? [[row.dataset.absCategory, { libraryId: lib.value, folderId: target.value }]] : [];
     })) : config.categoryDestinations || {};
-    return { baseUrl, apiKey: key.value, autoExport: $('#abs-auto-export').checked,
+    return { baseUrl, apiKey: key.value, autoExport: $('#abs-auto-export').checked, autoLink: $('#abs-auto-link').checked,
       libraryId: changedServer ? '' : choicesLoaded ? library.value : config.libraryId || '',
       folderId: changedServer ? '' : choicesLoaded ? folder.value : config.folderId || '',
       categoryDestinations: changedServer ? {} : categoryDestinations };
@@ -81,7 +81,7 @@ export function audiobookshelfSettings() {
     const body = draft();
     const ordered = (value) => JSON.stringify(Object.entries(value || {}).sort(([a], [b]) => a.localeCompare(b)));
     const changed = body.baseUrl !== config.baseUrl || body.apiKey || body.libraryId !== config.libraryId
-      || body.folderId !== config.folderId || body.autoExport !== (config.autoExport !== false) || ordered(body.categoryDestinations) !== ordered(config.categoryDestinations);
+      || body.folderId !== config.folderId || body.autoExport !== (config.autoExport !== false) || body.autoLink !== (config.autoLink !== false) || ordered(body.categoryDestinations) !== ordered(config.categoryDestinations);
     if (!changed && !force) return;
     const version = ++epoch;
     const next = await api('/api/settings/audiobookshelf', { method: 'PUT', body });

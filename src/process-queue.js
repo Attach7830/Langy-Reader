@@ -2,12 +2,13 @@ import { $, api, element, message } from './ui.js';
 import { processTasks } from './process-tasks.js';
 import { processHistory } from './process-history.js';
 import { getSettings, saveSettings, subscribeSettings } from './settings.js';
+import { androidApp } from './platform.js';
 
 const active = (job) => ['queued', 'running', 'waiting', 'downloading'].includes(job.state);
 export function processQueue({ now = Date.now, changePreferences = saveSettings } = {}) {
   const dialog = $('#downloads-dialog'), list = $('#process-list'), empty = $('#process-empty'), button = $('#open-process-queue');
   let disposed = false, account, jobs = [], local = processTasks.snapshot(), timer, pending, redraw, expiry, signature = '', dismissed = new Set(), history = processHistory({ now });
-  const version = (job) => `${job.id}:${job.state}:${job.created || 0}`;
+  const version = (job) => JSON.stringify([job.id, job.state, job.created || 0, job.detail, job.phase]);
   function render() {
     const minutes = getSettings().processDismissMinutes;
     // Polling must not replace a number while the reader is editing it.
@@ -42,6 +43,16 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
         card.append(element('p', 'field-note', [state, detail].filter(Boolean).join(' · ')));
         if (active(job)) { const bar = document.createElement('progress'); bar.max = 100; if (Number.isFinite(job.progress)) bar.value = job.progress; bar.setAttribute('aria-label', job.label); card.append(bar); }
         const actions = element('div', 'download-actions');
+        for (const [label, path] of [
+          ...(job.retryOcr ? [['Retry OCR', `/api/books/${encodeURIComponent(job.bookId)}/ocr/jobs/${encodeURIComponent(job.retryOcr)}/retry`]] : []),
+          ...(job.checkUpload ? [['Check ABS upload', `/api/books/${encodeURIComponent(job.bookId)}/audiobookshelf/jobs/${encodeURIComponent(job.checkUpload)}/check`]] : []),
+        ]) {
+          const retry = element('button', 'button secondary small', label); retry.type = 'button';
+          retry.addEventListener('click', async () => { retry.disabled = true;
+            try { await api(path, { method: 'POST' }); await refresh(); }
+            catch (error) { message('#process-error', error.message); retry.disabled = false; }
+          }); actions.append(retry);
+        }
         if (job.retry) { const retry=element('button','button secondary small','Retry');retry.type='button';retry.addEventListener('click',async()=>{retry.disabled=true;try{await api('/api/imports/web/'+encodeURIComponent(job.retry)+'/retry',{method:'POST'});await refresh();}catch(error){message('#process-error',error.message);retry.disabled=false;}});actions.append(retry);}
         if (job.decision) for (const [label, replace] of [['Import and replace Langy audio', true], ['Keep current audio', false]]) {
           const decide = element('button', `button ${replace ? '' : 'quiet'} small`, label); decide.type = 'button';
@@ -62,7 +73,7 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
       }));
     }
     empty.hidden = Boolean(entries.length || local.downloads.length);
-    $('#process-downloads').hidden = !local.downloads.length;
+    $('#process-downloads').hidden = !androidApp() || !local.downloads.length;
   }
   function scheduleRender() { if (redraw) return; redraw = requestAnimationFrame(() => { redraw = null; render(); }); }
   const unsubscribe = processTasks.subscribe((value) => { local = value; scheduleRender(); });

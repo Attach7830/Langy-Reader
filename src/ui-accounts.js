@@ -1,6 +1,7 @@
 import { $, api, element, message, toast } from './ui.js';
 import { signOut } from './auth.js';
 import { accountPolicyFields } from './account-policy.js';
+import { androidApp } from './platform.js';
 
 export function accountPanel(session) {
   const user = session.user;
@@ -87,7 +88,7 @@ export function accountPanel(session) {
   });
   $('#sign-out-form').addEventListener('submit', async (event) => {
     event.preventDefault(); const button = $('#sign-out-confirm'); if (button.disabled) return; button.disabled = true;
-    try { await signOut({ removeDownloads: $('#sign-out-remove-downloads').checked }); }
+    try { await signOut({ removeDownloads: androidApp() && $('#sign-out-remove-downloads').checked }); }
     catch { const text = 'Reconnect to your server to log out or switch users. Your offline books have been kept.'; message('#sign-out-error', text); toast(text); button.disabled = false; }
   });
   function route() { if (location.hash === '#settings/account') void loadUsers(); }
