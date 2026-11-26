@@ -45,6 +45,12 @@ test('process overview filters book ownership and projects only status fields fr
   assert.equal(result.jobs.find((job) => job.id === 'archive:failed').state, 'failed');
   db.prepare("UPDATE ivoox_imports SET state='ready' WHERE book='one'").run();
   assert.equal(process.list({ id: 'one' }).jobs.some((job) => job.kind === 'ivoox'), false, 'completed downloads clear on the next refresh');
+  handles[1].prepare('UPDATE jobs SET json=? WHERE rowid=1').run(JSON.stringify({ id: 'old', source: 'one', state: 'error', created: 1, error: 'Old failure' }));
+  handles[1].prepare('INSERT INTO jobs VALUES(?)').run(JSON.stringify({ id: 'new', source: 'one', state: 'error', created: 2, error: 'Current failure' }));
+  const failures = process.list({ id: 'one' }).jobs.filter((job) => job.kind === 'ocr');
+  assert.equal(failures.length, 1); assert.equal(failures[0].retryOcr, 'new');
+  handles[1].prepare('INSERT INTO jobs VALUES(?)').run(JSON.stringify({ id: 'successful', source: 'one', state: 'ready', created: 3 }));
+  assert.equal(process.list({ id: 'one' }).jobs.some((job) => job.kind === 'ocr'), false, 'a successful retry supersedes previous failures');
   const demo = openProcesses(dir, { library: { snapshot: () => ({ books: [{ id: 'two' }] }) }, account: (visitor) => visitor, discovery: { status: () => ({}) }, learning: { textProcesses: () => [] }, demo: true });
   assert.ok(demo.list({ id: 'two' }).jobs.every((job) => job.bookId === 'two')); demo.close();
 });

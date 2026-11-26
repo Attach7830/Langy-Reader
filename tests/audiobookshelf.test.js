@@ -374,3 +374,87 @@ test('moving a book cancels an old folder’s replacement proposal before it can
   f.remoteBooks.set('lib',[f.item]);await f.service.pump();assert.equal(f.service.status(f.book).jobs.at(-1).state,'awaiting_confirmation');
   f.book.categoryId='chinese';await f.service.pump();assert.equal(f.service.status(f.book).jobs[0].state,'cancelled');assert.equal(f.uploads[0].folderId,'other-folder');assert.deepEqual(f.removed,[]);assert.equal(f.imported.length,0);
 });
+
+test('matching title and author automatically link reading and different-duration audio without file transfers', async (t) => {
+  const f = await fixture(t); await f.connect({ autoExport: false });
+  f.item.media.metadata = { title: '  A BOOK! ', authors: [{ id: 'author', name: 'AN AUTHOR' }] }; f.item.media.duration = 200;
+  f.remoteBooks.set('lib', [f.item]); f.setProgress({ currentTime: 80, duration: 200, lastUpdate: 1000 });
+  const initial = await f.service.remote(f.book, 'reading');
+  assert.equal(initial.linked, true); assert.equal(initial.automatic, true); assert.equal(initial.mode, 'reading');
+  assert.equal(initial.currentTime, .4); assert.equal(initial.duration, 1); assert.equal(initial.remoteDuration, 200);
+  const saved = await f.service.push(f.book, { recording: 'reading', currentTime: .5, baseVersion: initial.version });
+  assert.equal(saved.currentTime, .5);
+  const patch = f.calls.find((call) => call.options.method === 'PATCH');
+  assert.deepEqual(JSON.parse(patch.options.body), { currentTime: 100, duration: 200, progress: .5, isFinished: false });
+  const recording = await f.service.remote(f.book, 'recording');
+  assert.equal(recording.currentTime, 50); assert.equal(recording.mode, 'percentage'); assert.equal(recording.approximate, true);
+  assert.equal(f.uploads.length, 0); assert.equal(f.imported.length, 0); assert.equal(f.removed.length, 0);
+  await f.restart(); assert.equal((await f.service.remote(f.book, 'reading')).item, initial.item);
+  assert.equal(f.calls.some((call) => call.options.method === 'DELETE'), false);
+});
+
+test('automatic progress links require an author and leave duplicate matches unlinked until folder mapping resolves them', async (t) => {
+  const f = await fixture(t); await f.connect({ autoExport: false });
+  f.item.media.metadata.authorName = f.book.author;
+  const copy = { ...structuredClone(f.item), id: 'other-copy', libraryId: 'other-lib', folderId: 'other-folder' };
+  f.remoteBooks.set('lib', [f.item]); f.remoteBooks.set('other-lib', [copy]);
+  const ambiguous = await f.service.remote(f.book, 'reading'); assert.equal(ambiguous.linked, false); assert.match(ambiguous.notice, /Multiple/u);
+  await f.service.linkCategory('spanish', { libraryId: 'other-lib', folderId: 'other-folder' });
+  assert.equal((await f.service.remote(f.book, 'reading')).item, 'other-copy');
+  f.book.author = 'Another author'; assert.equal((await f.service.remote(f.book, 'reading')).linked, false, 'metadata edits cannot reuse an old link');
+  f.book.author = ''; const missing = await f.service.remote(f.book, 'reading'); assert.equal(missing.linked, false); assert.match(missing.notice, /title and author/u);
+  f.book.author = 'An Author'; f.book.title = 'A Book abridged'; assert.equal((await f.service.remote(f.book, 'reading')).linked, false);
+});
+
+test('automatic matching checks all catalog pages, shares catalog reads and rejects incomplete results', async (t) => {
+  const f = await fixture(t); await f.connect({ autoExport: false }); f.item.media.metadata.authorName = f.book.author;
+  f.remoteBooks.set('lib', [...Array.from({ length: 500 }, (_, i) => ({ id: `unrelated-${i}`, media: { metadata: { title: `Other ${i}` } } })), f.item]);
+  f.calls.length = 0;
+  const [first, second] = await Promise.all([f.service.remote(f.book, 'reading'), f.service.remote(f.book, 'recording')]);
+  assert.equal(first.item, f.item.id); assert.equal(second.item, f.item.id);
+  assert.equal(f.calls.filter((call) => call.path === '/abs/api/libraries').length, 1);
+  assert.equal(f.calls.filter((call) => call.path.endsWith('/items') && call.search.get('page') === '1').length, 1);
+  f.book.title = 'Different book'; f.failCatalog(true); f.clock(1100000);
+  await assert.rejects(f.service.remote(f.book, 'reading'), { status: 502 });
+  assert.equal(f.calls.some((call) => call.options.method === 'PATCH' || call.path === '/abs/api/upload'), false);
+});
+
+test('automatic linking can be disabled independently of exports and never links a member’s private books', async (t) => {
+  const f = await fixture(t); await f.connect({ autoExport: false, autoLink: false }); f.item.media.metadata.authorName = f.book.author; f.remoteBooks.set('lib', [f.item]);
+  assert.equal((await f.service.remote(f.book, 'reading')).linked, false);
+  await f.connect(); assert.equal(f.service.settings().autoLink, false);
+  await f.connect({ autoLink: true }); assert.equal((await f.service.remote(f.book, 'reading')).linked, true);
+  await f.connect({ autoLink: false }); assert.equal((await f.service.remote(f.book, 'reading')).linked, false);
+  await f.service.attach(f.book, { item: f.item.id, recording: 'recording', sameRecording: true });
+  assert.equal((await f.service.remote(f.book, 'recording')).mode, 'recording', 'explicit recording links remain precise when auto matching is off');
+  f.book.owner = 'private-member'; f.calls.length = 0; assert.equal((await f.service.remote(f.book, 'reading')).linked, false); assert.equal(f.calls.length, 0);
+  await assert.rejects(f.connect({ autoLink: 'true' }), { status: 422 });
+});
+
+test('ebook-only metadata matches sync fractional progress and retain remote conflicts', async (t) => {
+  const f = await fixture(t); await f.connect({ autoExport: false }); f.recordings.clear();
+  f.item.media.metadata.authorName = f.book.author; f.item.media.duration = 0; f.item.media.tracks = []; f.item.media.ebookFile = { ebookFormat: 'epub' };
+  f.remoteBooks.set('lib', [f.item]); f.setProgress({ ebookProgress: .25, ebookLocation: 'epubcfi(old-location)', lastUpdate: 10 });
+  const initial = await f.service.remote(f.book, 'reading'); assert.equal(initial.currentTime, .25);
+  f.setProgress({ ebookProgress: .75, ebookLocation: 'epubcfi(new-location)', lastUpdate: 20 });
+  const conflict = await f.service.push(f.book, { recording: 'reading', currentTime: .3, baseVersion: initial.version });
+  assert.equal(conflict.conflict, true); assert.equal(conflict.currentTime, .75); assert.equal(f.calls.some((call) => call.options.method === 'PATCH'), false);
+  const saved = await f.service.push(f.book, { recording: 'reading', currentTime: .3, baseVersion: conflict.version });
+  assert.equal(saved.currentTime, .3);
+  assert.deepEqual(JSON.parse(f.calls.find((call) => call.options.method === 'PATCH').options.body), { ebookProgress: .3, isFinished: false });
+  await assert.rejects(f.service.push(f.book, { recording: 'reading', currentTime: 1.1, baseVersion: saved.version }), { status: 422 });
+});
+
+test('checking an interrupted upload links the exact existing file without uploading again', async (t) => {
+  const f = await fixture(t); await f.connectMapped(); f.failUpload(true);
+  const job = f.service.queue(f.book, 'export', { recording: 'recording' }); await f.service.pump();
+  assert.equal(f.service.status(f.book).jobs[0].state, 'needs_review');
+  const sent = f.calls.find((call) => call.path === '/abs/api/upload').options.body;
+  f.remoteBooks.set('lib', [{ id: 'interrupted-item', libraryId: 'lib', folderId: 'spanish-folder', mediaType: 'book',
+    media: { duration: 100, metadata: { title: f.book.title }, audioFiles: [{ metadata: { filename: sent.get('audio').name } }] } }]);
+  f.failUpload(false); f.service.checkUpload(f.book, job.id); await f.service.pump();
+  assert.equal(f.service.status(f.book).jobs[0].state, 'exported');
+  assert.equal((await f.service.remote(f.book, 'recording')).item, 'interrupted-item');
+  assert.equal(f.calls.filter((call) => call.path === '/abs/api/upload').length, 1);
+  assert.equal(f.calls.some((call) => ['DELETE', 'PATCH', 'PUT'].includes(call.options.method)), false);
+});

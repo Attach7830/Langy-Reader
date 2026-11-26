@@ -46,3 +46,28 @@ test('ABS listening starts syncing automatically, syncs closed offline recording
   window.dispatchEvent(new dom.window.Event('langy-recording-ready')); await settle(); state.time = 20; document.querySelector('audio').dispatchEvent(new dom.window.Event('timeupdate')); sync.stop(); state = null;
   remote.linked = true; await sync.syncSaved(); assert.equal(remote.currentTime, 20, 'closed-book progress sync retries when background indexing establishes a new link');
 });
+
+test('reading-only books sync fractional progress on desktop or mobile and retain offline page changes', async (t) => {
+  const dom = new JSDOM('<audio id="narration-audio"></audio><div id="abs-sync-notice" hidden><p id="abs-sync-message"></p><button id="abs-sync-resume"></button><button id="abs-sync-keep"></button></div><p id="abs-sync-status" hidden></p>', { url: 'https://langy.test' });
+  const original = new Map();
+  for (const name of ['window', 'document', 'localStorage']) { original.set(name, Object.getOwnPropertyDescriptor(globalThis, name)); Object.defineProperty(globalThis, name, { configurable: true, value: dom.window[name] }); }
+  const previousInterval = globalThis.setInterval; globalThis.setInterval = () => 0;
+  t.after(() => { globalThis.setInterval = previousInterval; dom.window.close(); for (const [name, value] of original) if (value) Object.defineProperty(globalThis, name, value); else delete globalThis[name]; });
+  localStorage.setItem('langy-offline-owner', 'owner');
+  let state = { book: 'book', recording: 'reading', duration: 1, time: .1, absConnected: true, readingTarget: 'page-1' };
+  let remote = { linked: true, recording: 'reading', currentTime: .2, version: 'v1', updated: 1000, approximate: true }, writes = 0;
+  const sync = audiobookshelfProgress({ audio: { playbackPosition: () => null }, reading: { playbackPosition: () => state, async resumeAt(time) { state.time = time; } }, request: async (_path, options = {}) => {
+    if (options.method === 'PUT') { assert.equal(options.body.recording, 'reading'); assert.equal(options.body.baseVersion, remote.version); writes++; remote = { ...remote, currentTime: options.body.currentTime, version: 'v' + (writes + 1) }; }
+    return { ...remote };
+  } });
+  sync.start(); await settle(); assert.equal(state.time, .2); assert.equal(writes, 0);
+  state.time = .22; state.readingTarget = 'page-22'; sync.changed(); sync.stop(); state = null;
+  await sync.syncSaved(); assert.equal(remote.currentTime, .22); assert.equal(writes, 1, 'small fractional page changes must not be discarded as sub-second audio differences');
+  state = { book: 'book', recording: 'reading', duration: 1, time: .22, absConnected: true, readingTarget: 'page-22' };
+  remote = { ...remote, currentTime: .8, version: 'another-device' }; sync.start(); await settle();
+  assert.equal(document.querySelector('#abs-sync-notice').hidden, false); assert.match(document.querySelector('#abs-sync-message').textContent, /80%/u);
+  assert.equal(remote.currentTime, .8); document.querySelector('#abs-sync-keep').click(); await settle(); assert.equal(remote.currentTime, .22); sync.stop();
+  state = { ...state, book: 'existing-book', time: .7, hasSavedPosition: true }; remote = { ...remote, automatic: true, currentTime: .1, version: 'first-auto-link' };
+  sync.start(); await settle(); assert.equal(state.time, .7); assert.equal(document.querySelector('#abs-sync-notice').hidden, false, 'first automatic matching must preserve a different existing reading position');
+  document.querySelector('#abs-sync-resume').click(); await settle(); assert.equal(state.time, .1); sync.stop();
+});

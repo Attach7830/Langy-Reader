@@ -57,9 +57,11 @@ test('OCR failures and demo restrictions never replace the source PDF or create 
   const dir = await mkdtemp(join(tmpdir(), 'langy-pdf-ocr-error-')); t.after(() => rm(dir, { recursive: true, force: true }));
   const library = await openLibrary(dir), source = Buffer.from('%PDF-1.4\noriginal\n%%EOF'), path = join(library.uploads, 'scan.pdf'); await writeFile(path, source);
   const book = await library.importBook('scan', { path, originalname: 'scan.pdf', size: source.length }, {});
-  const service = await openPDFOCR(dir, { library, request: async () => Response.json({ detail: 'Choose a clearer scan or correct languages.' }, { status: 422 }) }); t.after(() => service.close());
+  let fail = true;
+  const service = await openPDFOCR(dir, { library, request: async () => fail ? Response.json({ detail: 'Choose a clearer scan or correct languages.' }, { status: 422 }) : new Response(source) }); t.after(() => service.close());
   service.queue(book, { languages: ['eng'] }); const job = await until(() => service.status(book)?.state === 'error' && service.status(book));
   assert.match(job.error, /clearer scan/u); assert.equal(library.snapshot().books.length, 2); assert.deepEqual(await readFile(library.filePath(book)), source);
+  fail = false; service.retry(book, job.id); await until(() => service.status(book)?.state === 'ready'); assert.equal(service.status(book).book.id, book.id);
   const demo = await openPDFOCR(dir, { library, demo: true }); t.after(() => demo.close()); assert.throws(() => demo.queue(book, { languages: ['eng'] }), { status: 403 });
 });
 
@@ -93,4 +95,29 @@ test('cancelling active OCR aborts the scan and retains the same original PDF',a
   }});t.after(()=>service.close());
   const job=service.queue(book,{languages:['chi_sim']});await until(()=>started);service.cancel(book,job.id);await until(()=>aborted);await service.pump();
   assert.equal(service.status(book).state,'cancelled');assert.deepEqual(await readFile(library.filePath(library.getBook(book.id))),source);assert.equal(library.getBook(book.id).contentRevision,'');
+});
+
+test('a busy OCR service keeps PDFs queued and retries them sequentially instead of failing every waiting scan', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'langy-ocr-busy-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const library = await openLibrary(dir), source = Buffer.from('%PDF-1.4\nscan\n%%EOF'), books = [];
+  for (const name of ['first', 'second']) {
+    const path = join(library.uploads, name + '.pdf'); await writeFile(path, source);
+    books.push(await library.importBook(name, { path, originalname: name + '.pdf', size: source.length }, { title: name }));
+  }
+  let clock = 1000, calls = 0, active = 0, maximum = 0;
+  const service = await openPDFOCR(dir, { library, now: () => clock, request: async (_url, options) => {
+    active++; maximum = Math.max(maximum, active); calls++;
+    for await (const _part of options.body) {}
+    active--;
+    if (calls === 1) return Response.json({ detail: 'A PDF OCR scan is already running.' }, { status: 409, headers: { 'Retry-After': '5' } });
+    return new Response(source);
+  } }); t.after(() => service.close());
+  books.forEach((book) => service.queue(book, { languages: ['eng'] }));
+  await until(() => service.status(books[0])?.notice);
+  assert.equal(service.status(books[0]).state, 'queued'); assert.equal(service.status(books[1]).state, 'queued');
+  assert.equal(service.status(books[0]).error, null); assert.equal(calls, 1);
+  await delay(10); await service.pump(); assert.equal(calls, 1, 'other PDFs must wait behind the busy worker');
+  clock += 5000; await service.pump();
+  await until(() => books.every((book) => service.status(book)?.state === 'ready'));
+  assert.equal(calls, 3); assert.equal(maximum, 1); assert.equal(service.status(books[0]).book.id, books[0].id);
 });
