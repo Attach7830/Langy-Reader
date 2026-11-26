@@ -11,11 +11,12 @@ import { processTasks } from '../src/process-tasks.js';
 import { processQueue } from '../src/process-queue.js';
 import { saveSettings } from '../src/settings.js';
 import { folderAudiobookshelf } from '../src/folder-audiobookshelf.js';
+import { pdfOCR } from '../src/pdf-ocr.js';
 
 async function until(check) { for (let i = 0; i < 100; i++) { if (check()) return; await delay(10); } throw new Error('Reader tool did not update'); }
 async function browser(t) {
   const dom = new JSDOM(await readFile(new URL('../index.html', import.meta.url), 'utf8'), { url: 'https://langy.test', pretendToBeVisual: true });
-  const names = ['window', 'document', 'localStorage', 'navigator', 'Option', 'Node', 'location', 'CustomEvent', 'requestAnimationFrame', 'cancelAnimationFrame'];
+  const names = ['window', 'document', 'localStorage', 'navigator', 'Option', 'Node', 'location', 'CustomEvent', 'requestAnimationFrame', 'cancelAnimationFrame', 'FormData'];
   const saved = new Map(names.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)])), originalFetch = globalThis.fetch;
   for (const name of names) Object.defineProperty(globalThis, name, { configurable: true, value: dom.window[name] });
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
@@ -69,6 +70,116 @@ test('Devices displays OPDS connection independently of slow progress sync', asy
   await until(() => !document.querySelector('#opds-connection').hidden);
   assert.equal(document.querySelector('#sync-connection').hidden, true); assert.match(document.querySelector('#opds-url').value, /\/opds$/u);
   release(); await loaded; assert.equal(document.querySelector('#sync-connection').hidden, false);
+});
+
+test('submitting OCR closes its dialog only after queue acceptance, while Details and rejected submissions remain open', async (t) => {
+  const dom = await browser(t); let job = null, reject = false, posts = 0;
+  globalThis.fetch = async (_path, options = {}) => {
+    if (options.method === 'POST') { posts++; if (reject) return Response.json({ error: 'Choose an installed OCR language.' }, { status: 422 }); job = { id: 'scan', state: 'queued' }; return Response.json(job); }
+    return Response.json({ available: true, languages: ['spa'], job });
+  };
+  const ui = pdfOCR({ changed() {} }); t.after(() => ui.dispose());
+  const book = { id: 'one', title: 'A PDF', format: 'pdf', language: 'es' };
+  ui.show(book); await until(() => !document.querySelector('#ocr-submit').disabled);
+  document.querySelector('#ocr-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await until(() => !document.querySelector('#ocr-dialog').open); assert.equal(posts, 1);
+  ui.show(book); await until(() => document.querySelector('#ocr-progress').textContent.includes('queued'));
+  assert.equal(document.querySelector('#ocr-dialog').open, true, 'opening Details for active work must remain useful');
+  document.querySelector('#ocr-dialog').close(); job = null; reject = true;
+  ui.show(book); await until(() => !document.querySelector('#ocr-submit').disabled);
+  document.querySelector('#ocr-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await until(() => document.querySelector('#ocr-error').textContent.includes('installed OCR language'));
+  assert.equal(document.querySelector('#ocr-dialog').open, true); document.querySelector('#ocr-dialog').close();
+});
+
+test('cover imports close immediately, allow another book to be edited, and preserve quick failures in Process queue', async (t) => {
+  const dom = await browser(t); processTasks.setAccount('cover-dialog-reader'); processTasks.clearFinished();
+  let release, fail = false, imports = 0;
+  const held = new Promise((resolve) => { release = resolve; });
+  const books = ['one', 'two'].map((id) => ({ id, title: id === 'one' ? 'First book' : 'Second book', author: '', language: 'es', format: 'epub', addedAt: 1 }));
+  globalThis.fetch = async (path, options = {}) => {
+    if (path === '/api/library') return Response.json({ books, categories: [], maxUpload: 1000000, demo: false, storage: { available: false } });
+    assert.equal(path, '/api/books/one/cover'); imports++;
+    assert.equal(JSON.parse(options.body).url, 'https://images.example.org/cover.png');
+    if (fail) return Response.json({ error: 'Image could not be decoded.' }, { status: 422 });
+    await held; return Response.json({ ...books[0], thumbnailType: 'image/png', coverRevision: 'updated' });
+  };
+  const ui = libraryScreen({ progress: {}, onRemove() {} }); t.after(() => { release(); ui.dispose(); processTasks.clearFinished(); }); await ui.refresh();
+  document.querySelector('[aria-label="Edit First book"]').click();
+  document.querySelector('[name=coverUrl]').value = 'https://images.example.org/cover.png';
+  document.querySelector('#book-import-cover').click();
+  assert.equal(document.querySelector('#book-dialog').open, false); assert.equal(imports, 1);
+  assert.equal(processTasks.snapshot().tasks.find((job) => job.kind === 'cover')?.title, 'First book');
+  document.querySelector('[aria-label="Edit Second book"]').click();
+  document.querySelector('#book-form [name=author]').value = 'An unsaved author'; release();
+  await until(() => !processTasks.snapshot().tasks.some((job) => job.kind === 'cover' && job.state === 'running'));
+  assert.equal(document.querySelector('#book-dialog').open, true);
+  assert.equal(document.querySelector('#book-form [name=title]').value, 'Second book');
+  assert.equal(document.querySelector('#book-form [name=author]').value, 'An unsaved author');
+  document.querySelector('#book-dialog').close(); fail = true;
+  document.querySelector('[aria-label="Edit First book"]').click();
+  document.querySelector('[name=coverUrl]').value = 'https://images.example.org/cover.png'; document.querySelector('#book-import-cover').click();
+  await until(() => processTasks.snapshot().tasks.some((job) => job.kind === 'cover' && job.state === 'failed'));
+  assert.equal(document.querySelector('#book-dialog').open, false);
+  assert.match(processTasks.snapshot().tasks.find((job) => job.state === 'failed').detail, /could not be decoded/u);
+});
+
+test('saving a selected cover saves edited series metadata first and closes while its image is importing', async (t) => {
+  const dom = await browser(t); processTasks.setAccount('save-cover-reader'); processTasks.clearFinished();
+  let release, saved, calls = [];
+  const held = new Promise((resolve) => { release = resolve; });
+  let book = { id: 'one', title: 'Original title', author: '', language: 'es', languages: [], format: 'epub', addedAt: 1 };
+  globalThis.fetch = async (path, options = {}) => {
+    if (path === '/api/library') return Response.json({ books: [book], categories: [], maxUpload: 1000000, demo: false, storage: { available: false } });
+    calls.push(path);
+    if (path === '/api/books/one') { saved = JSON.parse(options.body); book = { ...book, ...saved }; return Response.json(book); }
+    assert.equal(path, '/api/books/one/cover'); await held; return Response.json(book);
+  };
+  const ui = libraryScreen({ progress: {}, onRemove() {} }); t.after(() => { release(); ui.dispose(); processTasks.clearFinished(); }); await ui.refresh();
+  document.querySelector('[aria-label="Edit Original title"]').click(); const fields = document.querySelector('#book-form').elements;
+  fields.title.value = 'Saved title'; fields.series.value = 'My series'; fields.series.dispatchEvent(new dom.window.Event('input')); fields.seriesIndex.value = '2.5'; fields.coverUrl.value = 'https://images.example.org/cover.png';
+  document.querySelector('#book-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await until(() => !document.querySelector('#book-dialog').open);
+  assert.deepEqual(calls, ['/api/books/one', '/api/books/one/cover']); assert.equal(saved.title, 'Saved title'); assert.equal(saved.series, 'My series'); assert.equal(saved.seriesIndex, '2.5');
+  assert.equal(processTasks.snapshot().tasks.find((job) => job.kind === 'cover')?.title, 'Saved title');
+  release(); await until(() => !processTasks.snapshot().tasks.some((job) => job.kind === 'cover' && job.state === 'running'));
+});
+
+test('series controls filter the visible library and show numeric sequence order across folders', async (t) => {
+  const dom = await browser(t);
+  const books = [
+    { id: 'ten', title: 'Tenth', series: 'Stories', seriesIndex: 10, starredAt: 1 },
+    { id: 'two', title: 'Second', series: 'Stories', seriesIndex: 2, categoryId: 'folder' },
+    { id: 'half', title: 'Prequel', series: 'Stories', seriesIndex: 0.5 },
+    { id: 'alone', title: 'Standalone' },
+    { id: 'hidden', title: 'Hidden shared book', series: 'Hidden series', sharedWithMe: true, canEdit: false },
+  ].map((book) => ({ ...book, author: '', language: 'es', format: 'epub', addedAt: 1 }));
+  globalThis.fetch = async () => Response.json({ books, categories: [{ id: 'folder', name: 'A folder' }], maxUpload: 1000000, demo: false, storage: { available: false } });
+  const ui = libraryScreen({ progress: {}, onRemove() {}, preferences: () => ({ showSharedBooks: false }) }); t.after(() => ui.dispose()); await ui.refresh();
+  const filter = document.querySelector('#book-series-filter');
+  assert.equal([...filter.options].some((option) => option.text === 'Hidden series'), false);
+  filter.value = 'series:stories'; filter.dispatchEvent(new dom.window.Event('change'));
+  assert.equal(document.querySelector('#book-sort').value, 'series');
+  assert.deepEqual([...document.querySelectorAll('#books .book-card')].map((node) => node.dataset.book), ['half', 'two', 'ten']);
+  assert.match(document.querySelector('[data-book=half] .book-series').textContent, /Book 0\.5/u);
+  filter.value = 'none'; filter.dispatchEvent(new dom.window.Event('change'));
+  assert.deepEqual([...document.querySelectorAll('#books .book-card')].map((node) => node.dataset.book), ['alone']);
+  filter.value = ''; filter.dispatchEvent(new dom.window.Event('change'));
+  document.querySelector('#search').value = 'Stories'; document.querySelector('#search').dispatchEvent(new dom.window.Event('input'));
+  assert.equal(document.querySelectorAll('#books .book-card').length, 3);
+});
+
+test('completed OCR refreshes library metadata once even when its status dialog has closed', async (t) => {
+  let queue; t.after(() => queue?.dispose());
+  const dom = await browser(t); let notifications = 0, reads = 0;
+  let jobs = [{ id: 'ocr:one', kind: 'ocr', label: 'Scan PDF with OCR', state: 'running', bookId: 'one' }];
+  const changed = () => { notifications++; }; window.addEventListener('langy-library-changed', changed);
+  globalThis.fetch = async () => { reads++; return Response.json({ accountId: 'ocr-completion-reader', jobs }); };
+  queue = processQueue(); queue.setAccount('ocr-completion-reader'); await until(() => reads > 0);
+  await delay(20); jobs = [{ ...jobs[0], state: 'completed' }]; window.dispatchEvent(new dom.window.CustomEvent('langy-processes-changed'));
+  await until(() => notifications === 1); const before = reads;
+  window.dispatchEvent(new dom.window.CustomEvent('langy-processes-changed')); await until(() => reads > before); assert.equal(notifications, 1);
+  window.removeEventListener('langy-library-changed', changed);
 });
 
 test('selecting a phrase offers one explicit contextual AI action and closes or aborts safely', async (t) => {
