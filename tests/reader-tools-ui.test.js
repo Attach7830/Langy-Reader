@@ -25,12 +25,13 @@ async function browser(t) {
 }
 
 test('Analysis & audio reveals ready controls while an unrelated iVoox request remains pending; empty Uncategorized is hidden', async (t) => {
-  await browser(t); let release, books = [{ id: 'book', title: 'My book', author: '', language: 'es', format: 'epub', categoryId: 'folder', addedAt: 1 }];
+  const dom = await browser(t); let release, books = [{ id: 'book', title: 'My book', author: '', language: 'es', format: 'epub', categoryId: 'folder', addedAt: 1 }];
   const held = new Promise((resolve) => { release = resolve; });
   globalThis.fetch = async (path) => {
     if (path === '/api/library') return Response.json({ books, categories: [{ id: 'folder', name: 'Spanish' }], maxUpload: 1000000, demo: false, storage: { available: false }, vocabulary: { byLanguage: [] } });
     if (path === '/api/books/book/learning') return Response.json({ analysis: { state: 'ready', wordCount: 20, lemmaCount: 5, reading: { state: 'ready', band: 'Intermediate' }, counts: { words: 20 } }, chapters: [], narration: { audio: { state: 'missing' } } });
     if (path === '/api/books/book/recordings') return Response.json({ available: true, recordings: [] });
+    if (path === '/api/books/book/ocr') return Response.json({ available: true, languages: ['spa'], job: { state: 'queued', notice: 'Waiting for the OCR worker' } });
     if (path === '/api/books/book/ivoox') { await held; return Response.json({ job: null }); }
     if (path === '/api/settings/audiobookshelf') return Response.json({ connected: false });
     throw new Error('Unexpected path ' + path);
@@ -42,8 +43,12 @@ test('Analysis & audio reveals ready controls while an unrelated iVoox request r
   await until(() => !document.querySelector('#upload-audio-form').hidden && document.querySelector('#learning-stats').textContent.includes('5 unique lemmas'));
   assert.equal(document.querySelector('#find-similar-books').disabled, false, 'slow import status must not block vocabulary tools');
   release(); await delay(20); document.querySelector('#learning-dialog').close();
-  books[0].categoryId = ''; await ui.refresh();
+  books[0].categoryId = ''; books[0].format = 'pdf'; await ui.refresh();
   assert.equal([...document.querySelectorAll('#categories button')].some((item) => item.textContent.includes('Uncategorized')), true);
+  window.dispatchEvent(new dom.window.CustomEvent('langy-open-process', { detail: { kind: 'ocr', bookId: 'book' } }));
+  await until(() => document.querySelector('#ocr-dialog').open && document.querySelector('#ocr-progress').textContent.includes('Waiting for the OCR worker'));
+  assert.equal(document.querySelector('#learning-dialog').open, false, 'OCR Details opens the scan status instead of unrelated audio tools');
+  document.querySelector('#ocr-dialog').close();
 });
 
 test('Devices displays OPDS connection independently of slow progress sync', async (t) => {
@@ -77,9 +82,9 @@ test('selecting a phrase offers one explicit contextual AI action and closes or 
   ui.clear(); assert.equal(calls.at(-1).signal.aborted, true); resolve({ text: 'Late answer' }); await delay(0); assert.equal(document.querySelector('#phrase-help').hidden, true); assert.equal(document.querySelector('[data-phrase-answer]').textContent, '');
 });
 
-test('shared books can be hidden independently, owned shared books remain visible and both import and edit expose sharing', async (t) => {
+test('format and shared-book filters combine, persist in preferences and expose completed OCR labels', async (t) => {
   const dom = await browser(t); let preferences = { quietLibrary: true, showSharedBooks: true }, saved;
-  const books = [{ id: 'own', title: 'Own shared book', author: '', language: 'es', format: 'epub', shared: true, sharedWithMe: false, canEdit: true },
+  const books = [{ id: 'own', title: 'Own shared book', author: '', language: 'es', format: 'pdf', ocrComplete: true, shared: true, sharedWithMe: false, canEdit: true },
     { id: 'theirs', title: 'Received shared book', author: '', language: 'es', format: 'epub', shared: true, sharedWithMe: true, canEdit: false }];
   globalThis.fetch = async (path) => {
     if (path === '/api/library') return Response.json({ books, categories: [], sharingAvailable: true, maxUpload: 1000000, demo: false, storage: { available: false } });
@@ -90,6 +95,14 @@ test('shared books can be hidden independently, owned shared books remain visibl
   assert.equal(document.querySelector('[aria-label="Edit Received shared book"]'), null);
   const toggle = document.querySelector('#show-shared-books'); toggle.checked = false; toggle.dispatchEvent(new dom.window.Event('change'));
   assert.deepEqual(saved, { showSharedBooks: false }); assert.equal(document.querySelectorAll('#books .book-card').length, 1); assert.match(document.querySelector('#books').textContent, /Own shared book/u);
+  assert.equal(document.querySelector('#books .book-format').textContent, 'PDF · OCR');
+  const format = document.querySelector('#book-format-filter'); format.value = 'epub'; format.dispatchEvent(new dom.window.Event('change'));
+  assert.equal(document.querySelectorAll('#books .book-card').length, 0); assert.equal(document.querySelector('#empty-title').textContent, 'No matching books');
+  toggle.checked = true; toggle.dispatchEvent(new dom.window.Event('change'));
+  assert.equal(document.querySelector('#books .book-format').textContent, 'EPUB');
+  format.value = 'pdf'; format.dispatchEvent(new dom.window.Event('change')); assert.deepEqual(saved, { libraryFormat: 'pdf' });
+  await ui.refresh(); assert.equal(format.value, 'pdf'); assert.equal(document.querySelectorAll('#books .book-card').length, 1);
+  format.value = ''; format.dispatchEvent(new dom.window.Event('change')); assert.equal(document.querySelectorAll('#books .book-card').length, 2);
   document.querySelector('[aria-label="Edit Own shared book"]').click(); assert.equal(document.querySelector('#book-sharing-controls').hidden, false); assert.equal(document.querySelector('#book-form').elements.shared.checked, true);
   document.querySelector('#book-dialog').close(); document.querySelector('#import-book').click(); assert.equal(document.querySelector('#book-form').elements.shared.checked, false, 'new books are private by default');
 });
