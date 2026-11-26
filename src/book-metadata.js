@@ -24,7 +24,7 @@ async function documentDetails(file, signal) {
     }
   }
   signal?.throwIfAborted();
-  return { title: cleanMetadata(metadata.title), author: cleanMetadata(metadata.creator || metadata['initial-creator'], 200), language: metadataLanguage(metadata.language) || (source ? inferBookLanguage(bookText(source).slice(0, 30000)) : '') };
+  return { title: cleanMetadata(metadata.title), author: cleanMetadata(metadata.creator || metadata['initial-creator'], 200), language: metadataLanguage(metadata.language) || (source ? inferBookLanguage((/\.(txt|md|markdown)$/iu.test(file.name) ? source : bookText(source)).slice(0, 30000)) : '') };
 }
 
 async function epubDetails(file, signal) {
