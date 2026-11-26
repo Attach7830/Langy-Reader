@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { RequestError } from './books.js';
 import { readingSamples } from './book-text.js';
+import { consumeProcesses } from './process-scheduler.js';
 
-// This lane runs independently of narration/alignment, with one LLM request at a time.
-export function readingEstimates({ db, ai, timeoutMs = 100000, withAI = (_visitor, task) => task(), visitorForBook = () => undefined }) {
+export function readingEstimates({ db, ai, timeoutMs = 100000, withAI = (_visitor, task) => task(), visitorForBook = () => undefined, scheduler }) {
   for (const [name, type] of [['jobId', 'TEXT'], ['queuedAt', 'INTEGER NOT NULL DEFAULT 0'], ['startedAt', 'INTEGER']]) {
     if (!db.prepare('PRAGMA table_info(estimates)').all().some((column) => column.name === name)) db.exec(`ALTER TABLE estimates ADD COLUMN ${name} ${type}`);
   }
@@ -11,7 +11,7 @@ export function readingEstimates({ db, ai, timeoutMs = 100000, withAI = (_visito
   for (const row of db.prepare("SELECT book FROM estimates WHERE state='queued' AND jobId IS NULL").all()) {
     db.prepare('UPDATE estimates SET jobId=?,queuedAt=?,json=NULL,error=NULL WHERE book=?').run(randomUUID(), Date.now(), row.book);
   }
-  let active;
+  let active, waiting = false;
   function invalidate(book) {
     if (active?.book === book) active.controller.abort(new Error('Reading estimate replaced.'));
     db.prepare('DELETE FROM estimates WHERE book=?').run(book);
@@ -28,10 +28,14 @@ export function readingEstimates({ db, ai, timeoutMs = 100000, withAI = (_visito
       timeoutMs, ...(row.startedAt ? { deadline: row.startedAt + timeoutMs } : {}) } : null;
   }
   async function pump() {
-    if (active) return;
-    const row = db.prepare(`SELECT e.*,a.metrics FROM estimates e JOIN analyses a ON a.book=e.book
-      WHERE e.state='queued' AND a.state='ready' ORDER BY e.queuedAt,e.rowid LIMIT 1`).get();
-    if (!row) return;
+    if (active || waiting) return;
+    waiting = true;
+    try { await consumeProcesses(scheduler, () => db.prepare(`SELECT e.*,a.metrics FROM estimates e JOIN analyses a ON a.book=e.book
+      WHERE e.state='queued' AND a.state='ready' ORDER BY e.queuedAt,e.rowid`).all()
+      .map((row) => ({ id: `estimate:${row.book}`, created: row.queuedAt, data: row })), execute);
+    } finally { waiting = false; }
+  }
+  async function execute(row) {
     const controller = new AbortController();
     const job = { book: row.book, controller }; active = job;
     db.prepare("UPDATE estimates SET state='running',startedAt=?,error=NULL WHERE book=? AND jobId=?").run(Date.now(), row.book, row.jobId);
