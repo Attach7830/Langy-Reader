@@ -41,3 +41,22 @@ test('Raise priority posts the selected queued task and refreshes its queue posi
   assert.equal(raised, '/api/processes/narration%3Asecond/priority');
   assert.equal(document.querySelector('#process-list').firstElementChild.dataset.process, 'narration:second');
 });
+
+test('finished narration and uploaded-audio sync notify the library to refresh its saved audio badge', async (t) => {
+  const dom = new JSDOM(await readFile(new URL('../index.html', import.meta.url), 'utf8'), { url: 'https://langy.test', pretendToBeVisual: true });
+  const originals = new Map(), oldFetch = globalThis.fetch;
+  for (const key of ['window','document','location','localStorage','requestAnimationFrame','cancelAnimationFrame','CustomEvent']) {
+    originals.set(key, Object.getOwnPropertyDescriptor(globalThis,key));
+    Object.defineProperty(globalThis,key,{configurable:true,value:key.includes('AnimationFrame')?dom.window[key].bind(dom.window):dom.window[key]});
+  }
+  let jobs = [{ id: 'narration:generated', bookId: 'one', kind: 'narration', label: 'Generate audiobook', state: 'running' },
+    { id: 'recording:uploaded', bookId: 'two', kind: 'recording', label: 'Sync audiobook with text', state: 'queued' }];
+  const updated = []; window.addEventListener('langy-audio-updated', (event) => updated.push(event.detail.book));
+  globalThis.fetch = async () => Response.json({ accountId: 'audio-reader', jobs });
+  const queue = processQueue(); queue.setAccount('audio-reader');
+  t.after(() => { queue.dispose(); globalThis.fetch = oldFetch; dom.window.close(); for (const [key,value] of originals) if (value) Object.defineProperty(globalThis,key,value); else delete globalThis[key]; });
+  for (let i = 0; i < 100 && !document.querySelector('[data-process="recording:uploaded"]'); i++) await delay(10);
+  jobs = []; window.dispatchEvent(new dom.window.CustomEvent('langy-processes-changed'));
+  for (let i = 0; i < 100 && updated.length < 2; i++) await delay(10);
+  assert.deepEqual(updated.sort(), ['one', 'two']);
+});
