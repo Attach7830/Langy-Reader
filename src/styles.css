@@ -341,7 +341,6 @@ html[data-immersion="true"] #abs-sync-status { display: none; }
 .download-card progress { width: 100%; height: 7px; accent-color: var(--brand); }
 .download-card p { margin: 0; }
 .download-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-#process-queue-count:not(:empty) { margin-inline-start: 5px; font-variant-numeric: tabular-nums; }
 .type-icon { font: 500 23px/1 "Instrument Serif", Georgia, "Noto Sans SC", "Noto Sans TC", serif; }
 .summary-toggle[aria-expanded="true"] { background: var(--brand-soft); }
 .reader-stage {
@@ -837,9 +836,15 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
   .editorial-hero { padding-block: 40px; }
 }
 
-.process-queue-toggle { position:fixed; left:18px; bottom:18px; z-index:70; gap:8px; box-shadow:0 4px 20px #0003; font-size:.85rem; padding:9px 14px; }
-.process-queue-toggle[data-active="true"] { border:1px solid var(--brand); }
-.process-queue-toggle[data-failed="true"] { text-decoration:underline dotted; }
+.process-queue-toggle { position:fixed; left:18px; bottom:18px; z-index:70; min-width:44px; height:44px; gap:0; padding:11px; box-shadow:0 4px 20px #0003; font-size:.85rem; }
+.process-queue-toggle > svg { width:20px; height:20px; }
+.process-queue-label { max-width:0; min-width:0; margin-inline-start:0; overflow:hidden; opacity:0; transition:max-width .18s ease, margin-inline-start .18s ease, opacity .18s ease; }
+.process-queue-toggle:is(:hover, :focus-visible) .process-queue-label { max-width:18rem; margin-inline-start:8px; opacity:1; }
+#process-queue-count { position:absolute; top:-6px; right:-6px; display:grid; place-items:center; min-width:19px; height:19px; padding:0 4px; border-radius:999px; background:var(--brand); color:var(--brand-ink); box-shadow:0 0 0 2px var(--ground); font-size:11px; line-height:1; font-variant-numeric:tabular-nums; }
+.process-queue-toggle[data-active="true"] { border-color:var(--brand); }
+.process-queue-toggle[data-failed="true"] { border-color:var(--danger); }
+.process-queue-toggle[data-failed="true"] #process-queue-count { background:var(--danger); color:var(--ground); }
+@media (prefers-reduced-motion:reduce) { .process-queue-label { transition:none; } }
 .process-card h3, .process-card p { margin:0; }
 .process-card { gap:8px; }
 .process-card progress { width:100%; height:6px; }
