@@ -6,7 +6,6 @@ import express from 'express';
 import multer from 'multer';
 import { maxUpload, openLibrary, RequestError } from './books.js';
 import { openAccounts } from './accounts.js';
-import { bookmarkTargetKey } from '../shared/bookmark-targets.js';
 import { userStorage } from './user-storage.js';
 import { fontDownloads } from './font-downloads.js';
 import { openBookImports } from './book-imports.js';
@@ -287,17 +286,25 @@ app.get('/api/books/:id/ocr', async (req, res) => {
   if (!demo && book.format === 'pdf') { try { languages = await ocr.languages(); } catch (failure) { error = failure.message; } }
   res.json({ available: !demo && book.format === 'pdf', job: ocr.status(book), languages, error, provider: ocr.settings().provider });
 });
+if (!demo) {
+  const editablePDF = (req) => {
+    const book = library.getBook(req.params.id, req.visitor);
+    if (book.canEdit === false) throw new RequestError(403, 'Only the book’s owner can change its PDF text or audio timing.');
+    if (book.format !== 'pdf') throw new RequestError(422, 'Choose a PDF book.');
+    return book;
+  };
+  app.get('/api/books/:id/pdf-review', (req, res) => res.json(learning.pdfReview(editablePDF(req), Number(req.query.page ?? 1))));
+  app.put('/api/books/:id/pdf-review', (req, res) => res.json(learning.savePdfReview(editablePDF(req), req.body ?? {})));
+  app.get('/api/books/:id/pdf-timing/:recording', (req, res) => res.json(learning.pdfTiming(editablePDF(req), req.params.recording)));
+  app.put('/api/books/:id/pdf-timing/:recording', (req, res) => res.json(learning.savePdfTiming(editablePDF(req), req.params.recording, req.body ?? {})));
+}
 app.get('/api/books/:id/bookmarks', (req, res) => res.json({ bookmarks: library.bookmarks(req.params.id, req.visitor) }));
 app.get('/api/books/:id/search', (req, res) => res.json(toolsForBook.search(library.getBook(req.params.id, req.visitor), req.query.q)));
 app.get('/api/books/:id/offline', async (req, res) => {
   const pack = await offlinePack(library.getBook(req.params.id, req.visitor), req.query.recording);
   pack.narration.absConnected = (usesOwnerAudiobookshelf(req) && audiobookshelf.settings().connected); res.json(pack);
 });
-app.post('/api/books/:id/bookmarks/remove', (req, res) => {
-  const book = library.getBook(req.params.id, req.visitor), target = bookmarkTargetKey(req.body?.target);
-  const existing = library.bookmarks(book.id, req.visitor).find((item) => bookmarkTargetKey(item.target) === target);
-  res.json(existing ? library.removeBookmark(book.id, existing.id, req.visitor) : { bookmarks: library.bookmarks(book.id, req.visitor) });
-});
+app.post('/api/books/:id/bookmarks/remove', (req, res) => res.json(library.removeBookmarkTarget(req.params.id, req.body?.target, req.visitor)));
 app.post('/api/books/:id/character-guide', ...demoGenerations, async (req, res) => {
   const controller = new AbortController(); res.on('close', () => controller.abort());
   res.json(await toolsForBook.guide(library.getBook(req.params.id, req.visitor), req.body ?? {}, controller.signal));

@@ -13,6 +13,8 @@ import { bookCover, bookCoverPicker } from './book-covers.js';
 import { archiveBulk } from './archive-bulk.js';
 import { archiveTitleActions } from './archive-title-controls.js';
 import { pdfOCR } from './pdf-ocr.js';
+import { reviewPdfText } from './pdf-review.js';
+import { adjustPdfTiming } from './pdf-timing.js';
 import { bookLanguageSuggestions } from './reading-languages.js';
 import { showReadingTime } from './ui-reading-time.js';
 import { audiobookshelfBook } from './audiobookshelf-ui.js';
@@ -46,8 +48,17 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   const folderABS = folderAudiobookshelf();
   $('#category-dialog').addEventListener('close', () => folderABS.cancel());
   const learningDialog = $('#learning-dialog');
+  const pdfReview = reviewPdfText({ saved(book) {
+    toast('Reviewed text saved. Updating vocabulary analysis.');
+    void showLearning(book);
+  } });
+  const pdfTiming = adjustPdfTiming({ saved(book) {
+    audioChanged(book.id); toast('Page timing saved.');
+    void showLearning(book);
+  } });
   let learningBook, learningTimer, libraryTimer, learningVisit = 0, libraryVisit = 0, learningParts = {}, learningPending = {};
   let snapshot = { categories: [], books: [], maxUpload: 120 * 1024 ** 2, demo: false };
+  const editablePdf = (book) => !snapshot.demo && book?.format === 'pdf' && book.canEdit !== false;
   let category = 'all', editingBook, editingCategory, selectedFile, slowImport, downloadExpiry;
   const completedImports = new Map();
   let bookPending = false, categoryPending = false, bookVisit = 0;
@@ -420,11 +431,13 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
       );
       $('#generate-book-audio').disabled = analysis.state !== 'ready' || !result.chapters.some((chapter) => chapter.narratable);
       const audio = result.narration.audio;
+      $('#adjust-pdf-timing').hidden = !editablePdf(learningBook) || audio.kind !== 'generated' || audio.state !== 'ready' || (audio.segments?.length || 0) < 2;
       const working = ['queued', 'assembling'].includes(audio.state);
       const scheduled = result.narration.scheduled;
       $('#generate-book-audio').disabled ||= working || learningBook?.canEdit === false;
       $('#cancel-book-audio').hidden = learningBook?.canEdit === false || !working && scheduled?.state !== 'waiting';
-      $('#book-audio-status').textContent = audio.state === 'ready' ? audio.approximateSections
+      $('#book-audio-status').textContent = audio.state === 'ready' ? audio.segments?.some((part) => part.pageOnly)
+        ? 'Complete book recording ready. Some pages use page-level sync.' : audio.approximateSections
         ? `Complete book recording ready. Page timing is approximate in ${audio.approximateSections} sections; estimated words are not highlighted.`
         : 'Complete book recording ready. Chapter markers are included.'
         : audio.state === 'queued' ? `Generating book audio · ${audio.complete} / ${audio.total} sections`
@@ -478,6 +491,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     learningVisit++; learningParts = {}; learningPending = {};
     audioUI.reset();
     learningBook = book;
+    $('#review-pdf-text').hidden = !editablePdf(book);
+    $('#adjust-pdf-timing').hidden = true;
     $('#edit-book-languages').hidden = book.canEdit === false || snapshot.demo && book.id === 'sample';
     $('#find-similar-books').disabled = true;
     $('#open-book-vocabulary').disabled = true;
@@ -495,6 +510,15 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     void absBook.show();
     await learningStatus();
   }
+
+  $('#review-pdf-text').addEventListener('click', () => {
+    const book = learningBook;
+    if (editablePdf(book)) { learningDialog.close(); pdfReview.open(book); }
+  });
+  $('#adjust-pdf-timing').addEventListener('click', () => {
+    const book = learningBook, audio = learningParts.result?.narration?.audio;
+    if (editablePdf(book) && audio?.state === 'ready') { learningDialog.close(); void pdfTiming.open(book, audio.id); }
+  });
 
   $('#analyze-book').addEventListener('click', async () => {
     if (!learningBook) return;

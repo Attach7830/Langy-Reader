@@ -239,7 +239,6 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
         <button class="button quiet reader-primary-action" id="audio-toggle" type="button" title="Narration" aria-label="Narration" aria-pressed="false"><i data-lucide="headphones"></i><span>Audio</span></button>
         <button class="icon-button" id="fullscreen" type="button" title="Full screen" aria-label="Full screen" aria-pressed="false"><i data-lucide="maximize"></i></button>
         <details id="reader-more" class="reader-more"><summary class="icon-button" aria-label="More reading tools" title="More reading tools">•••</summary><div class="reader-more-menu">
-        <button class="button quiet small" type="button" data-open-processes>Process queue</button>
         <button class="icon-button" id="jump-page" type="button" title="Jump to page" aria-label="Jump to page" aria-controls="page-jump-dialog"><i data-lucide="book-open"></i></button>
         <button class="icon-button" id="sync-progress" type="button" title="Sync reading progress" aria-label="Sync reading progress" aria-controls="sync-notice" hidden><i data-lucide="rotate-ccw"></i></button>
         <button class="icon-button" id="bookmarks-button" type="button" title="Bookmarks (M)" aria-label="Bookmarks"><i data-lucide="bookmark"></i></button>
@@ -751,6 +750,7 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
     <div class="modal-body">
       <p id="learning-stats"></p>
       <p id="learning-word-count" class="field-note"></p>
+      <button class="button secondary small" id="review-pdf-text" type="button" hidden>Review PDF text</button>
       <button class="button quiet small" id="edit-book-languages" type="button">Set book languages</button>
       <div id="learning-vocabulary"></div>
       <button class="button secondary small" id="open-book-vocabulary" type="button" disabled>Words below threshold</button>
@@ -771,6 +771,7 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
       <label class="checkbox-row"><input type="checkbox" id="replace-book-audio"> Replace existing recordings</label>
       <p id="book-audio-status" class="field-note" role="status"></p>
       <a id="book-audio-download" class="button secondary" hidden>Download complete book MP3</a>
+      <button id="adjust-pdf-timing" class="button secondary small" type="button" hidden>Adjust PDF audio sync</button>
       <div id="generated-rescan" class="form-stack"></div>
       <section class="recordings-section">
         <h3>Your audiobooks</h3>
@@ -866,6 +867,59 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
     </form>
   </dialog>
   <script type="module" src="/src/entry.js"></script>
+  <dialog class="modal pdf-review-dialog" id="pdf-review-dialog" aria-labelledby="pdf-review-title">
+    <form id="pdf-review-form">
+      <header class="modal-header"><h2 id="pdf-review-title">Review PDF text</h2><button class="icon-button" type="button" data-close aria-label="Close PDF text review"><i data-lucide="x"></i></button></header>
+      <div class="modal-body">
+        <p class="field-note">Use the original PDF page numbers. Skip introductions or edit the text on any page you want to keep.</p>
+        <div class="pdf-review-navigation">
+          <button class="button quiet small" id="pdf-review-previous" type="button">Previous page</button>
+          <label class="field">PDF page <input name="page" type="number" min="1" step="1" value="1"></label>
+          <span id="pdf-review-total" class="field-note"></span>
+          <button class="button quiet small" id="pdf-review-next" type="button">Next page</button>
+        </div>
+        <label class="field">Skip PDF pages <input name="excluded" type="text" placeholder="1–12, 45" spellcheck="false"></label>
+        <label class="checkbox-row"><input name="skip" type="checkbox"> Skip this page</label>
+        <p id="pdf-review-status" class="field-note" role="status" hidden></p>
+        <div class="pdf-review-columns" id="pdf-review-columns" hidden>
+          <div class="form-stack">
+            <div id="pdf-review-preview" class="viewer pdf-viewer" aria-label="Original PDF page"></div>
+            <p id="pdf-review-preview-status" class="field-note" role="status" hidden></p>
+            <button class="button quiet small" id="pdf-review-copy" type="button" disabled>Use selected PDF text</button>
+          </div>
+          <div class="form-stack">
+            <label class="field">Text for audio and vocabulary <textarea name="text" rows="14" dir="auto" spellcheck="false"></textarea></label>
+            <button class="button quiet small" id="pdf-review-original" type="button">Use extracted text</button>
+          </div>
+        </div>
+        <p id="pdf-review-error" class="form-error" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer"><button class="button quiet" type="button" data-close>Close</button><button id="pdf-review-save" class="button primary" type="submit" disabled>Save reviewed text</button></footer>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="pdf-timing-dialog" aria-labelledby="pdf-timing-title">
+    <form id="pdf-timing-form">
+      <header class="modal-header"><h2 id="pdf-timing-title">Adjust PDF audio sync</h2><button class="icon-button" type="button" data-close aria-label="Close PDF audio timing"><i data-lucide="x"></i></button></header>
+      <div class="modal-body">
+        <p class="field-note">Choose a page. Play or scrub to the start of its text, then use the playhead to set its start time.</p>
+        <label class="field">PDF page <select name="page" disabled></select></label>
+        <p id="pdf-timing-opening" dir="auto" data-user-content></p>
+        <audio id="pdf-timing-audio" controls preload="metadata" aria-label="Preview the PDF audiobook"></audio>
+        <div class="button-row">
+          <button class="button quiet small" id="pdf-timing-jump" type="button" disabled>Go to page start</button>
+          <button class="button quiet small" data-pdf-nudge="-0.25" type="button" aria-label="Back a quarter second" disabled>−0.25 s</button>
+          <button class="button quiet small" data-pdf-nudge="0.25" type="button" aria-label="Forward a quarter second" disabled>+0.25 s</button>
+          <button class="button secondary small" id="pdf-timing-mark" type="button" disabled>Set start at playhead</button>
+        </div>
+        <p id="pdf-timing-status" class="field-note" role="status" hidden></p>
+        <button class="button quiet small" id="pdf-timing-reset" type="button" disabled>Restore original page starts</button>
+        <p id="pdf-timing-error" class="form-error" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer"><button class="button quiet" type="button" data-close>Close</button><button id="pdf-timing-save" class="button primary" type="submit" disabled>Save page timing</button></footer>
+    </form>
+  </dialog>
+
   <dialog class="modal" id="ocr-dialog" aria-labelledby="ocr-book-title">
     <form id="ocr-form">
       <header class="modal-header"><h2 id="ocr-book-title">Scan PDF with OCR</h2><button type="button" class="icon-button" data-close aria-label="Close OCR"><i data-lucide="x"></i></button></header>

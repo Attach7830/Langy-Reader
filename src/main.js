@@ -50,6 +50,7 @@ import { getProgress, getSettings, keyLabel, languageName, modes, saveProgress, 
 const viewer = $('#viewer');
 const stage = $('#stage');
 const readerScreen = $('#reader-screen');
+const processLauncher = $('#open-process-queue');
 const setDockAutoHide = readerDocks(readerScreen);
 const summaryPanel = $('#summary-panel');
 const summaryBody = $('#summary-body');
@@ -308,6 +309,8 @@ async function checkAI() {
 }
 
 function showScreen(screen) {
+  const launcherParent = screen === 'reader' ? readerScreen : document.body;
+  if (processLauncher.parentElement !== launcherParent) launcherParent.append(processLauncher);
   $('#mobile-navigation').hidden = screen === 'reader';
   for (const link of document.querySelectorAll('.mobile-navigation a')) {
     if (link.hash === `#${screen}`) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
@@ -585,6 +588,7 @@ async function openBook(book) {
   activeBook = book;
   updateComprehension();
   setOfflineBook(book.id);
+  void bookmarks.load().catch(() => {});
   loadController = new AbortController();
   const { signal } = loadController;
   showScreen('reader');
@@ -765,7 +769,7 @@ async function zoomPDF(factor) {
 
 const pageJump = bookPageJump({ renderer: () => renderer, book: () => activeBook,
   go: (target) => returnHistory.follow(target), focus: () => viewer.focus({ preventScroll: true }) });
-const contentsUI = bookContents({ renderer: () => renderer, book: () => activeBook,
+const contentsUI = bookContents({ renderer: () => renderer, book: () => activeBook, bookmarks,
   go: (target) => returnHistory.follow(target), focus: () => viewer.focus({ preventScroll: true }), jumpPage: () => pageJump.open() });
 function contents() { words.clear(); contentsUI.open(); }
 for (const id of ['jump-page', 'page-label']) $(`#${id}`).addEventListener('click', () => { words.clear(); pageJump.open(); });

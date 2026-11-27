@@ -310,8 +310,8 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
     storageFiles(owner) { return db.prepare('SELECT * FROM books WHERE owner=?').all(owner).flatMap((book) => [filePath(book), filePath({ ...book, contentRevision: '' }), coverPath(book), coverPath({ ...book, coverRevision: '' })]); },
     bookmarks(id, visitor) {
       getBook(id, visitor);
-      db.prepare('DELETE FROM bookmarks WHERE expires IS NOT NULL AND expires<=?').run(Date.now());
-      return db.prepare('SELECT id,target,label,note,created FROM bookmarks WHERE book=? AND owner=? ORDER BY created DESC,id').all(id, editable(visitor))
+      return db.prepare('SELECT id,target,label,note,created FROM bookmarks WHERE book=? AND owner=? AND (expires IS NULL OR expires>?) ORDER BY created DESC,id')
+        .all(id, editable(visitor), Date.now())
         .map((row) => ({ ...row, target: JSON.parse(row.target) }));
     },
     saveBookmark(id, body, visitor) {
@@ -330,6 +330,11 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
     removeBookmark(id, bookmark, visitor) {
       getBook(id, visitor);
       if (!db.prepare('DELETE FROM bookmarks WHERE id=? AND book=? AND owner=?').run(bookmark, id, editable(visitor)).changes) throw new RequestError(404, 'Bookmark not found.');
+      return { bookmarks: this.bookmarks(id, visitor) };
+    },
+    removeBookmarkTarget(id, target, visitor) {
+      getBook(id, visitor);
+      db.prepare('DELETE FROM bookmarks WHERE book=? AND owner=? AND target=?').run(id, editable(visitor), bookmarkTargetKey(target ?? null));
       return { bookmarks: this.bookmarks(id, visitor) };
     },
     readBooks(visitor) {
@@ -602,6 +607,7 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
       db.prepare('DELETE FROM book_read_status WHERE expires <= ?').run(now);
       db.prepare('DELETE FROM currently_reading WHERE expires <= ?').run(now);
       db.prepare('DELETE FROM books_set_aside WHERE expires <= ?').run(now);
+      db.prepare('DELETE FROM bookmarks WHERE expires <= ?').run(now);
       if (expired.length) touch();
       const paths = expired.flatMap((book) => [filePath(book), coverPath(book)]);
       const removed = await Promise.allSettled(paths.map((path) => rm(path, { force: true })));

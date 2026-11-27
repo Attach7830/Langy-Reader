@@ -382,7 +382,24 @@ try {
       await open();
       for (let n = 0; n < 60 && aborted < 2; n++) await delay(50);
       assert.ok(aborted >= 2); await delay(100);
-      await page.locator('#reader-more > summary').click(); await page.locator('#reader-more [data-open-processes]').click();
+      assert.equal(await page.locator('#reader-more [data-open-processes]').count(), 0);
+      const menu = page.locator('#reader-more > summary');
+      const sync = page.locator('#sync-progress');
+      const syncLabel = await sync.evaluate((node) => {
+        const before = { label: node.getAttribute('aria-label'), hidden: node.hidden };
+        node.setAttribute('aria-label', 'Reading progress synced. Check for a newer reading position saved on another device.');
+        node.hidden = false;
+        return before;
+      });
+      await menu.click();
+      assert.equal(await page.locator('.reader-more-menu').evaluate((node) => {
+        const row = node.querySelector('#sync-progress');
+        return node.scrollWidth <= node.clientWidth && row.scrollWidth <= row.clientWidth
+          && getComputedStyle(row, '::after').whiteSpace === 'normal';
+      }), true);
+      await sync.evaluate((node, before) => { node.setAttribute('aria-label', before.label); node.hidden = before.hidden; }, syncLabel);
+      await menu.click();
+      await page.locator('#reader-screen #open-process-queue').click();
       await page.locator('#downloads-dialog').waitFor({ state: 'visible' });
       assert.equal(await page.locator('#process-list .process-card').filter({ hasText: 'Load book tools' }).filter({ hasText: 'Needs attention' }).count(), 0);
       await page.locator('#downloads-dialog [data-close]').click();
@@ -504,6 +521,45 @@ try {
     await page.locator('.toc-bookmarks summary').click();
     await page.locator('.toc-bookmarks').getByText('No bookmarks yet.').waitFor();
     await page.locator('#contents-dialog [data-close]').click(); assert.equal(await position(), before);
+  });
+  await check('on a phone the prefetched bookmark list wraps long passages, keeps Remove visible and is reused in sections', async () => {
+    const target = await position(), label = paragraph.slice(0, 190), note = 'palabra'.repeat(40);
+    const path = '/api/books/' + book.id + '/bookmarks';
+    const seeded = await context.request.post(base + path, { data: { target, label, note } });
+    assert.equal(seeded.status(), 200, await seeded.text());
+    let requests = 0;
+    const count = (route) => { if (route.request().method() === 'GET') requests++; return route.continue(); };
+    await page.route('**' + path, count);
+    try {
+      const prefetched = page.waitForResponse((response) => response.url() === base + path && response.request().method() === 'GET');
+      await page.reload();
+      await prefetched;
+      await page.locator('#reader-message').waitFor({ state: 'hidden' });
+      await page.locator('#reader-more > summary').click();
+      await page.locator('#bookmarks-button').click();
+      const row = page.locator('.bookmark-entry').filter({ hasText: label });
+      await row.waitFor();
+      assert.equal(await row.evaluate((node) => {
+        const [open, remove] = node.querySelectorAll('button');
+        const note = node.querySelector('p');
+        return open.scrollWidth <= open.clientWidth && note.scrollWidth <= note.clientWidth
+          && open.offsetHeight > remove.offsetHeight && open.getBoundingClientRect().right < remove.getBoundingClientRect().left;
+      }), true);
+      await page.locator('#bookmarks-dialog [data-close]').first().click();
+      await page.locator('#contents-button').click();
+      await page.locator('.toc-bookmarks summary').click();
+      await page.locator('.toc-bookmarks').getByRole('button', { name: label, exact: true }).waitFor();
+      assert.equal(requests, 1);
+      await page.locator('#contents-dialog [data-close]').click();
+      await page.locator('#reader-more > summary').click();
+      await page.locator('#bookmarks-button').click();
+      await row.getByRole('button', { name: 'Remove', exact: true }).click();
+      await row.waitFor({ state: 'detached' });
+      await page.locator('#bookmarks-dialog [data-close]').first().click();
+    } finally {
+      await page.unroute('**' + path, count);
+      await context.request.post(base + path + '/remove', { data: { target } });
+    }
   });
   await check('center double taps reveal temporary audio controls and play or pause without stopping when controls hide', async () => {
     const before = await position();

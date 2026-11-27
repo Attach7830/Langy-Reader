@@ -34,7 +34,7 @@ export async function api(path, options = {}) {
   const label = requestProcessLabel(path, options.method || 'GET'), finish = label && options.process !== false ? processTasks.begin(label,{cancel:() => controller.abort()}) : null;
   try {
     const result = await requestAPI(path, options); finish?.();
-    if (options.method && options.method !== 'GET' && /\/(?:learning|narration|reading-estimate|recordings|ivoox|ocr|audiobookshelf|imports|discovery)(?:\/|$)/u.test(path)) {
+    if (options.method && options.method !== 'GET' && /\/(?:learning|narration|reading-estimate|recordings|ivoox|ocr|pdf-review|audiobookshelf|imports|discovery)(?:\/|$)/u.test(path)) {
       if (globalThis.window?.CustomEvent) window.dispatchEvent(new window.CustomEvent('langy-processes-changed'));
     }
     return result;

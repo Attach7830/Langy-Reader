@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { RequestError } from './books.js';
 import { hasUsableTimings } from './audio-timing.js';
 import { narrationOptions, sectionLanguages } from './language-voices.js';
+import { applyPageStarts, validatePageStarts } from './pdf-timing.js';
 
 const run = promisify(execFile);
 const pending = new Set(['queued', 'generating', 'aligning']);
@@ -24,25 +25,28 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
   ) STRICT;
   CREATE INDEX IF NOT EXISTS book_audio_book ON book_audio(book, created);
   UPDATE book_audio SET state='queued' WHERE state='assembling';`);
-  for (const [name, definition] of [['kind', "TEXT NOT NULL DEFAULT 'generated'"], ['name', "TEXT NOT NULL DEFAULT ''"], ['quality', 'TEXT'], ['alignmentRevision', 'INTEGER NOT NULL DEFAULT 0']]) {
+  for (const [name, definition] of [['kind', "TEXT NOT NULL DEFAULT 'generated'"], ['name', "TEXT NOT NULL DEFAULT ''"], ['quality', 'TEXT'], ['alignmentRevision', 'INTEGER NOT NULL DEFAULT 0'],
+    ['pdfTiming', "TEXT NOT NULL DEFAULT '{}'"]]) {
     if (!db.prepare('PRAGMA table_info(book_audio)').all().some((column) => column.name === name)) db.exec(`ALTER TABLE book_audio ADD COLUMN ${name} ${definition}`);
   }
 
-  const hasLanguages = db.prepare('PRAGMA table_info(chapters)').all().some((column) => column.name === 'languages');
-  const sections = (book) => db.prepare(`SELECT key,title,digest,markers,${hasLanguages ? 'languages' : "'[]' AS languages"},length(trim(text)) AS characters,has_spoken_text(text) AS narratable FROM chapters WHERE book=? ORDER BY ordinal`).all(book.id);
+  const columns = new Set(db.prepare('PRAGMA table_info(chapters)').all().map(({ name }) => name));
+  const sections = (book) => db.prepare(`SELECT key,title,digest,markers,${columns.has('languages') ? 'languages' : "'[]' AS languages"},
+    ${columns.has('pdfSourceText') ? 'pdfSourceText IS NOT NULL' : '0'} AS reviewed,length(trim(text)) AS characters,
+    has_spoken_text(text) AS narratable FROM chapters WHERE book=? ORDER BY ordinal`).all(book.id);
   const newest = (book) => db.prepare("SELECT * FROM book_audio WHERE book=? AND kind='generated' ORDER BY created DESC,rowid DESC LIMIT 1").get(book.id);
 
   function publicRecording(row) {
     if (!row) return { state: 'missing' };
     const parts = JSON.parse(row.parts);
     const complete = parts.filter(({ id }) => db.prepare("SELECT id FROM audio WHERE id=? AND state='ready'").get(id)).length;
-    const segments = row.state === 'ready' ? JSON.parse(row.segments) : [];
+    const timing = row.state === 'ready' ? applyPageStarts(JSON.parse(row.segments), JSON.parse(row.markers), JSON.parse(row.pdfTiming)) : null;
     return {
       id: row.id, state: row.state, error: row.error, complete, total: parts.length, duration: row.duration,
       kind: row.kind, name: row.name, quality: row.quality ? JSON.parse(row.quality) : null, alignmentRevision: row.alignmentRevision,
       ...(row.state === 'ready' ? {
         url: `/api/books/${row.book}/audio/${row.id}`,
-        segments, markers: JSON.parse(row.markers), approximateSections: segments.filter((part) => part.approximate).length,
+        ...timing, approximateSections: timing.segments.filter((part) => part.approximate || part.pageOnly).length,
       } : {}),
     };
   }
@@ -92,6 +96,30 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
     return JSON.parse(row.segments).find((part) => part.key === key);
   }
 
+  function timingRecording(book, id) {
+    const row = db.prepare("SELECT * FROM book_audio WHERE id=? AND book=? AND state='ready' AND kind='generated'").get(id, book.id);
+    if (!row) throw new RequestError(404, 'This finished PDF audiobook was not found.');
+    if (row.digest !== digest(sections(book))) throw new RequestError(409, 'Generate audio for the current PDF text first.');
+    return row;
+  }
+
+  function pdfTiming(book, id) {
+    const row = timingRecording(book, id), starts = JSON.parse(row.pdfTiming);
+    const text = db.prepare('SELECT substr(text,1,260) AS opening FROM chapters WHERE book=? AND key=?');
+    return { revision: row.alignmentRevision, url: `/api/books/${book.id}/audio/${row.id}`, duration: row.duration,
+      pages: JSON.parse(row.segments).map(({ key, start }) => ({ key, number: Number(key.slice(4)), original: start,
+        start: starts[key] ?? start, opening: text.get(book.id, key)?.opening || '' })) };
+  }
+
+  function savePdfTiming(book, id, body) {
+    const row = timingRecording(book, id);
+    if (body.revision !== row.alignmentRevision) throw new RequestError(409, 'The timing changed. Reopen the editor before saving.');
+    const starts = validatePageStarts(JSON.parse(row.segments), row.duration, body.starts);
+    const value = JSON.stringify(starts);
+    if (row.pdfTiming !== value) db.prepare('UPDATE book_audio SET pdfTiming=?,alignmentRevision=alignmentRevision+1 WHERE id=?').run(value, row.id);
+    return pdfTiming(book, id);
+  }
+
   async function assemble(job) {
     const owner = db.prepare('SELECT owner FROM analyses WHERE book=?').get(job.book)?.owner;
     const book = library.getBook(job.book, { id: owner });
@@ -135,7 +163,7 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
         }
         const timings = JSON.parse(part.timings);
         segments.push({ key: part.chapter, title: section.title, start, end, scale, audioId: part.id,
-          textHash: part.digest, approximate: timings.some((word) => word.estimated) });
+          textHash: part.digest, approximate: timings.some((word) => word.estimated), ...(section.reviewed ? { pageOnly: true } : {}) });
         const timed = timings.filter((word) => word.start != null);
         for (const marker of JSON.parse(section.markers || '[]')) {
           const word = timed.find((word) => word.from >= marker.from);
@@ -186,7 +214,7 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
   }
 
   return {
-    status, queue, segment, assemble, cancel, files,
+    status, queue, segment, assemble, cancel, files, pdfTiming, savePdfTiming,
     isSynced(book) {
       const ready = db.prepare("SELECT digest FROM book_audio WHERE book=? AND state='ready' AND duration>0 AND json_array_length(segments)>0").all(book.id);
       if (!ready.length) return false;

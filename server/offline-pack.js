@@ -5,7 +5,7 @@ import { setImmediate as yieldLoop } from 'node:timers/promises';
 
 export function offlinePacks({ learning, mandarin, lookupSynonyms }) {
   return async (book, selected) => {
-    const sections = learning.textSections(book), lexical = {}, chinese = {}, candidates = new Set();
+    const sections = learning.textSections(book, { original: true }), lexical = {}, chinese = {}, candidates = new Set();
     const words = new Map(); let scanned = 0;
     for (const section of sections) {
       for (const token of section.tokens.length ? section.tokens : textWords(section.text, book.language)) {

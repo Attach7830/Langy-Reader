@@ -179,7 +179,7 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
       },
       audioUnit() {
         const root = shell.querySelector('.textLayer');
-        return root?.childElementCount ? { key: `pdf:${pageNumber}`, root, track: () => trackText(root, language, true) } : null;
+        return root ? { key: `pdf:${pageNumber}`, root, track: () => trackText(root, language, true) } : null;
       },
       audioTarget(key) { return Number(key.split(':')[1]); },
       revealWord(range, { valid = () => true } = {}) {

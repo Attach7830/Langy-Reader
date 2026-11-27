@@ -101,8 +101,8 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   function bindLocal(current, next) {
     descriptor = current; unit = next; local = current.track();
     local.annotate(next.tokens || []);
-    timingMap = local.match(next.audio.timings || []);
     const segment = segmentFor(next.key);
+    timingMap = segment?.pageOnly ? new Map() : local.match(next.audio.timings || []);
     timed = segment ? (next.audio.timings || []).flatMap((stamp, index) => stamp.start == null ? [] : [{
       index, start: segment.start + stamp.start * segment.scale, end: segment.start + stamp.end * segment.scale, estimated: stamp.estimated,
     }]) : [];
@@ -142,7 +142,9 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   }
   // Page changes run serially; another scrub replaces the pending target.
   async function follow(force = false) {
-    if (!enabled || !ready() || initialSeek || manualNavigation || !renderer()?.audioUnit?.()) return;
+    const current = renderer()?.audioUnit?.();
+    if (!enabled || !ready() || initialSeek || manualNavigation || !current) return;
+    if (audio.paused && !force && current.key.startsWith('pdf:') && !segmentFor(current.key)) return;
     followAgain = true; forceFollow ||= force;
     if (following) return;
     following = true;
@@ -182,7 +184,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     if (!page) { manualPage = undefined; pendingWordTime = undefined; }
     initialSeek = false;
     audio.currentTime = Math.max(0, Math.min(recording.duration, time));
-    controls(); drawHighlight(); void follow(true);
+    controls(); drawHighlight(); void follow(!page);
   }
   function skipBy(seconds) { seekTo(audio.currentTime + seconds); }
   function jumpChapter(direction) {
@@ -372,7 +374,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   });
   seek.addEventListener('input', () => seekTo(Number(seek.value)));
   chapters.addEventListener('change', () => seekTo(recording?.markers[Number(chapters.value)]?.time || 0));
-  audio.addEventListener('seeking', () => { void follow(true); });
+  audio.addEventListener('seeking', () => { void follow(); });
   audio.addEventListener('timeupdate', () => { controls(); drawHighlight(); void follow(); });
   function tick() { drawHighlight(); void follow(); if (!audio.paused) animation = requestAnimationFrame(tick); }
   audio.addEventListener('play', () => { controls(); cancelAnimationFrame(animation); tick(); });
