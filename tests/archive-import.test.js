@@ -5,6 +5,7 @@ import { mkdtemp, readdir, readFile, writeFile, rm, stat } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
+import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { archiveMD5, openArchive } from '../server/annas-archive.js';
 import { maxUpload, openLibrary } from '../server/books.js';
@@ -61,6 +62,7 @@ test('member import keeps the key private, imports a verified EPUB, and reports 
     assert.throws(() => archive.queue({ reference: md5 }), /already running/u);
     const complete = await finished(archive, job.id);
     assert.equal(complete.state, 'ready', complete.error);
+    assert.ok(Number.isSafeInteger(complete.completedAt));
     assert.equal(complete.book.categoryId, 'reading');
     assert.equal(analyzed, complete.book.id);
     assert.deepEqual(await readFile(library.filePath(complete.book)), epub);
@@ -111,6 +113,18 @@ test('an exhausted fast quota offers a private slow-download continuation and im
   assert.equal(complete.state, 'ready', complete.error); assert.equal(complete.book.categoryId, 'reading'); assert.equal(complete.book.title, 'Updated title');
   assert.equal(complete.book.coverStyle, 'forest'); assert.equal(calls.length, 2);
   assert.ok(!JSON.stringify(complete).includes('private-file-token')); assert.deepEqual(await readFile(library.filePath(complete.book)), epub);
+});
+
+test('completed legacy imports receive a saved completion time that stays fixed across restarts', async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), 'langy-import-completed-')); t.after(() => rm(folder, { recursive: true, force: true }));
+  const db = new DatabaseSync(join(folder, 'archive-jobs.sqlite'));
+  db.exec('CREATE TABLE jobs(id TEXT PRIMARY KEY,json TEXT NOT NULL) STRICT');
+  db.prepare('INSERT INTO jobs VALUES(?,?)').run('legacy', JSON.stringify({ id: 'legacy', state: 'ready', book: { id: 'book', title: 'Imported book' } })); db.close();
+  let clock = 100000;
+  let archive = await openArchive(folder, { library: { uploads: folder }, autoStart: false, now: () => clock });
+  assert.equal(archive.list()[0].completedAt, clock); archive.close();
+  clock += 6000; archive = await openArchive(folder, { library: { uploads: folder }, autoStart: false, now: () => clock });
+  assert.equal(archive.list()[0].completedAt, 100000); assert.equal(archive.list()[0].book.id, 'book'); archive.close();
 });
 
 test('free slow downloads need no key, retain the pending edition through browser checks and verify uploaded files', async (t) => {
