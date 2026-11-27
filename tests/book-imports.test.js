@@ -9,17 +9,22 @@ import {openBookImports} from '../server/book-imports.js';
 import {sampleBook} from '../server/sample.js';
 
 const response=(value)=>Object.assign(Readable.from([Buffer.isBuffer(value)?value:Buffer.from(JSON.stringify(value))]),{statusCode:200,headers:{}});
-test('queued web imports retain folder/audio options through restart, reject HTML, and expose only their owner’s jobs',async(t)=>{
-  const dir=await mkdtemp(join(tmpdir(),'langy-web-import-')),library=await openLibrary(dir),bytes=await sampleBook();let service;const owner={id:'reader'},other={id:'other'};
+test('queued web imports retain folder, sharing and audio options through restart and expose only their owner’s jobs',async(t)=>{
+  const dir=await mkdtemp(join(tmpdir(),'langy-web-import-')),bytes=await sampleBook();
+  const owner={id:'reader',userId:'reader-account',authenticated:true},recipient={id:'other-reader',userId:'other-reader-account',authenticated:true},other={id:'other'};
+  const library=await openLibrary(dir,null,{knownSharingUser:(id)=>id===recipient.userId});
+  let service;
   t.after(async()=>{service.close();await rm(dir,{recursive:true,force:true});});
   library.saveCategory('private-folder',{name:'Reading'},true,owner);
-  let options;const settings={library,autoStart:false,onImport:(_book,details)=>{options=details;},request:async(url)=>url.includes('html')?response(Buffer.from('<html>Not a book</html>')):response(bytes)};
+  let options;const settings={library,autoStart:false,visitorForOwner:()=>owner,onImport:(_book,details)=>{options=details;},request:async(url)=>url.includes('html')?response(Buffer.from('<html>Not a book</html>')):response(bytes)};
   service=await openBookImports(dir,settings);
   for(const url of ['http://example.test/book.pdf','https://127.0.0.1/book.epub'])assert.throws(()=>service.queue({url},owner),{status:422});
-  const queued=service.queue({url:'https://example.test/book.epub',categoryId:'private-folder',title:'From a public source',autoAudiobook:true,audiobookDelayMinutes:9},owner);
+  const queued=service.queue({url:'https://example.test/book.epub',categoryId:'private-folder',title:'From a public source',autoAudiobook:true,audiobookDelayMinutes:9,shareWith:JSON.stringify([recipient.userId])},owner);
   service.close();service=await openBookImports(dir,settings);await service.pump();
   const done=service.list(owner).find((job)=>job.id===queued.id);assert.equal(done.state,'ready',done.error);assert.deepEqual(service.list(other),[]);
   const book=library.getBook(done.book,owner);assert.equal(book.categoryId,'private-folder');assert.equal(book.title,'From a public source');assert.deepEqual(await readFile(library.filePath(book)),bytes);assert.equal(options.audiobookDelayMinutes,9);
+  assert.equal(library.getBook(book.id,recipient).sharedWithMe,true);assert.throws(()=>library.getBook(book.id,other),{status:404});
+  assert.deepEqual(service.list(recipient),[],'sharing the result does not share the import job');
   const bad=service.queue({url:'https://example.test/html'},owner);await service.pump();assert.equal(service.list(owner).find((job)=>job.id===bad.id).state,'error');
   assert.throws(()=>library.getBook(bad.id,owner),{status:404});assert.deepEqual(await readdir(library.uploads),[]);
   const waiting=service.queue({url:'https://example.test/wait.epub'},owner);assert.throws(()=>service.cancel(waiting.id,other),{status:404});service.cancel(waiting.id,owner);await service.pump();assert.equal(service.list(owner).find((job)=>job.id===waiting.id).state,'cancelled');

@@ -40,8 +40,12 @@ async function fixture(t) {
     const result = await fetch(base + '/api/account/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: name, password }) });
     assert.equal(result.status, 200, await result.clone().text()); const cookie = result.headers.getSetCookie().find((value) => value.startsWith('langy_session='))?.split(';')[0]; assert.ok(cookie); return { Cookie: cookie };
   }
-  async function upload(headers, title, shared = false) {
-    const data = new FormData(); data.set('title', title); data.set('language', 'es'); data.set('shared', String(shared)); data.set('file', new Blob([bytes]), 'book.epub'); return api('/api/books', headers, { body: data, status: 201 });
+  async function upload(headers, title, shared = false, shareWith) {
+    const data = new FormData();
+    data.set('title', title); data.set('language', 'es'); data.set('shared', String(shared));
+    if (shareWith) data.set('shareWith', JSON.stringify(shareWith));
+    data.set('file', new Blob([bytes]), 'book.epub');
+    return api('/api/books', headers, { body: data, status: 201 });
   }
   await start(); return { dir, api, login, upload, start, before, base: () => base };
 }
@@ -112,6 +116,56 @@ test('self-hosted users have private libraries, owner-controlled sharing and iso
     await f.api(`/api/books/${privateBook.id}`, member, { method: 'PATCH', body: { title: privateBook.title, language: 'es', shared: false } });
     await f.api(`/api/books/${privateBook.id}/file`, third, { status: 404 });
   });
+  await t.test('selected-user grants control the library, direct downloads and OPDS and can be revoked', async () => {
+    await f.api('/api/sharing/recipients', {}, { status: 401 });
+    const { users } = await f.api('/api/sharing/recipients', member);
+    assert.deepEqual(users.map(({ username }) => username), ['reader', 'third']);
+    assert.ok(users.every((user) => Object.keys(user).sort().join(',') === 'id,username'));
+    const [reader, readerThree] = users;
+    const book = await f.upload(member, 'A selectively shared book', false, [readerThree.id, readerThree.id]);
+    assert.deepEqual(book.shareWith, [readerThree.id]);
+    const path = '/api/books/' + book.id, file = path + '/file', opds = `/opds/books/${book.id}/file.epub`;
+    const byId = async (headers) => (await f.api('/api/library', headers)).books.find(({ id }) => id === book.id);
+    const download = (path, headers) => fetch(f.base() + path, { headers });
+    const edit = (body, status = 200) => f.api(path, member, { method: 'PATCH', body, status });
+    const recipient = await byId(third);
+    assert.equal(recipient.sharedWithMe, true);
+    assert.equal(recipient.canEdit, false);
+    assert.equal(Object.hasOwn(recipient, 'shareWith'), false);
+    assert.equal(await byId(admin), undefined);
+    for (const suffix of ['/file', '/cover', '/learning', '/narration', '/recordings', '/offline', '/progress']) {
+      await f.api(path + suffix, admin, { status: 404 });
+    }
+    await f.api(path, third, { method: 'PATCH', body: { shared: true }, status: 403 });
+    assert.equal((await download(file, third)).status, 200);
+    assert.equal((await download(opds, third)).status, 200);
+    assert.equal((await download(opds, admin)).status, 404);
+    assert.match(await (await download('/opds/books', third)).text(), new RegExp(book.title, 'u'));
+    assert.doesNotMatch(await (await download('/opds/books', admin)).text(), new RegExp(book.title, 'u'));
+    await f.api(path + '/read-status', third, { method: 'PATCH', body: { read: true } });
+    assert.ok((await byId(third)).readAt);
+    assert.equal((await byId(member)).readAt, null);
+
+    const other = (await f.api('/api/account', member)).user.id;
+    for (const body of [{ shareWith: [other] }, { shareWith: ['unknown'] }, { shareWith: '[broken' },
+      { shared: true, shareWith: [reader.id] }]) await edit(body, 422);
+    assert.deepEqual((await edit({ title: book.title, shared: false })).shareWith, [readerThree.id], 'legacy metadata saves retain selected users');
+    assert.equal((await download(file, third)).status, 200);
+    assert.equal((await download(file, admin)).status, 404);
+    assert.deepEqual((await edit({ shareWith: [reader.id] })).shareWith, [reader.id]);
+    await f.start();
+    assert.equal((await byId(admin)).sharedWithMe, true);
+    assert.equal((await download(file, admin)).status, 200);
+    assert.equal(await byId(third), undefined);
+    await f.api(path + '/progress', third, { status: 404 });
+    assert.equal((await download(opds, third)).status, 404);
+    assert.equal((await edit({ shared: true })).shared, true);
+    assert.equal((await download(file, third)).status, 200);
+    assert.deepEqual((await edit({ shareWith: [] })).shareWith, []);
+    assert.equal((await download(file, third)).status, 404);
+    assert.equal((await download(file, admin)).status, 404);
+    assert.equal((await download(file, member)).status, 200);
+  });
   await t.test('read status, bookmarks, preferences and hiding shared books are account-private', async () => {
     await f.api(`/api/books/${sharedBook.id}/read-status`, third, { method: 'PATCH', body: { read: true } });
     assert.ok((await f.api('/api/library', third)).books.find((book) => book.id === sharedBook.id).readAt);
@@ -164,8 +218,11 @@ test('self-hosted users have private libraries, owner-controlled sharing and iso
   });
   await t.test('download jobs and their continuation controls belong to the requesting user', async () => {
     const body = { reference: 'a'.repeat(32), downloadMode: 'slow', title: 'Private queued title' };
-    const one = await f.api('/api/imports/anna', member, { body, status: 202 });
+    const { users } = await f.api('/api/sharing/recipients', member);
+    const shareWith = [users.find(({ username }) => username === 'third').id];
+    const one = await f.api('/api/imports/anna', member, { body: { ...body, shareWith }, status: 202 });
     const two = await f.api('/api/imports/anna', admin, { body: { ...body, title: 'Admin queued title' }, status: 202 });
+    assert.deepEqual(one.details.shareWith, shareWith);
     assert.ok((await f.api('/api/imports/anna', member)).jobs.every((job) => job.id === one.id));
     await f.api('/api/imports/anna/' + one.id, admin, { status: 404 });
     await f.api('/api/imports/anna/' + one.id, third, { method: 'DELETE', status: 404 });

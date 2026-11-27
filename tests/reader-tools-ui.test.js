@@ -258,8 +258,11 @@ test('format and shared-book filters combine, persist in preferences and expose 
   format.value = 'pdf'; format.dispatchEvent(new dom.window.Event('change')); assert.deepEqual(saved, { libraryFormat: 'pdf' });
   await ui.refresh(); assert.equal(format.value, 'pdf'); assert.equal(document.querySelectorAll('#books .book-card').length, 1);
   format.value = ''; format.dispatchEvent(new dom.window.Event('change')); assert.equal(document.querySelectorAll('#books .book-card').length, 2);
-  document.querySelector('[aria-label="Edit Own shared book"]').click(); assert.equal(document.querySelector('#book-sharing-controls').hidden, false); assert.equal(document.querySelector('#book-form').elements.shared.checked, true);
-  document.querySelector('#book-dialog').close(); document.querySelector('#import-book').click(); assert.equal(document.querySelector('#book-form').elements.shared.checked, false, 'new books are private by default');
+  document.querySelector('[aria-label="Edit Own shared book"]').click();
+  assert.equal(document.querySelector('#book-sharing-controls').hidden, false);
+  assert.equal(document.querySelector('#book-sharing-mode').value, 'everyone');
+  document.querySelector('#book-dialog').close(); document.querySelector('#import-book').click();
+  assert.equal(document.querySelector('#book-sharing-mode').value, 'private', 'new books are private by default');
 });
 
 test('completed offline downloads leave the queue automatically without removing the downloaded book', async (t) => {

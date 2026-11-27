@@ -50,7 +50,7 @@ await verifyStorage(dir);
 const limits = demo ? { upload: demoUploadLimit, books: demoBookLimit, storage: demoStorageLimit } : null;
 let accountStorage;
 const reserveStorage = (owner, bytes) => accountStorage ? accountStorage.reserve(owner, bytes) : Promise.resolve(() => {});
-const library = await openLibrary(dir, limits, { reserveStorage });
+const library = await openLibrary(dir, limits, { reserveStorage, knownSharingUser: (id) => accounts.ownerForUser(id) !== undefined });
 const scheduler = openProcessScheduler(dir, { paused: true });
 const password = process.env.READER_PASSWORD || '';
 const accounts = await openAccounts(dir, { demo, username: process.env.READER_USER || 'reader', password, reservedUsernames: [process.env.READER_SYNC_USER] });
@@ -108,7 +108,7 @@ const webImports = await openBookImports(dir,{library,demo,scheduler,connector:k
 const processes = openProcesses(dir, { library, webImports, archive, discovery, learning, demo, account: readingAccount, scheduler });
 scheduler.resume();
 const uploadLimit = limits?.upload ?? maxUpload;
-const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 12, fieldSize: 4096 } });
+const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 13, fieldSize: 4096 } });
 const audioUpload = multer({ dest: library.uploads, limits: { fileSize: maxAudioUpload, files: 1, fields: 1, fieldSize: 1024 } });
 const chapterUpload = multer({ storage: chapterStorage(library.uploads), limits: { fileSize: maxAudioUpload, files: chapterFileLimit, fields: 1, fieldSize: 1024 } });
 const demoUploads = demo ? [limitJobs({ perMinute: 32, perVisitor: 8 })] : [];
@@ -166,6 +166,10 @@ app.use(async (req, res, next) => {
   if (req.visitor) return next();
   if (req.path.startsWith('/opds')) res.set('WWW-Authenticate', 'Basic realm="Langy Reader", charset="UTF-8"');
   res.status(401).json({ error: 'Sign in to Langy Reader.', authenticationRequired: true });
+});
+app.get('/api/sharing/recipients', (req, res) => {
+  if (!req.visitor?.authenticated) throw new RequestError(403, 'Sign in on a self-hosted installation to choose sharing recipients.');
+  res.json({ users: accounts.sharingUsers(req.visitor) });
 });
 app.post('/api/account/password', async (req, res) => {
   if (!accounts.enabled) throw new RequestError(403, 'Accounts are not enabled.');
@@ -347,7 +351,7 @@ app.delete('/api/settings/kavita', (req,res)=>res.json(kavita.remove(req.visitor
 app.get('/api/kavita/catalogue', async(req,res)=>res.json(await kavita.catalogue(req.visitor,req.query)));
 app.get('/api/kavita/covers/:id', async(req,res)=>{const image=await kavita.cover(req.params.id,req.visitor);res.set('Cache-Control','private, no-store').type(image.thumbnailType).send(image.thumbnail);});
 app.post('/api/imports/kavita', (req,res)=>res.status(202).json(webImports.queueKavita(req.body ?? {},req.visitor)));
-const conversionUpload = multer({dest:library.uploads,limits:{fileSize:Math.min(uploadLimit,conversionLimit),files:1,fields:12,fieldSize:4096}}).single('file');
+const conversionUpload = multer({dest:library.uploads,limits:{fileSize:Math.min(uploadLimit,conversionLimit),files:1,fields:13,fieldSize:4096}}).single('file');
 app.post('/api/imports/convert', ...demoUploads, (req,res,next)=>{req.conversionUpload=true;conversionUpload(req,res,next);}, async(req,res)=>res.status(202).json(await webImports.queueFile(req.file,req.body ?? {},req.visitor)));
 app.get('/api/imports/web', (req,res)=>res.json({jobs:webImports.list(req.visitor)}));
 app.post('/api/imports/web/:id/retry',(req,res)=>res.status(202).json(webImports.retry(req.params.id,req.visitor)));
@@ -444,9 +448,9 @@ app.post('/api/books', ...demoUploads, (req, _res, next) => {
 }, upload.single('file'), async (req, res) => {
   let narrationOptions;
   try {
-    const allowed = new Set(['title','author','language','languages','categoryId','coverStyle','coverUrl','autoAudiobook','audiobookDelayMinutes','shared','series','seriesIndex']);
+    const allowed = new Set(['title','author','language','languages','categoryId','coverStyle','coverUrl','autoAudiobook','audiobookDelayMinutes','shared','shareWith','series','seriesIndex']);
     if (Object.keys(req.body ?? {}).some((key) => !allowed.has(key))) throw new RequestError(400, 'Too many book details were submitted. Refresh the page and try again.');
-    if (Object.entries(req.body ?? {}).some(([key, value]) => typeof value !== 'string' || key !== 'coverUrl' && Buffer.byteLength(value) > 1024)) throw new RequestError(400, 'One of the book details is too long or invalid. Shorten it and try again.');
+    if (Object.entries(req.body ?? {}).some(([key, value]) => typeof value !== 'string' || !['coverUrl', 'shareWith'].includes(key) && Buffer.byteLength(value) > 1024)) throw new RequestError(400, 'One of the book details is too long or invalid. Shorten it and try again.');
     narrationOptions = importNarrationOptions(req.body ?? {});
     if (demo && narrationOptions) throw new RequestError(403, 'Scheduled audiobook generation is available on self-hosted installations.');
   } catch (error) { if (req.file?.path) await rm(req.file.path, { force: true }); throw error; }

@@ -284,7 +284,7 @@ export async function openArchive(dir, { library, demo = false, request = public
     const language = typeof body.language === 'string' ? body.language.trim() : '';
     if (language && !normalizeLanguage(language)) throw new RequestError(422, 'Enter a valid book language code.');
     if (body.categoryId && !library.snapshot(visitor).categories.some(({ id }) => id === body.categoryId)) throw new RequestError(422, 'Choose a category that exists.');
-    const details = Object.fromEntries(['title', 'author', 'language', 'languages', 'categoryId', 'coverStyle', 'coverUrl', 'shared', 'series', 'seriesIndex'].filter((key) => body[key] !== undefined).map((key) => [key, body[key]]));
+    const details = Object.fromEntries(['title', 'author', 'language', 'languages', 'categoryId', 'coverStyle', 'coverUrl', 'shared', 'shareWith', 'series', 'seriesIndex'].filter((key) => body[key] !== undefined).map((key) => [key, body[key]]));
     Object.assign(details, importNarrationOptions(body));
     return { id: randomUUID(), owner: visitor?.id || '', md5, details, mode, batchId, queueUnavailable: body.queueUnavailable ?? true, created: now(), source: 'fast', state: 'queued', bytes: 0, total: null, error: null, nextAttempt: null, attempts: 0 };
   }
@@ -306,7 +306,8 @@ export async function openArchive(dir, { library, demo = false, request = public
     const batch = body.books.map((book) => {
       if (!book || typeof book !== 'object') throw new RequestError(422, 'Enter a link for each book.');
       return makeJob({ language: body.language, languages: body.languages, categoryId: body.categoryId, coverStyle: body.coverStyle, coverUrl: body.coverUrl, downloadMode: body.downloadMode, queueUnavailable: body.queueUnavailable,
-        autoAudiobook: body.autoAudiobook, audiobookDelayMinutes: body.audiobookDelayMinutes, shared: body.shared, series: book.series ?? body.series, seriesIndex: book.seriesIndex ?? body.seriesIndex,
+        autoAudiobook: body.autoAudiobook, audiobookDelayMinutes: body.audiobookDelayMinutes, shared: body.shared, shareWith: body.shareWith,
+        series: book.series ?? body.series, seriesIndex: book.seriesIndex ?? body.seriesIndex,
         reference: book.reference, title: book.title, author: body.sameAuthor ? body.author : book.author }, batchId, visitor);
     });
     if (new Set(batch.map((job) => job.md5)).size !== batch.length) throw new RequestError(422, 'Each row must refer to a different book edition.');
@@ -345,7 +346,7 @@ export async function openArchive(dir, { library, demo = false, request = public
     if (typeof details === 'string') { try { details = JSON.parse(details); } catch { throw new RequestError(422, 'Invalid book details.'); } }
     if (!details || typeof details !== 'object' || Array.isArray(details)) throw new RequestError(422, 'Invalid book details.');
     const options = importNarrationOptions({ ...job.details, ...details });
-    for (const key of ['title', 'author', 'language', 'languages', 'categoryId', 'coverStyle', 'coverUrl', 'shared', 'series', 'seriesIndex']) if (Object.hasOwn(details, key)) job.details[key] = details[key];
+    for (const key of ['title', 'author', 'language', 'languages', 'categoryId', 'coverStyle', 'coverUrl', 'shared', 'shareWith', 'series', 'seriesIndex']) if (Object.hasOwn(details, key)) job.details[key] = details[key];
     if (Object.hasOwn(details, 'autoAudiobook') || Object.hasOwn(details, 'audiobookDelayMinutes')) {
       job.details.autoAudiobook = Boolean(options); if (options) job.details.audiobookDelayMinutes = options.audiobookDelayMinutes;
     }

@@ -192,6 +192,10 @@ export async function openAccounts(dir, { demo = false, username = 'reader', pas
   }
   return { enabled, demo, identify, authenticate, issue, remembered, logout, requireAdmin, create, update, resetPassword, visitorForOwner,
     ownerForUser(id) { return userById(id)?.owner; },
+    sharingUsers(visitor) {
+      return db.prepare('SELECT id,username,disabled,expiresAt FROM users WHERE id<>? ORDER BY username COLLATE NOCASE')
+        .all(visitor.userId).filter(active).map(({ id, username }) => ({ id, username }));
+    },
     policyForOwner(owner = '') { const user = userByOwner(owner); return user ? { ...publicUser(user), active: active(user) } : { ...policyDefaults, active: !enabled && !owner }; },
     canUseArchiveKey(visitor) { const user = userByOwner(visitor?.id || ''); return !enabled || active(user) && (user.role === 'admin' || Boolean(user.sharedArchive)); },
     revokeSessions(id) { if (!userById(id)) throw new RequestError(404, 'Account not found.'); db.prepare('DELETE FROM sessions WHERE user=?').run(id); return { revoked: true }; },

@@ -5,6 +5,7 @@ import { parseLanguage } from './languages.js';
 import { refreshStorage, showStorage } from './storage.js';
 import { audioTools, audioChanged } from './ui-audio-tools.js';
 import { bookLanguagePicker } from './book-languages.js';
+import { bookSharing } from './book-sharing.js';
 import { vocabularyLibrary, unfamiliarLabel, recommendationRows, bookCountLabel } from './ui-vocabulary.js';
 import { bookVocabulary } from './ui-book-vocabulary.js';
 import { bookMetadataFields } from './book-metadata-fields.js';
@@ -41,6 +42,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   const bulkImport = archiveBulk(bookForm);
   const ocr = pdfOCR({ changed: refresh, readingLanguages });
   const languagePicker = bookLanguagePicker(bookForm);
+  const sharing = bookSharing(bookForm);
   const vocabularyUI = vocabularyLibrary({ changed: refresh });
   const bookVocabularyUI = bookVocabulary();
   const categoryDialog = $('#category-dialog');
@@ -142,7 +144,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     if (book.series) info.append(element('span', 'book-meta book-series', seriesLabel(book)));
     const actions = element('div', 'book-reading-actions');
     if (book.sharedWithMe) actions.append(element('span', 'book-read-badge shared-book-badge', 'Shared with you'));
-    else if (book.shared) actions.append(element('span', 'book-read-badge shared-book-badge', 'Shared'));
+    else if (book.shared || book.shareWith?.length) actions.append(element('span', 'book-read-badge shared-book-badge', 'Shared'));
     if (book.starredAt) actions.append(element('span', 'book-read-badge', 'Currently reading'));
     if (book.setAsideAt) actions.append(element('span', 'book-read-badge', 'Set aside'));
     if (saved && book.starredAt) actions.append(element('span', 'button secondary small book-resume-label', 'Resume'));
@@ -632,9 +634,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     $('#archive-slow-download').hidden = true;
     bookForm.elements.archiveReference.readOnly = false;
     bookForm.reset();
-    $('#book-sharing-controls').hidden = !snapshot.sharingAvailable;
-    bookForm.elements.shared.disabled = !snapshot.sharingAvailable;
-    bookForm.elements.shared.checked = Boolean(book?.shared);
+    sharing.set(book, snapshot.sharingAvailable);
     bulkImport.reset();
     stageFile();
     const isEdit = Boolean(book);
@@ -732,6 +732,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     let languages = job.details?.languages || [];
     if (typeof languages === 'string') { try { languages = JSON.parse(languages); } catch { languages = []; } }
     languagePicker.set(languages); showFolderLanguage(); showSlowImport(job);
+    sharing.set(job.details, snapshot.sharingAvailable);
     coverPicker.set(job.details || {});
     bookForm.elements.autoAudiobook.checked = Boolean(job.details?.autoAudiobook);
     bookForm.elements.audiobookDelayMinutes.value = job.details?.audiobookDelayMinutes ?? 10;
@@ -853,13 +854,15 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     if (bookPending || !bookDialog.open || submittedVisit !== bookVisit || submittedBook !== editingBook || submittedFile !== selectedFile || submittedSource !== $('#book-source').value) return;
     const data = new FormData(bookForm);
     if (!String(data.get('coverUrl') || '').trim()) data.delete('coverUrl');
-    if (snapshot.sharingAvailable) data.set('shared', String(bookForm.elements.shared.checked)); else data.delete('shared');
     if (!editingBook) data.set('autoAudiobook', String(bookForm.elements.autoAudiobook.checked));
     const rawLanguage = String(data.get('language') ?? '').trim();
     const language = parseLanguage(rawLanguage);
     if (rawLanguage && !language) return message('#book-error', 'Choose a language or enter a valid language code.');
     data.set('language', language);
-    try { data.set('languages', JSON.stringify(languagePicker.value())); }
+    try {
+      sharing.apply(data, Boolean(editingBook));
+      data.set('languages', JSON.stringify(languagePicker.value()));
+    }
     catch (error) { return message('#book-error', error.message); }
     const archiveImport = !editingBook && $('#book-source').value === 'anna', webImport = !editingBook && $('#book-source').value === 'web';
     const webURL=$('#book-web-url').value.trim();data.delete('bookURL');
@@ -975,7 +978,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   bookDialog.addEventListener('close',()=>coverSearchUI.reset());
   bookDialog.addEventListener('cancel', (event) => { if (bookPending && $('#book-source').value !== 'anna') event.preventDefault(); });
   bookDialog.addEventListener('close', () => metadataFields.cancel());
+  bookDialog.addEventListener('close', () => { if (!bookDialog.open) sharing.cancel(); });
   categoryDialog.addEventListener('cancel', (event) => { if (categoryPending) event.preventDefault(); });
 
-  return { refresh, render, dispose() { disposed = true; for (const controller of pendingCovers.values()) controller.abort(); pendingCovers.clear(); learningVisit++; unwatchApp(); surface.removeEventListener('langy-library-changed', libraryChanged); surface.removeEventListener('langy-audio-updated', libraryChanged); surface.removeEventListener('langy-open-process', openProcess); surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); ocr.dispose(); clearTimeout(downloadExpiry); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
+  return { refresh, render, dispose() { disposed = true; sharing.cancel(); for (const controller of pendingCovers.values()) controller.abort(); pendingCovers.clear(); learningVisit++; unwatchApp(); surface.removeEventListener('langy-library-changed', libraryChanged); surface.removeEventListener('langy-audio-updated', libraryChanged); surface.removeEventListener('langy-open-process', openProcess); surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); ocr.dispose(); clearTimeout(downloadExpiry); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
 }

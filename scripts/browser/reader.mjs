@@ -966,9 +966,10 @@ try {
       assert.equal((await (await resumed.request.get(base + '/api/account')).json()).user.username, 'member');
     } finally { await resumed.close(); }
   });
-  await check('mobile readers can import privately and share an existing book from Edit', async () => {
+  await check('mobile readers can import privately and choose individual recipients from Edit', async () => {
     await memberPage.locator('#import-book').click(); await memberPage.locator('#book-dialog').waitFor({ state: 'visible' });
-    assert.equal(await memberPage.locator('#book-form [name=shared]').isChecked(), false);
+    const sharingMode = memberPage.locator('#book-sharing-mode');
+    assert.equal(await sharingMode.inputValue(), 'private');
     await memberPage.locator('#book-file').setInputFiles({ name: 'member.epub', mimeType: 'application/epub+zip', buffer: await zip.generateAsync({ type: 'nodebuffer' }) });
     await memberPage.waitForFunction(() => document.querySelector('#book-form [name=title]').value === 'Reader interactions');
     await memberPage.locator('#book-form [name=title]').fill('Member private book'); await memberPage.locator('#book-submit').click();
@@ -976,10 +977,27 @@ try {
     memberBook = (await (await memberContext.request.get(base + '/api/library')).json()).books.find((item) => item.title === 'Member private book');
     assert.ok(memberBook?.id); assert.equal(memberBook.shared, false);
     assert.equal((await context.request.get(base + '/api/books/' + memberBook.id + '/file')).status(), 404);
+    const created = await context.request.post(base + '/api/admin/users', { data: { username: 'other-reader', password: memberPassword } });
+    assert.equal(created.status(), 201);
+    const otherHeaders = { Authorization: 'Basic ' + Buffer.from(`other-reader:${memberPassword}`).toString('base64') };
     await memberPage.locator('.book-mobile-menu').click(); await memberPage.locator('#book-actions-body button').filter({ hasText: /^Edit book details$/ }).click();
-    await memberPage.locator('#book-form [name=shared]').check(); await memberPage.locator('#book-submit').click(); await memberPage.locator('#book-dialog').waitFor({ state: 'hidden' });
+    await sharingMode.selectOption('selected');
+    const recipients = memberPage.locator('#book-sharing-list');
+    await recipients.getByRole('checkbox', { name: 'reader', exact: true }).waitFor();
+    await memberPage.locator('#book-submit').click();
+    await memberPage.locator('#book-error').getByText('Choose at least one user to share with.').waitFor();
+    assert.equal(await recipients.getByRole('checkbox', { name: 'member', exact: true }).count(), 0);
+    assert.equal(await recipients.getByRole('checkbox', { name: 'other-reader', exact: true }).isChecked(), false);
+    await recipients.getByRole('checkbox', { name: 'reader', exact: true }).check();
+    await memberPage.locator('#book-submit').click(); await memberPage.locator('#book-dialog').waitFor({ state: 'hidden' });
     assert.equal((await context.request.get(base + '/api/books/' + memberBook.id + '/file')).status(), 200);
+    assert.equal((await context.request.get(base + '/api/books/' + memberBook.id + '/file', { headers: otherHeaders })).status(), 404);
     assert.equal((await context.request.patch(base + '/api/books/' + memberBook.id, { data: { title: 'Cannot edit someone else’s book' } })).status(), 403);
+    await memberPage.locator('.book-mobile-menu').click(); await memberPage.locator('#book-actions-body button').filter({ hasText: /^Edit book details$/ }).click();
+    assert.equal(await sharingMode.inputValue(), 'selected');
+    await recipients.getByRole('checkbox', { name: 'reader', exact: true }).waitFor();
+    assert.equal(await recipients.getByRole('checkbox', { name: 'reader', exact: true }).isChecked(), true);
+    await memberPage.locator('#book-dialog [data-close]').last().click();
   });
   await check('Show shared books persists across reloads while keeping the reader’s own shared books visible', async () => {
     assert.equal((await context.request.patch(base + '/api/books/' + book.id, { data: { shared: true } })).status(), 200);

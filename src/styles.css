@@ -503,6 +503,10 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .checkbox-row input, input[type="radio"] { accent-color: var(--brand); }
 .form-stack { display: grid; gap: 14px; }
+.book-sharing-users { min-width: 0; margin: 0; padding: 6px 12px 10px; border: 1px solid var(--border); border-radius: 8px; }
+.book-sharing-users legend { padding-inline: 5px; font-size: 13px; font-weight: 650; }
+.book-sharing-list { display: grid; max-height: min(30dvh, 220px); overflow: auto; overscroll-behavior: contain; }
+.book-sharing-list label { min-height: 36px; padding-inline: 4px; overflow-wrap: anywhere; }
 .recordings-section { display: grid; gap: 14px; border-top: 1px solid var(--border); padding-top: 16px; }
 .recording-item { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
 .recording-item .button-row { flex-wrap: wrap; }
