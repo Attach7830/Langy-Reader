@@ -5,6 +5,7 @@ import { getSettings, saveSettings, subscribeSettings } from './settings.js';
 import { androidApp } from './platform.js';
 import { processElapsed, processProgress } from './process-progress.js';
 import { translateUI } from './i18n.js';
+import { archiveTitleActions } from './archive-title-controls.js';
 
 const active = (job) => ['queued', 'running', 'waiting', 'downloading'].includes(job.state);
 export function processQueue({ now = Date.now, changePreferences = saveSettings } = {}) {
@@ -41,8 +42,9 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
           });card.append(cancel);
         }
         if (job.title || job.kind === 'archive') {
-          const title = element('p', 'process-book-title', job.title || (job.titlePending ? 'Retrieving book title…' : 'Book title unavailable'));
+          const title = element('p', 'process-book-title', job.title || (job.titlePending ? 'Retrieving book title…' : 'Book download'));
           if (job.title) title.setAttribute('data-user-content', ''); card.append(title);
+          if (!job.title && job.kind === 'archive') card.append(archiveTitleActions(job, { refresh }));
         }
         const state = ({ queued: 'Queued', running: 'In progress', waiting: 'Waiting', failed: 'Needs attention', completed: 'Finished', cancelled: 'Cancelled' })[job.state] || job.state;
         const detail = job.detail || (job.nextAttempt ? `Retry at ${new Date(job.nextAttempt).toLocaleTimeString()}` : '');

@@ -11,6 +11,7 @@ import { bookMetadataFields } from './book-metadata-fields.js';
 import { compareLibraryBooks } from '../shared/library-order.js';
 import { bookCover, bookCoverPicker } from './book-covers.js';
 import { archiveBulk } from './archive-bulk.js';
+import { archiveTitleActions } from './archive-title-controls.js';
 import { pdfOCR } from './pdf-ocr.js';
 import { bookLanguageSuggestions } from './reading-languages.js';
 import { showReadingTime } from './ui-reading-time.js';
@@ -728,8 +729,9 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     const host = $('#archive-download-list'); $('#archive-downloads').hidden = !visible.length;
     host.replaceChildren(...visible.slice().reverse().map((job) => {
       const row = element('div', 'archive-download-row');
-      row.append(element('strong', '', job.title || job.details?.title || job.book?.title || (job.titlePending ? 'Retrieving book title…' : 'Book title unavailable')),
+      row.append(element('strong', '', job.title || job.details?.title || job.book?.title || (job.titlePending ? 'Retrieving book title…' : 'Book download')),
         element('p', 'field-note', job.state === 'ready' ? 'Imported' : job.state === 'cancelled' ? 'Cancelled' : importProgress(job)));
+      if (!job.title && !job.details?.title && !['ready', 'cancelled'].includes(job.state)) row.append(archiveTitleActions(job, { refresh }));
       const actions = element('div', 'archive-download-actions');
       if (job.state === 'needs_action') { const button = element('button', 'button secondary small', 'Continue slow download'); button.type = 'button'; button.addEventListener('click', () => resumeSlow(job)); actions.append(button); }
       for (const [label, method, path, show] of [ ['Retry now', 'POST', `/api/imports/anna/${job.id}/retry`, ['error', 'retry_wait', 'needs_action'].includes(job.state)],

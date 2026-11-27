@@ -318,6 +318,36 @@ try {
     assert.equal((await (await context.request.get(base + '/api/settings/reader')).json()).preferences.processDismissMinutes, 0);
     await page.locator('#downloads-dialog [data-close]').click();
   });
+  await check('blocked download titles can be retried and named on mobile without restarting their download', async () => {
+    let job = { id: 'title-fixture', state: 'queued', source: 'fast', title: '', titleError: 'blocked', titlePending: false,
+      reference: '0123456789abcdef0123456789abcdef', details: {}, attempts: 0 }, retries = 0, saves = 0;
+    await page.route('**/api/library', async (route) => {
+      const response = await route.fetch(), data = await response.json();
+      await route.fulfill({ json: { ...data, archive: { ...data.archive, available: true, job, jobs: [job] } } });
+    });
+    await page.route('**/api/imports/anna/title-fixture/title**', async (route) => {
+      if (route.request().method() === 'PATCH') { job = { ...job, title: route.request().postDataJSON().title, titleError: null }; saves++; }
+      else { assert.ok(route.request().url().endsWith('/title/retry')); retries++; }
+      await route.fulfill({ json: job });
+    });
+    try {
+      await page.reload(); await page.locator('#books .book-card').first().waitFor();
+      await page.locator('#archive-downloads > summary').click();
+      const row = page.locator('#archive-download-list .archive-download-row');
+      await row.getByText('Anna’s Archive blocked the title lookup. It will retry automatically.', { exact: true }).waitFor();
+      assert.equal((await row.innerText()).includes(job.reference), false);
+      const retried = page.waitForResponse((response) => response.url().endsWith('/title-fixture/title/retry'));
+      await row.getByRole('button', { name: 'Retry title lookup', exact: true }).click(); await retried; assert.equal(retries, 1);
+      await row.getByRole('button', { name: 'Set title', exact: true }).click();
+      const dialog = page.locator('#archive-title-dialog'); await dialog.waitFor({ state: 'visible' });
+      await dialog.locator('input').fill('O capital no século XXI');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      await page.screenshot({ path: output + '/download-title-mobile.png' });
+      await dialog.getByRole('button', { name: 'Save title', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+      await row.getByText('O capital no século XXI', { exact: true }).waitFor();
+      assert.equal(saves, 1); assert.equal(job.state, 'queued'); assert.equal(job.attempts, 0);
+    } finally { await page.unroute('**/api/library'); await page.unroute('**/api/imports/anna/title-fixture/title**'); await page.reload(); await page.locator('#books .book-card').first().waitFor(); }
+  });
   await check('Import book offers a per-import audiobook delay and the server retains that schedule', async () => {
     assert.equal(importAudio.scheduled.state, 'waiting'); assert.equal(importAudio.scheduled.minutes, 7);
     assert.equal(importAudio.scheduled.due, book.addedAt + 7 * 60000);
