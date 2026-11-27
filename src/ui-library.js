@@ -47,7 +47,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   const learningDialog = $('#learning-dialog');
   let learningBook, learningTimer, libraryTimer, learningVisit = 0, libraryVisit = 0, learningParts = {}, learningPending = {};
   let snapshot = { categories: [], books: [], maxUpload: 120 * 1024 ** 2, demo: false };
-  let category = 'all', editingBook, editingCategory, selectedFile, slowImport;
+  let category = 'all', editingBook, editingCategory, selectedFile, slowImport, downloadExpiry;
+  const completedImports = new Map();
   let bookPending = false, categoryPending = false, bookVisit = 0;
   const metadataFields = bookMetadataFields({ form: bookForm, status: $('#book-metadata-status'), detect: detectMetadata,
     active: () => !editingBook && bookDialog.open && $('#book-source').value === 'file' });
@@ -715,8 +716,20 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   }
   $('#resume-slow-import').addEventListener('click', () => resumeSlow(snapshot.archive?.job));
   function renderDownloads(jobs) {
-    const host = $('#archive-download-list'); $('#archive-downloads').hidden = !jobs.length;
-    host.replaceChildren(...jobs.slice().reverse().map((job) => {
+    clearTimeout(downloadExpiry);
+    const time = Date.now(), completed = new Set(jobs.filter((job) => job.state === 'ready').map((job) => job.id));
+    for (const id of completedImports.keys()) if (!completed.has(id)) completedImports.delete(id);
+    for (const job of jobs) if (job.state === 'ready' && !completedImports.has(job.id)) {
+      completedImports.set(job.id, Math.min(time, Number.isFinite(job.completedAt) ? job.completedAt : time));
+    }
+    const visible = jobs.filter((job) => job.state !== 'ready' || completedImports.get(job.id) + 5000 > time);
+    const deadlines = visible.filter((job) => job.state === 'ready').map((job) => completedImports.get(job.id) + 5000);
+    if (deadlines.length) {
+      downloadExpiry = setTimeout(() => { if (!disposed) renderDownloads(snapshot.archive?.jobs || []); }, Math.max(1, Math.min(...deadlines) - time));
+      downloadExpiry.unref?.();
+    }
+    const host = $('#archive-download-list'); $('#archive-downloads').hidden = !visible.length;
+    host.replaceChildren(...visible.slice().reverse().map((job) => {
       const row = element('div', 'archive-download-row');
       row.append(element('strong', '', job.details?.title || job.book?.title || job.reference?.slice(0, 12) || 'Book download'),
         element('p', 'field-note', job.state === 'ready' ? 'Imported' : job.state === 'cancelled' ? 'Cancelled' : importProgress(job)));
@@ -942,5 +955,5 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   bookDialog.addEventListener('close', () => metadataFields.cancel());
   categoryDialog.addEventListener('cancel', (event) => { if (categoryPending) event.preventDefault(); });
 
-  return { refresh, render, dispose() { disposed = true; for (const controller of pendingCovers.values()) controller.abort(); pendingCovers.clear(); learningVisit++; unwatchApp(); surface.removeEventListener('langy-library-changed', libraryChanged); surface.removeEventListener('langy-audio-updated', libraryChanged); surface.removeEventListener('langy-open-process', openProcess); surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); ocr.dispose(); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
+  return { refresh, render, dispose() { disposed = true; for (const controller of pendingCovers.values()) controller.abort(); pendingCovers.clear(); learningVisit++; unwatchApp(); surface.removeEventListener('langy-library-changed', libraryChanged); surface.removeEventListener('langy-audio-updated', libraryChanged); surface.removeEventListener('langy-open-process', openProcess); surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); ocr.dispose(); clearTimeout(downloadExpiry); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
 }
