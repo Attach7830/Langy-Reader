@@ -11,6 +11,41 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 async function until(check) { for (let i = 0; i < 250; i++) { const value = check(); if (value) return value; await delay(10); } throw new Error('OCR job timed out'); }
 
+test('box OCR sends one page per selected image to the configured engine and preserves box order', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'langy-box-ocr-'));
+  const library = await openLibrary(dir), source = Buffer.from('%PDF-1.4\noriginal image scan\n%%EOF');
+  const path = join(library.uploads, 'boxes.pdf');
+  await writeFile(path, source);
+  const book = await library.importBook('box-scan', { path, originalname: 'boxes.pdf', size: source.length }, { language: 'zh-Hant' });
+  const image = Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAoAFADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AL+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAD//Z', 'base64');
+  let scan, empty = false;
+  const service = await openPDFOCR(dir, { library, workerURL: 'http://language:8000', request: async (url, options) => {
+    if (url.pathname === '/pdf') {
+      assert.equal(url.origin, 'http://language:8000');
+      assert.equal(Object.hasOwn(options.headers, 'Authorization'), false);
+      assert.equal(options.body.toString(), 'searchable boxes');
+      return Response.json({ chapters: [{ text: '第一段' }, { text: '第二段' }] });
+    }
+    assert.equal(url.origin, 'http://paddle.test:8093');
+    assert.equal(options.headers.Authorization, 'Bearer synthetic-box-key');
+    if (url.pathname === '/ocr/languages') return Response.json({ engine: 'paddleocr', protocol: 1, languages: ['chi_sim', 'chi_tra'] });
+    scan = options.body;
+    assert.equal(url.searchParams.get('languages'), 'chi_tra');
+    assert.equal(url.searchParams.get('mode'), 'skip');
+    return empty ? Response.json({ detail: 'OCR found no readable text. Check the scan and selected languages.' }, { status: 422 })
+      : new Response('searchable boxes');
+  } });
+  t.after(async () => { service.close(); await rm(dir, { recursive: true, force: true }); });
+  await service.save({ provider: 'paddle', baseUrl: 'http://paddle.test:8093', apiKey: 'synthetic-box-key' });
+  await assert.rejects(service.extractBoxes(book, [Buffer.from('not a JPEG')]), { status: 422 });
+  assert.deepEqual(await service.extractBoxes(book, [image, image]), ['第一段', '第二段']);
+  assert.match(scan.toString('latin1'), /\/Type \/Pages \/Count 2/u);
+  assert.deepEqual(await readFile(library.filePath(book)), source);
+  assert.equal(library.getBook(book.id).contentRevision, '');
+  empty = true;
+  assert.deepEqual(await service.extractBoxes(book, [image, image]), ['', '']);
+});
+
 test('the real OCR HTTP transport saves the complete PDF and keeps language probes responsive during processing', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'langy-ocr-http-save-')); t.after(() => rm(dir, { recursive: true, force: true }));
   const library = await openLibrary(dir), source = Buffer.from('%PDF-1.4\noriginal scan\n%%EOF'), output = Buffer.from('%PDF-1.4\ncomplete searchable result\n%%EOF');

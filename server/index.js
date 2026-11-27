@@ -41,6 +41,7 @@ import { bookTools } from './book-tools.js';
 import { openAudiobookshelf } from './audiobookshelf.js';
 import { offlinePacks } from './offline-pack.js';
 import { learningLanguages } from '../shared/learning-languages.js';
+import { maxPdfBoxes, maxPdfBoxImageBytes, maxPdfBoxUpload } from '../shared/pdf-regions.js';
 import { demoUploadLimit, demoBookLimit, demoStorageLimit, limitJobs, visitorMiddleware } from './demo.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -299,6 +300,20 @@ if (!demo) {
   };
   app.get('/api/books/:id/pdf-review', (req, res) => res.json(learning.pdfReview(editablePDF(req), Number(req.query.page ?? 1))));
   app.put('/api/books/:id/pdf-review', (req, res) => res.json(learning.savePdfReview(editablePDF(req), req.body ?? {})));
+  const uploadBoxes = multer({ limits: { files: maxPdfBoxes, fields: 2, fileSize: maxPdfBoxImageBytes, fieldSize: 1024 } }).array('image', maxPdfBoxes);
+  app.post('/api/books/:id/pdf-review/ocr', (req, res, next) => {
+    editablePDF(req);
+    if (Number(req.get('Content-Length')) > maxPdfBoxUpload + 8192) throw new RequestError(413, 'These boxes are too large to scan together. Use smaller boxes.');
+    req.pdfBoxUpload = true;
+    uploadBoxes(req, res, next);
+  }, async (req, res) => {
+    const book = editablePDF(req), review = learning.pdfReview(book, Number(req.body?.page));
+    if (review.state !== 'ready' || review.revision !== req.body?.revision) throw new RequestError(409, 'The PDF or its reviewed text changed. Reopen the editor before extracting.');
+    const controller = new AbortController();
+    res.once('close', () => controller.abort());
+    const texts = await ocr.extractBoxes(book, (req.files || []).map(({ buffer }) => buffer), controller.signal);
+    res.json({ texts });
+  });
   app.get('/api/books/:id/pdf-timing/:recording', (req, res) => res.json(learning.pdfTiming(editablePDF(req), req.params.recording)));
   app.put('/api/books/:id/pdf-timing/:recording', (req, res) => res.json(learning.savePdfTiming(editablePDF(req), req.params.recording, req.body ?? {})));
 }
@@ -606,6 +621,9 @@ app.use((err, _req, res, next) => {
   if (res.headersSent) return next(err);
   if (res.destroyed) return;
   if (err instanceof multer.MulterError) {
+    if (_req.pdfBoxUpload) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
+      error: err.code === 'LIMIT_FILE_SIZE' ? 'A box image is too large. Draw a smaller box.' : 'The selected box images could not be uploaded.',
+    });
     if (_req.fontUpload) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'Font files must be at most 32 MiB.' : 'Choose one font file and an optional name.' });
     if (_req.audioUpload) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
       error: err.code === 'LIMIT_FILE_SIZE' ? 'Audio files must be 1 GiB or smaller.' : _req.chapterUpload ? 'Choose at most 200 chapter files and one recording name.' : 'Upload one audiobook at a time.',

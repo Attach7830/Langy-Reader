@@ -13,12 +13,13 @@ export async function ocrSettings(dir, { demo = false, request = fetch, busy = (
     const external = provider === 'paddle';
     return { ...config, provider, baseUrl: external ? config.baseUrl : workerURL, apiKey: external ? config.apiKey : '' };
   }
-  async function languages(current = connection()) {
+  async function languages(current = connection(), signal) {
     if (demo) return [];
     if (!current.baseUrl) throw new RequestError(422, 'Enter the URL of your Langy PaddleOCR PDF service in Settings → Devices.');
     let response, body;
-    try { response = await request(new URL(current.baseUrl.replace(/\/+$/u, '') + '/ocr/languages'), { redirect: 'error', headers: current.apiKey ? { Authorization: `Bearer ${current.apiKey}` } : {}, signal: AbortSignal.timeout(15000) }); body = response.ok && await response.json(); }
-    catch { throw new RequestError(503, 'Could not reach the OCR service. Check its address and network connection.'); }
+    const timeout = AbortSignal.timeout(15000);
+    try { response = await request(new URL(current.baseUrl.replace(/\/+$/u, '') + '/ocr/languages'), { redirect: 'error', headers: current.apiKey ? { Authorization: `Bearer ${current.apiKey}` } : {}, signal: signal ? AbortSignal.any([signal, timeout]) : timeout }); body = response.ok && await response.json(); }
+    catch { signal?.throwIfAborted(); throw new RequestError(503, 'Could not reach the OCR service. Check its address and network connection.'); }
     if ([401, 403].includes(response.status)) throw new RequestError(422, 'The OCR service rejected the API key.');
     if (!Array.isArray(body?.languages) || current.provider === 'paddle' && (body.engine !== 'paddleocr' || body.protocol !== 1)) throw new RequestError(503, current.provider === 'paddle' ? 'Use the Langy PaddleOCR PDF service supplied with this repository. A generic PaddleOCR JSON endpoint cannot return a searchable PDF.' : 'PDF OCR is unavailable. Rebuild the language service, then try again.');
     return body.languages.filter((code) => typeof code === 'string' && /^[a-zA-Z][a-zA-Z0-9_]*$/u.test(code));

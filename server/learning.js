@@ -225,9 +225,9 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
 
   const textJobs = new Map(), textLanes = { epub: Promise.resolve(), pdf: Promise.resolve() };
   const selectionOf = (book) => JSON.stringify(bookLanguages(book).sort());
-  const indexed = (book, revision = transcripts.revision(book)) => db.prepare('SELECT 1 FROM analyses WHERE book=? AND contentRevision=? AND textVersion=1').get(book.id, revision);
+  const indexed = (book, revision = transcripts.textRevision(book)) => db.prepare('SELECT 1 FROM analyses WHERE book=? AND contentRevision=? AND textVersion=1').get(book.id, revision);
   function prepareText(book, retry = false) {
-    const revision = transcripts.revision(book);
+    const revision = transcripts.textRevision(book);
     if (vocabulary.bookCounts(book) && indexed(book, revision)) return Promise.resolve(true);
     const signature = JSON.stringify([bookCountSignature(book), revision]), previous = textJobs.get(book.id);
     if (previous?.signature === signature) {
@@ -277,7 +277,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     return scheduler ? scheduler.join(`indexing:${book.id}`, job.promise) : job.promise;
   }
 
-  function resetAnalysis(book, selection = selectionOf(book), revision = transcripts.revision(book)) {
+  function resetAnalysis(book, selection = selectionOf(book), revision = transcripts.textRevision(book)) {
     pausedAnalyses.delete(book.id);
     db.prepare(`INSERT INTO analyses(book,owner,language,languageSelection,contentRevision,state) VALUES(?,?,?,?,?,'queued')
       ON CONFLICT(book) DO UPDATE SET language=excluded.language,languageSelection=excluded.languageSelection,contentRevision=excluded.contentRevision,state='queued',error=NULL,
@@ -288,7 +288,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
 
   function ensure(book, retry = false) {
     const previous = db.prepare('SELECT * FROM analyses WHERE book=?').get(book.id);
-    const selection = selectionOf(book), revision = transcripts.revision(book);
+    const selection = selectionOf(book), revision = transcripts.textRevision(book);
     if (!previous || previous.language !== book.language || previous.languageSelection !== selection || previous.contentRevision !== revision || (retry && !['queued', 'running'].includes(previous.state))) {
       resetAnalysis(book, selection, revision);
     }
@@ -306,12 +306,14 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
 
   function savePdfReview(book, body) {
     if (!indexed(book)) throw new RequestError(409, 'Wait until the current PDF text has been indexed.');
-    const busy = db.prepare(`SELECT 1 FROM book_audio WHERE book=? AND state IN ('queued','assembling')
-      UNION ALL SELECT 1 FROM audio WHERE book=? AND state IN ('queued','generating','aligning')
-      UNION ALL SELECT 1 FROM recordings WHERE book=? AND state IN ('queued','syncing','assembling')
-      UNION ALL SELECT 1 FROM audio_rescans WHERE book=? AND state IN ('queued','running') LIMIT 1`).get(book.id, book.id, book.id, book.id);
-    if (busy) throw new RequestError(409, 'Wait for this book’s audio work to finish or cancel it before applying text changes.');
-    if (transcripts.save(book, body, () => resetAnalysis(book))) ensure(book);
+    if (transcripts.save(book, body, () => {
+      const busy = db.prepare(`SELECT 1 FROM book_audio WHERE book=? AND state IN ('queued','assembling')
+        UNION ALL SELECT 1 FROM audio WHERE book=? AND state IN ('queued','generating','aligning')
+        UNION ALL SELECT 1 FROM recordings WHERE book=? AND state IN ('queued','syncing','assembling')
+        UNION ALL SELECT 1 FROM audio_rescans WHERE book=? AND state IN ('queued','running') LIMIT 1`).get(book.id, book.id, book.id, book.id);
+      if (busy) throw new RequestError(409, 'Wait for this book’s audio work to finish or cancel it before applying text changes.');
+      resetAnalysis(book);
+    })) ensure(book);
     return { revision: transcripts.revision(book) };
   }
 
@@ -742,7 +744,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
   }
   function narration(book, selected) {
     const result = completeAudio.status(book, selected);
-    if (book.format === 'pdf' && transcripts.revision(book) !== (book.contentRevision || '') && !indexed(book)) result.audio = { state: 'missing' };
+    if (book.format === 'pdf' && transcripts.textRevision(book) !== (book.contentRevision || '') && !indexed(book)) result.audio = { state: 'missing' };
     result.audio.rescan = result.audio.id ? rescans.status(book, result.audio.id) : null;
     return { ...result, scheduled: scheduledAudio.status(book), recordings: demo ? [] : recordings.list(book).filter((item) => item.state === 'ready').map(({ id, name }) => ({ id, name })) };
   }

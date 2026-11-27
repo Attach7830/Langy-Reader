@@ -75,12 +75,14 @@ test('PDF review drives vocabulary and generated audio on the original pages, wi
   await waitFor(() => learning.info(book).state === 'ready');
   const initial = learning.pdfReview(book, 2);
   assert.equal(initial.total, 4);
-  assert.deepEqual(initial.page, { number: 2, original: original[1], text: original[1] });
+  assert.deepEqual(initial.page, { number: 2, original: original[1], text: original[1], boxes: [] });
   assert.throws(() => learning.savePdfReview(book, { revision: initial.revision, excluded: [1, 2, 3, 4], edits: [] }), { status: 422 });
 
   analyzed.length = 0;
+  const boxes = [[.5, .1, .9, .4], [.12, .58, .8, .82]];
   const { revision } = learning.savePdfReview(book, {
     revision: initial.revision, excluded: [1, 3], edits: [{ page: 2, text: revised }],
+    boxes: [{ page: 2, boxes }],
   });
   assert.notEqual(revision, initial.revision);
   const analysis = await waitFor(() => { const result = learning.info(book); return result.state === 'ready' && result; });
@@ -92,7 +94,7 @@ test('PDF review drives vocabulary and generated audio on the original pages, wi
   const [glossary] = bookTools({ learning }).search(book, '龙舟').results;
   assert.equal(glossary.key, 'pdf:2');
   assert.equal(glossary.from, original[1].indexOf('龙舟'));
-  assert.deepEqual(learning.pdfReview(book, 2).page, { number: 2, original: original[1], text: revised });
+  assert.deepEqual(learning.pdfReview(book, 2).page, { number: 2, original: original[1], text: revised, boxes });
   assert.deepEqual(learning.pdfReview(book, 1).excluded, [1, 3]);
   assert.throws(() => learning.savePdfReview(book, { revision: initial.revision, excluded: [], edits: [] }), { status: 409 });
 
@@ -106,6 +108,13 @@ test('PDF review drives vocabulary and generated audio on the original pages, wi
   assert.deepEqual(recording.segments.map(({ key }) => key), ['pdf:2', 'pdf:4']);
   assert.equal(recording.segments[0].pageOnly, true);
   assert.equal(learning.unit(book, 'pdf:3', recording.id).audio.state, 'missing');
+  const nextBoxes = [...boxes].reverse();
+  const saveBoxes = (boxes) => learning.savePdfReview(book, { revision, excluded: [1, 3], edits: [], boxes: [{ page: 2, boxes }] });
+  assert.throws(() => saveBoxes([[.5, .5, .9, 1.1]]), { status: 422 });
+  assert.notEqual(saveBoxes(nextBoxes).revision, revision);
+  assert.deepEqual(learning.pdfReview(book, 2).page.boxes, nextBoxes);
+  assert.equal(learning.info(book).state, 'ready', 'box changes do not reset analysis');
+  assert.equal(learning.narration(book).audio.id, recording.id, 'box changes keep the finished recording');
 
   const file = await readFile(learning.audioFile(book, recording.id));
   const timing = learning.pdfTiming(book, recording.id);
@@ -125,6 +134,7 @@ test('PDF review drives vocabulary and generated audio on the original pages, wi
 
   reopened = await openLearning(dir, library, false, ai, { autoRepair: false });
   assert.equal(reopened.pdfReview(book, 2).page.text, revised);
+  assert.deepEqual(reopened.pdfReview(book, 2).page.boxes, nextBoxes);
   const saved = reopened.pdfTiming(book, recording.id);
   assert.equal(saved.pages[1].start, newStart);
   reopened.savePdfTiming(book, recording.id, { revision: saved.revision, starts: {} });

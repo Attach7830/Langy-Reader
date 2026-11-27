@@ -897,6 +897,16 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
             <div id="pdf-review-preview" class="viewer pdf-viewer" aria-label="Original PDF page"></div>
             <p id="pdf-review-preview-status" class="field-note" role="status" hidden></p>
             <button class="button quiet small" id="pdf-review-copy" type="button" disabled>Use selected PDF text</button>
+            <div class="pdf-box-tools">
+              <p class="field-note">Draw around the passages you want. Extraction fills this page’s editor in box order.</p>
+              <div class="button-row">
+                <button class="button quiet small" id="pdf-review-draw-box" type="button" aria-pressed="false" disabled>Draw boxes</button>
+                <button class="button secondary small" id="pdf-review-extract-boxes" type="button" disabled>Extract boxes to editor</button>
+              </div>
+              <ol id="pdf-review-boxes" class="pdf-box-list" aria-label="PDF selection boxes in reading order" hidden></ol>
+              <label class="checkbox-row"><input id="pdf-review-box-ocr" type="checkbox" disabled> Run OCR on all boxes</label>
+              <p class="field-note" id="pdf-review-box-status" role="status" hidden></p>
+            </div>
           </div>
           <div class="form-stack">
             <label class="field">Text for audio and vocabulary <textarea name="text" rows="14" dir="auto" spellcheck="false"></textarea></label>

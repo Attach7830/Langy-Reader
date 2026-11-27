@@ -51,7 +51,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   $('#category-dialog').addEventListener('close', () => folderABS.cancel());
   const learningDialog = $('#learning-dialog');
   const pdfReview = reviewPdfText({ saved(book) {
-    toast('Reviewed text saved. Updating vocabulary analysis.');
+    toast('PDF review saved.');
     void showLearning(book);
   } });
   const pdfTiming = adjustPdfTiming({ saved(book) {

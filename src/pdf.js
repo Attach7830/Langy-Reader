@@ -6,6 +6,7 @@ import { pdfLinkLayer } from './book-links.js';
 import { serializeRenderer } from './reader-navigation.js';
 import { savedReadingFile } from './book-source.js';
 import { adjacentSection } from './section-navigation.js';
+import { maxPdfBoxImageBytes, maxPdfBoxPixels, maxPdfBoxSide, pdfBoxDpi } from '../shared/pdf-regions.js';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const baseUrl = new URL('/pdf-assets/', location.href);
@@ -188,6 +189,37 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
       },
       get pageCount() { return pdf.numPages; },
       get pageNumber() { return pageNumber; },
+      async boxImages(number, boxes, requestSignal) {
+        requestSignal.throwIfAborted();
+        const page = await pdf.getPage(number), actual = page.getViewport({ scale: 1 }), images = [];
+        for (const [left, top, right, bottom] of boxes) {
+          requestSignal.throwIfAborted();
+          const width = actual.width * (right - left), height = actual.height * (bottom - top);
+          const scale = Math.min(pdfBoxDpi / 72, (maxPdfBoxSide - 1) / Math.max(width, height),
+            Math.sqrt((maxPdfBoxPixels - 2 * maxPdfBoxSide) / (width * height)));
+          const viewport = page.getViewport({ scale });
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.ceil(width * scale));
+          canvas.height = Math.max(1, Math.ceil(height * scale));
+          // Use the same rotated viewport as the preview. Translate its
+          // selected area to the origin of a small, higher-resolution canvas.
+          const task = page.render({ canvas, viewport, background: '#fff', transform: [1, 0, 0, 1, -left * viewport.width, -top * viewport.height] });
+          const stop = () => task.cancel();
+          requestSignal.addEventListener('abort', stop, { once: true });
+          try {
+            await task.promise;
+            requestSignal.throwIfAborted();
+            const image = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', .94));
+            requestSignal.throwIfAborted();
+            if (!image || image.size > maxPdfBoxImageBytes) throw new Error('The box image is too large. Draw a smaller box.');
+            images.push(image);
+          } finally {
+            requestSignal.removeEventListener('abort', stop);
+            canvas.width = canvas.height = 0;
+          }
+        }
+        return images;
+      },
       move: (direction) => draw(pageNumber + direction),
       async go(target) {
         if (target?.text) {

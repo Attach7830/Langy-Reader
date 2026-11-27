@@ -141,7 +141,17 @@ export function phraseHelp({ book, preferences, request, roots = () => [], onBoo
       const result = await request('/api/ai/phrase', { method: 'POST', signal: previous.signal,
         body: { phrase: value.phrase, context, language, translationLanguage: languageHelpPreferences(preferences(), language).translationLanguage || 'en', ...(useWeb ? { web: true } : {}) } });
       if (controller !== previous || book()?.id !== value.book) return;
-      if (result.webStatus) setWebStatus(result.webStatus === 'unavailable' ? 'Web search is unavailable.' : 'No web sources helped explain this selection.');
+      if (result.webStatus === 'unavailable') {
+        const reasons = {
+          configuration: 'Web search needs a SearXNG connection on this server.',
+          connection: 'Could not reach the search service. Check that it is running.',
+          access: 'The search service denied access. Check that SearXNG allows JSON search.',
+          timeout: 'The search service timed out. Try again.',
+          busy: 'The search service is busy. Try again shortly.',
+          service: 'The search service returned an error. Try again.',
+        };
+        setWebStatus(reasons[result.webReason] || 'Web search is unavailable.');
+      } else if (result.webStatus) setWebStatus('No web sources helped explain this selection.');
       else { setWebStatus(); answer.textContent = result.text; showSources(result.sources); }
     } catch (error) {
       if (controller === previous && error.name !== 'AbortError') {

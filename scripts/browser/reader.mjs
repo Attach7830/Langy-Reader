@@ -879,9 +879,11 @@ try {
     await desktopPage.keyboard.press('Control+ArrowLeft');
     await desktopPage.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 1 of 3'); await delay(300);
     const phrases = [], selection = desktopPage.frameLocator('#viewer iframe').locator('#source');
+    let searchDown = true;
     await desktopPage.route('**/api/ai/phrase', async (route) => {
       const data = route.request().postDataJSON(); phrases.push(data.web === true);
       assert.equal(data.phrase, 'La viajera'); assert.ok(data.context.includes('casa tranquila'));
+      if (data.web && searchDown) return route.fulfill({ json: { webStatus: 'unavailable', webReason: 'connection' } });
       await route.fulfill({ json: data.web ? { text: 'A traveler is someone on a journey. [1]', sources: [{ id: 1, title: 'Dictionary entry', url: 'https://example.org/traveler' }] }
         : { text: Array(90).fill('The traveler is the woman arriving at the house.').join('\n') } });
     });
@@ -901,8 +903,12 @@ try {
       return box.top >= 0 && box.left >= 0 && box.right <= innerWidth && box.bottom <= innerHeight && scroll.scrollHeight > scroll.clientHeight;
     }), true);
     await panel.getByRole('button', { name: 'Search the web', exact: true }).click();
+    await panel.locator('[data-phrase-web-status]').filter({ hasText: 'Could not reach the search service.' }).waitFor();
+    assert.match(await answer.textContent(), /traveler is the woman/u);
+    searchDown = false;
+    await panel.getByRole('button', { name: 'Search the web', exact: true }).click();
     assert.equal(await panel.getByRole('link', { name: 'Dictionary entry' }).getAttribute('href'), 'https://example.org/traveler');
-    assert.deepEqual(phrases, [false, true]);
+    assert.deepEqual(phrases, [false, true, true]);
     await desktopPage.screenshot({ path: output + '/contextual-phrase-desktop.png' });
     await desktopPage.keyboard.press('Escape'); await panel.waitFor({ state: 'hidden' });
     await select(3, 10);
