@@ -641,8 +641,9 @@ try {
     await choice.selectOption('zh'); await page.locator('#language-translation-default').fill('English'); await page.locator('#language-summary-default').fill('Spanish');
     await choice.selectOption('pt'); assert.equal(await page.locator('#language-summary-default').inputValue(), 'Portuguese');
     await page.locator('#settings-form button[type=submit]').click();
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('langy-settings-v1') || '{}').languageDefaultsMode === 'per-language');
     await page.waitForFunction(() => !Object.keys(JSON.parse(localStorage.getItem('langy-account-settings-v1') || '{}').pending || {}).length);
-    await page.reload(); await page.goto(base + '/#settings/language');
+    await page.reload(); await page.goto(base + '/#settings/language'); await page.locator('#settings').waitFor({ state: 'visible' });
     assert.equal(await mode.inputValue(), 'per-language'); await choice.selectOption('zh'); assert.equal(await page.locator('#language-summary-default').inputValue(), 'es');
     const saved = (await (await context.request.get(base + '/api/settings/reader')).json()).preferences;
     assert.equal(saved.languageDefaults.pt.translationLanguage, 'es'); assert.equal(saved.languageDefaults.pt.summaryLanguage, 'pt'); assert.equal(saved.languageDefaults.zh.summaryLanguage, 'es');
