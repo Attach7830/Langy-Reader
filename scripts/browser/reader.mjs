@@ -656,7 +656,7 @@ try {
       await route.fulfill({ json: { text: body.mode === 'deeper' ? 'Una explicación del pasaje actual.' : 'Un resumen de esta página.', suggestions: [] } });
     });
     try {
-      await open(); await page.locator('#summarize').click(); await page.locator('#summary-body').filter({ hasText: 'Un resumen de esta página.' }).waitFor();
+      await open(); await page.locator('#reader-more > summary').click(); await page.locator('#summarize').click(); await page.locator('#summary-body').filter({ hasText: 'Un resumen de esta página.' }).waitFor();
       assert.equal(requests.at(-1).language, 'es'); assert.equal(await page.locator('#summary-body').getAttribute('lang'), 'es');
       await page.locator('#summary-actions').getByRole('button', { name: 'Go deeper', exact: true }).click();
       await page.locator('#summary-detail-body').filter({ hasText: 'Una explicación del pasaje actual.' }).waitFor(); assert.equal(requests.at(-1).language, 'es');
