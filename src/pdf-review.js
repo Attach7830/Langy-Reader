@@ -166,11 +166,20 @@ export function reviewPdfText({ saved }) {
   undo.addEventListener('click', () => history.move('undo'));
   redo.addEventListener('click', () => history.move('redo'));
   document.addEventListener('keydown', (event) => {
-    if (!dialog.open || event.defaultPrevented || event.isComposing || history.composing || event.altKey
-      || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'z') return;
-    if (event.target !== text && event.target.closest?.('input, textarea, select, [contenteditable]')) return;
-    event.preventDefault();
-    history.move(event.shiftKey ? 'redo' : 'undo');
+    if (!dialog.open || event.defaultPrevented || event.isComposing || history.composing || event.altKey) return;
+    const field = event.target.closest?.('input, textarea, select, [contenteditable]');
+    const command = event.ctrlKey || event.metaKey;
+    if (command && event.key.toLowerCase() === 'z' && (!field || field === text)) {
+      event.preventDefault();
+      history.move(event.shiftKey ? 'redo' : 'undo');
+      return;
+    }
+    if (field || command || event.shiftKey) return;
+    const turn = event.key === 'ArrowLeft' ? previous : event.key === 'ArrowRight' ? next : null;
+    if (turn && !turn.disabled) {
+      event.preventDefault();
+      turn.click();
+    }
   });
 
   extract.addEventListener('click', async () => {

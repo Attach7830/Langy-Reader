@@ -887,17 +887,17 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
       <div class="modal-body">
         <p class="field-note">Use the original PDF page numbers. Skip introductions or edit the text on any page you want to keep.</p>
         <div class="pdf-review-navigation">
-          <button class="button quiet small" id="pdf-review-previous" type="button">Previous page</button>
+          <button class="button quiet small" id="pdf-review-previous" type="button" aria-keyshortcuts="ArrowLeft">Previous page</button>
           <label class="field">PDF page <input name="page" type="number" min="1" step="1" value="1"></label>
           <span id="pdf-review-total" class="field-note"></span>
-          <button class="button quiet small" id="pdf-review-next" type="button">Next page</button>
+          <button class="button quiet small" id="pdf-review-next" type="button" aria-keyshortcuts="ArrowRight">Next page</button>
         </div>
         <label class="field">Skip PDF pages <input name="excluded" type="text" placeholder="1–12, 45" spellcheck="false"></label>
         <label class="checkbox-row"><input name="skip" type="checkbox"> Skip this page</label>
         <p id="pdf-review-status" class="field-note" role="status" hidden></p>
         <div class="pdf-review-columns" id="pdf-review-columns" hidden>
           <div class="form-stack">
-            <div id="pdf-review-preview" class="viewer pdf-viewer" aria-label="Original PDF page"></div>
+            <div id="pdf-review-preview" class="viewer pdf-viewer" tabindex="0" aria-label="Original PDF page"></div>
             <p id="pdf-review-preview-status" class="field-note" role="status" hidden></p>
             <button class="button quiet small" id="pdf-review-copy" type="button" disabled>Use selected PDF text</button>
             <div class="pdf-box-tools">

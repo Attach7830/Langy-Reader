@@ -58,7 +58,7 @@ test('rapid successive edits open the requested book and an older refresh cannot
   assert.equal(books[0].series, 'First series'); assert.equal(books[1].series, 'Second series');
 });
 
-test('PDF text cleanup handles Unicode and each page keeps its undo and redo history', async (t) => {
+test('PDF review preserves text and undo history while the arrow keys turn pages outside input fields', async (t) => {
   const dom = await browser(t);
   const original = '端午Pīnyīn①２٣Ⅳ\n故事cafe\u0301ñ。', noLatin = '端午①２٣Ⅳ\n故事。', cleaned = '端午\n故事。';
   let saved;
@@ -70,7 +70,9 @@ test('PDF text cleanup handles Unicode and each page keeps its undo and redo his
   reviewPdfText({ saved() {} }).open({ id: 'pdf', language: 'zh' });
   const form = document.querySelector('#pdf-review-form'), text = form.elements.text;
   const undo = document.querySelector('#pdf-review-undo'), redo = document.querySelector('#pdf-review-redo');
-  const shortcut = (shiftKey = false) => text.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: shiftKey ? 'Z' : 'z', ctrlKey: true, shiftKey, bubbles: true, cancelable: true }));
+  const preview = document.querySelector('#pdf-review-preview');
+  const press = (target, key, modifiers = {}) => target.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...modifiers }));
+  const shortcut = (shiftKey = false) => press(text, 'z', { ctrlKey: true, shiftKey });
   function input(value, inputType = 'insertText') {
     text.dispatchEvent(new dom.window.InputEvent('beforeinput', { inputType, bubbles: true, cancelable: true }));
     text.value = value;
@@ -88,11 +90,16 @@ test('PDF text cleanup handles Unicode and each page keeps its undo and redo his
   assert.equal(text.value, noLatin);
   assert.equal(redo.disabled, false);
 
-  document.querySelector('#pdf-review-next').click();
+  assert.equal(press(text, 'ArrowRight'), true, 'the textarea keeps its cursor keys');
+  assert.equal(press(form.elements.excluded, 'ArrowRight'), true);
+  assert.equal(press(preview, 'ArrowRight', { shiftKey: true }), true);
+  assert.equal(press(preview, 'ArrowLeft'), true, 'the shortcut stops at page one');
+  assert.equal(press(preview, 'ArrowRight'), false);
   await until(() => !text.disabled && form.elements.page.value === '2');
+  assert.equal(press(preview, 'ArrowRight'), true, 'the shortcut stops at the last page');
   assert.equal(undo.disabled, true);
   input('第二頁。');
-  document.querySelector('#pdf-review-previous').click();
+  assert.equal(press(preview, 'ArrowLeft'), false);
   await until(() => !text.disabled && form.elements.page.value === '1');
   shortcut(true);
   assert.equal(text.value, cleaned);
@@ -113,6 +120,7 @@ test('PDF text cleanup handles Unicode and each page keeps its undo and redo his
   assert.equal(redo.disabled, true, 'new typing clears the redo history');
   form.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
   await until(() => !document.querySelector('#pdf-review-dialog').open);
+  assert.equal(press(preview, 'ArrowRight'), true);
   assert.deepEqual(saved.edits.sort((a, b) => a.page - b.page), [{ page: 1, text: cleaned + '們' }, { page: 2, text: '第二頁。' }]);
 });
 

@@ -113,6 +113,7 @@ export function pdfBoxes({ preview, changed }) {
   layer.addEventListener('pointerdown', (event) => {
     if (event.button !== 0 || !event.isPrimary || drag || !drawing || !ready || boxes.length >= maxPdfBoxes) return;
     event.preventDefault();
+    preview.focus({ preventScroll: true });
     const start = point(event), mark = outline([...start, ...start]);
     mark.classList.add('drawing-box');
     layer.append(mark);
