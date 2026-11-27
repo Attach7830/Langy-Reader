@@ -204,7 +204,7 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .book-mobile-menu { display: flex; position: absolute; top: 7px; left: 7px; width: 38px; height: 38px; background: var(--surface); border-radius: 50%; box-shadow: var(--shadow); }
 .library-view-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
 .book-learning > summary { color: var(--muted); font-size: 12px; cursor: pointer; padding-block: 7px; }
-html[data-immersion="true"] :is(#page-label, #position-detail, #narration-time, .reader-footer .footer-end .progress-track) { display: none; }
+html[data-immersion="true"] :is(#page-label, #position-detail, .reader-footer .footer-end .progress-track) { display: none; }
 html[data-immersion="true"] #abs-sync-status { display: none; }
 @media (max-width: 600px) {
   .library-toolbar { gap: 5px; }

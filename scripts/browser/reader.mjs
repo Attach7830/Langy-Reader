@@ -576,6 +576,26 @@ try {
     await page.locator('#audio-toggle').click(); await page.locator('#narration-play').click();
     await page.locator('#narration-close').click();
   });
+  await check('immersion mode keeps listening time visible in both audio layouts', async () => {
+    const clock = page.locator('#narration-time');
+    const toggleImmersion = async () => {
+      await page.locator('#reader-more > summary').click();
+      await page.locator('#immersion-toggle').click();
+    };
+    await toggleImmersion();
+    await page.locator('#audio-toggle').click();
+    await page.waitForFunction(() => document.querySelector('#narration-time').textContent.endsWith(' / 2:00'));
+    const regularClock = await clock.isVisible();
+    await page.locator('#podcast-toggle').click();
+    const podcastClock = await clock.isVisible();
+    const pageNumber = await page.locator('#page-label').isVisible();
+    await page.locator('#podcast-toggle').click();
+    await page.locator('#narration-close').click();
+    await toggleImmersion();
+    assert.equal(pageNumber, false, 'immersion mode still hides the reading position');
+    assert.equal(regularClock, true, 'the standard toolbar shows listening time');
+    assert.equal(podcastClock, true, 'Podcast mode shows listening time');
+  });
   await check('double tapping a word starts at its timestamp, including with audio disabled, and never pauses it', async () => {
     const pattern = '**/api/books/' + book.id + '/chapters/*';
     const aligned = (route) => route.fulfill({ json: { key: decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-1)), tokens: [], audio: { timings: [{ word: 'viajera', from: 0, to: 7, start: 10, end: 10.5 }] } } });
