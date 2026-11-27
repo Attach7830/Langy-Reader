@@ -320,7 +320,7 @@ try {
   });
   await check('blocked download titles can be retried and named on mobile without restarting their download', async () => {
     let job = { id: 'title-fixture', state: 'queued', source: 'fast', title: '', titleError: 'blocked', titlePending: false,
-      reference: 'e933ea99287cd98433fda5c8f4a13b87', details: {}, attempts: 0 }, retries = 0, saves = 0;
+      reference: '0123456789abcdef0123456789abcdef', details: {}, attempts: 0 }, retries = 0, saves = 0;
     await page.route('**/api/library', async (route) => {
       const response = await route.fetch(), data = await response.json();
       await route.fulfill({ json: { ...data, archive: { ...data.archive, available: true, job, jobs: [job] } } });
