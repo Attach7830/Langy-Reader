@@ -798,8 +798,56 @@ try {
       await currentPage.evaluate(() => document.querySelector('#narration-audio').dispatchEvent(new Event('pause')));
       for (let n = 0; n < 80 && !writes.slice(countBeforeTurn).some((body) => Math.abs(body.currentTime - expected) < .000001); n++) await delay(50);
       assert.ok(writes.slice(countBeforeTurn).some((body) => body.recording === 'reading' && Math.abs(body.currentTime - expected) < .000001), JSON.stringify({ expected, writes }));
+      const savedCount = writes.length; remote = { ...remote, version: 'timestamp-only', updated: 2000 };
+      await currentPage.evaluate(() => document.querySelector('#narration-audio').dispatchEvent(new Event('pause')));
+      await currentPage.waitForFunction((id) => JSON.parse(localStorage.getItem(`langy-listening-${localStorage.getItem('langy-offline-owner')}-${id}-reading`)).version === 'timestamp-only', readingBook.id);
+      assert.equal(await currentPage.locator('#abs-sync-notice').isVisible(), false); assert.equal(writes.length, savedCount);
+      remote = { ...remote, version: 'reopened-timestamp', updated: 3000 };
+      await currentPage.goto(base + '/#library'); await currentPage.locator('#books .book-card').first().waitFor();
+      await currentPage.goto(base + '/#read/' + readingBook.id); await currentPage.locator('#viewer iframe').first().waitFor();
+      await currentPage.evaluate(() => document.querySelector('#narration-audio').dispatchEvent(new Event('pause')));
+      await currentPage.waitForFunction((id) => JSON.parse(localStorage.getItem(`langy-listening-${localStorage.getItem('langy-offline-owner')}-${id}-reading`)).version === 'reopened-timestamp', readingBook.id);
+      assert.equal(await currentPage.locator('#abs-sync-notice').isVisible(), false); assert.equal(writes.length, savedCount);
       } finally { await currentPage.goto(base + '/#library'); await currentPage.locator('#books .book-card').first().waitFor(); }
     }
+  });
+  await check('ABS narration restores the listening clock without repeated prompts and still offers genuine remote changes', async () => {
+    const audioZip = await JSZip.loadAsync(await zip.generateAsync({ type: 'nodebuffer' }));
+    audioZip.file('OEBPS/book.opf', (await audioZip.file('OEBPS/book.opf').async('string')).replace('langy-browser-fixture', 'langy-browser-abs-audio-fixture'));
+    const created = await context.request.post(base + '/api/books', { multipart: { title: 'Listening position checks', author: 'An Author', language: 'es', file: { name: 'listening.epub', mimeType: 'application/epub+zip', buffer: await audioZip.generateAsync({ type: 'nodebuffer' }) } } });
+    assert.equal(created.status(), 201); const audioBook = await created.json();
+    let percentage = 1 / 3, version = 'initial', writes = 0;
+    await page.route('**/api/books/' + audioBook.id + '/narration*', (route) => route.fulfill({ json: { connected: true, absConnected: true, recordings: [], audio: {
+      id: 'browser', state: 'ready', url: '/browser-audio.wav', duration: 120,
+      segments: [{ key: 'epub:0', start: 0, end: 50, scale: 1 }, { key: 'epub:1', start: 50, end: 110, scale: 1 }, { key: 'epub:2', start: 110, end: 120, scale: 1 }], markers: [],
+    } } }));
+    await page.route('**/api/books/' + audioBook.id + '/chapters/*', (route) => route.fulfill({ json: { key: decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-1)), tokens: [], audio: { timings: [] } } }));
+    await page.route('**/api/books/' + audioBook.id + '/audiobookshelf/progress*', async (route) => {
+      const body = route.request().method() === 'PUT' ? route.request().postDataJSON() : null;
+      const recording = body?.recording || new URL(route.request().url()).searchParams.get('recording');
+      const duration = recording === 'reading' ? 1 : 120;
+      if (body) { assert.equal(body.baseVersion, version); percentage = body.currentTime / duration; version = 'saved-' + ++writes; }
+      await route.fulfill({ json: { linked: true, automatic: true, scope: 'browser-abs-connection-item', recording, duration, currentTime: percentage * duration, percentage, updated: 1000, version } });
+    });
+    try {
+      await page.goto(base + '/#read/' + audioBook.id); await page.locator('#viewer iframe').first().waitFor();
+      if (!await page.locator('#narration-player').isVisible()) await page.locator('#audio-toggle').click();
+      await page.waitForFunction(() => Math.abs(document.querySelector('#narration-audio').currentTime - 40) < .5);
+      version = 'timestamp-only';
+      await page.evaluate(() => document.querySelector('#narration-audio').dispatchEvent(new Event('pause')));
+      await page.waitForFunction((id) => JSON.parse(localStorage.getItem(`langy-listening-${localStorage.getItem('langy-offline-owner')}-${id}-browser`))?.version === 'timestamp-only', audioBook.id);
+      assert.equal(await page.locator('#abs-sync-notice').isVisible(), false); assert.equal(writes, 0);
+      percentage = .6; version = 'another-device';
+      await page.evaluate(() => document.querySelector('#narration-audio').dispatchEvent(new Event('pause')));
+      await page.locator('#abs-sync-notice').waitFor({ state: 'visible' }); await page.locator('#abs-sync-resume').click();
+      await page.waitForFunction(() => Math.abs(document.querySelector('#narration-audio').currentTime - 72) < .5);
+      await page.locator('#abs-sync-notice').waitFor({ state: 'hidden' });
+      await page.goto(base + '/#library'); await page.locator('#books .book-card').first().waitFor(); version = 'reopened-timestamp';
+      await page.goto(base + '/#read/' + audioBook.id);
+      await page.waitForFunction((id) => JSON.parse(localStorage.getItem(`langy-listening-${localStorage.getItem('langy-offline-owner')}-${id}-browser`))?.version === 'reopened-timestamp', audioBook.id);
+      assert.equal(await page.locator('#abs-sync-notice').isVisible(), false);
+      assert.ok(Math.abs(await page.locator('#narration-audio').evaluate((audio) => audio.currentTime) - 72) < .5); assert.equal(writes, 0);
+    } finally { await page.goto(base + '/#library'); await page.locator('#books .book-card').first().waitFor(); }
   });
   await check('desktop reader supports trackpad text size, section shortcuts, contextual phrase help and one process queue', async () => {
     await desktopPage.goto(base + '/#read/' + book.id);

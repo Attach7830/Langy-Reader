@@ -231,7 +231,7 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
     const remoteDuration = exact ? recording.duration : Number(target.item.media?.duration) || 0;
     const percentage = Math.min(1, Math.max(0, exact ? (Number(value?.currentTime) || 0) / recording.duration
       : remoteDuration > 0 ? (Number(value?.currentTime) || 0) / remoteDuration : Number(value?.ebookProgress) || 0));
-    return { linked: true, recording: recording.id, item, version: value ? hash([item, progressVersion(value)]) : 'none', currentTime: percentage * recording.duration,
+    return { linked: true, recording: recording.id, item, scope: hash([identity, item]), version: value ? hash([item, progressVersion(value)]) : 'none', currentTime: percentage * recording.duration,
       updated: value?.lastUpdate || 0, duration: recording.duration, remoteDuration, percentage, mode: reading ? 'reading' : exact ? 'recording' : 'percentage',
       automatic: Boolean(target?.automatic), hasEbook: Boolean(target?.item?.media?.ebookFile), approximate: !exact };
   }
