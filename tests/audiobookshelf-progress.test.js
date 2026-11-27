@@ -12,7 +12,7 @@ test('ABS listening starts syncing automatically, syncs closed offline recording
   globalThis.setInterval = (...args) => { const timer = previousInterval(...args); intervals.push(timer); return timer; };
   t.after(() => { intervals.forEach(clearInterval); globalThis.setInterval = previousInterval; dom.window.close(); for (const [name, value] of original) if (value) Object.defineProperty(globalThis, name, value); else delete globalThis[name]; });
   localStorage.setItem('langy-offline-owner', 'owner');
-  let state = { book: 'book', recording: 'recording', duration: 100, time: 0, absConnected: true, readingTarget: 'saved-page' }, remote = { linked: true, recording: 'recording', currentTime: 40, version: 'v1', updated: 1000, duration: 100 }, online = true, writes = 0;
+  let state = { book: 'book', recording: 'recording', duration: 100, time: 0, absConnected: true, readingTarget: 'saved-page' }, remote = { linked: true, item: 'shared-item', recording: 'recording', currentTime: 40, version: 'v1', updated: 1000, duration: 100 }, online = true, writes = 0;
   const audio = { playbackPosition: () => state, async resumeAt(time) { state.time = time; } };
   const sync = audiobookshelfProgress({ audio, request: async (_path, options = {}) => {
     if (!online) throw new Error('offline');
@@ -32,6 +32,21 @@ test('ABS listening starts syncing automatically, syncs closed offline recording
   state = { book: 'book', recording: 'recording', duration: 100, time: 0, absConnected: true, readingTarget: 'saved-page' };
   window.dispatchEvent(new dom.window.Event('langy-recording-ready')); await settle(); assert.equal(state.time, 55); assert.equal(document.querySelector('#abs-sync-notice').hidden, false);
   document.querySelector('#abs-sync-keep').click(); await settle(); assert.equal(remote.currentTime, 55); assert.equal(writes, 2);
+  sync.stop();
+  remote = { ...remote, version: 'same-place-new-version', currentTime: 55.1 };
+  sync.start(); await settle();
+  assert.equal(document.querySelector('#abs-sync-notice').hidden, true, 'a new version at the same position does not need a choice');
+  assert.equal(writes, 2);
+  sync.stop();
+  const savedReadingKey = 'langy-listening-owner-book-reading';
+  localStorage.setItem(savedReadingKey, JSON.stringify({ book: 'book', recording: 'reading', absConnected: true, absLinked: true,
+    item: 'shared-item', time: .35, version: remote.version, dirty: true }));
+  await sync.syncSaved();
+  assert.equal(writes, 3);
+  remote = { ...remote, currentTime: 35 };
+  sync.start(); await settle();
+  assert.equal(document.querySelector('#abs-sync-notice').hidden, true, 'a reading sync to the same ABS item does not conflict with its narration');
+  assert.equal(state.time, 55);
   sync.stop();
   state = { ...state, time: 80, readingTarget: 'newer-reading-page' };
   window.dispatchEvent(new dom.window.Event('langy-recording-ready')); await settle();
