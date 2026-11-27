@@ -16,7 +16,8 @@ const active = new Set(['queued', 'assembling']);
 const digest = (rows) => createHash('sha256').update(JSON.stringify(rows.map(({ key, digest, markers }) => [key, digest, markers]))).digest('hex');
 const escapeMetadata = (text) => String(text).replace(/[\r\n]/gu, ' ').replace(/[\\=;#]/gu, '\\$&');
 
-export function bookNarration({ db, folder, library, demo, previewAudio = false, configuration, queuePart, wake, reserveStorage = async () => () => {} }) {
+export function bookNarration({ db, folder, library, demo, previewAudio = false, configuration, queuePart, wake,
+  selectionForBook = () => null, reserveStorage = async () => () => {} }) {
   db.function('has_spoken_text', { deterministic: true }, (text) => Number(/[\p{L}\p{N}]/u.test(text)));
   db.exec(`CREATE TABLE IF NOT EXISTS book_audio (
     id TEXT PRIMARY KEY, book TEXT NOT NULL REFERENCES analyses(book) ON DELETE CASCADE,
@@ -26,7 +27,7 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
   CREATE INDEX IF NOT EXISTS book_audio_book ON book_audio(book, created);
   UPDATE book_audio SET state='queued' WHERE state='assembling';`);
   for (const [name, definition] of [['kind', "TEXT NOT NULL DEFAULT 'generated'"], ['name', "TEXT NOT NULL DEFAULT ''"], ['quality', 'TEXT'], ['alignmentRevision', 'INTEGER NOT NULL DEFAULT 0'],
-    ['pdfTiming', "TEXT NOT NULL DEFAULT '{}'"]]) {
+    ['pdfTiming', "TEXT NOT NULL DEFAULT '{}'"], ['textSelection', "TEXT NOT NULL DEFAULT ''"]]) {
     if (!db.prepare('PRAGMA table_info(book_audio)').all().some((column) => column.name === name)) db.exec(`ALTER TABLE book_audio ADD COLUMN ${name} ${definition}`);
   }
 
@@ -70,7 +71,8 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
     const analysis = db.prepare('SELECT state FROM analyses WHERE book=?').get(book.id);
     if (analysis?.state !== 'ready') throw new RequestError(409, 'Wait for the book analysis to finish, then generate audio.');
     const all = sections(book);
-    const readable = all.filter(({ narratable }) => narratable);
+    const selection = selectionForBook(book, all);
+    const readable = all.filter(({ key, narratable }) => narratable && (!selection || selection.included.has(key)));
     if (!readable.length) throw new RequestError(422, 'This book has no selectable text for narration.');
     if (demo && readable.some(({ characters }) => characters > 20000)) {
       throw new RequestError(422, 'Demo narration supports sections of up to 20,000 characters.');
@@ -80,17 +82,19 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
     const options = JSON.stringify(narrationOptions(config, sectionLanguages(all, book.language)));
     const sourceHash = digest(all);
     if (current && current.digest === sourceHash && active.has(current.state)) return publicRecording(current);
-    if (!replace && current?.state === 'ready' && current.digest === sourceHash && current.options === options) return publicRecording(current);
+    const textSelection = selection?.key || '';
+    if (!replace && current?.state === 'ready' && current.digest === sourceHash && current.options === options
+      && current.textSelection === textSelection) return publicRecording(current);
     if (!config.baseUrl) throw new RequestError(422, 'Connect a Kokoro server in Settings → Narration.');
     const parts = [];
     db.exec('BEGIN IMMEDIATE');
     try {
       for (const section of readable) {
-        const part = queuePart(book, section.key, replace);
+        const part = queuePart(book, section.key, replace, selection?.included.get(section.key));
         parts.push({ key: section.key, id: part.id, digest: section.digest });
       }
-      db.prepare('INSERT INTO book_audio(id,book,digest,options,state,parts,created) VALUES(?,?,?,?,?,?,?)')
-        .run(randomUUID(), book.id, sourceHash, options, 'queued', JSON.stringify(parts), Date.now());
+      db.prepare('INSERT INTO book_audio(id,book,digest,options,state,parts,created,textSelection) VALUES(?,?,?,?,?,?,?,?)')
+        .run(randomUUID(), book.id, sourceHash, options, 'queued', JSON.stringify(parts), Date.now(), textSelection);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
     wake();
@@ -172,9 +176,15 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
         segments.push({ key: part.chapter, title: section.title, start, end, scale, audioId: part.id,
           textHash: part.digest, approximate: timings.some((word) => word.estimated), ...(section.reviewed ? { pageOnly: true } : {}) });
         const timed = timings.filter((word) => word.start != null);
-        for (const marker of JSON.parse(section.markers || '[]')) {
+        const original = JSON.parse(section.markers || '[]');
+        const ranges = part.textRanges ? JSON.parse(part.textRanges) : null, first = ranges?.[0][0] ?? 0;
+        const selected = ranges ? original.filter((marker) => ranges.some(([from, to]) => from <= marker.from && marker.from < to)) : original;
+        if (ranges && selected[0]?.from !== first) {
+          selected.unshift({ from: first, title: original.findLast((marker) => marker.from <= first)?.title || section.title });
+        }
+        for (const marker of selected) {
           const word = timed.find((word) => word.from >= marker.from);
-          const time = marker.from === 0 ? start : start + (word?.start ?? 0) * scale;
+          const time = marker.from === first ? start : start + (word?.start ?? 0) * scale;
           markers.push({ key: part.chapter, title: marker.title, from: marker.from, time });
         }
         if (!hasMarkers || !index && !markers.length) markers.push({ key: part.chapter, title: section.title, from: 0, time: start });

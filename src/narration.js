@@ -153,7 +153,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   async function follow(force = false) {
     const current = renderer()?.audioUnit?.();
     if (!enabled || !ready() || initialSeek || manualNavigation || !current) return;
-    if (audio.paused && !force && current.key.startsWith('pdf:') && !segmentFor(current.key)) return;
+    if (audio.paused && !force && !segmentFor(current.key)) return;
     followAgain = true; forceFollow ||= force;
     if (following) return;
     following = true;

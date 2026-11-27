@@ -33,7 +33,13 @@ function split(text, from, to, limit, language) {
   return chunks;
 }
 
-export function narrationChunks(section, fallback) {
+export function narrationChunks(section, fallback, ranges = null) {
+  if (ranges) return ranges.flatMap(([start, end]) => {
+    const clip = (value) => array(value).filter(({ from, to }) => from < end && to > start)
+      .map((part) => ({ ...part, from: Math.max(part.from, start) - start, to: Math.min(part.to, end) - start }));
+    const excerpt = { text: section.text.slice(start, end), languages: clip(section.languages), speechBlocks: clip(section.speechBlocks) };
+    return narrationChunks(excerpt, fallback).map((part) => ({ ...part, from: part.from + start, to: part.to + start }));
+  });
   const text = section.text, blocks = array(section.speechBlocks);
   const structure = blocks.length ? blocks : [{ from: 0, to: text.length, kind: 'paragraph' }];
   const languages = languageChunks(section, Math.max(1, text.length), fallback), parts = [];

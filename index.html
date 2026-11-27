@@ -783,6 +783,7 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
       <div class="button-row">
         <button class="button secondary" id="analyze-book" type="button">Analyze again</button>
         <button class="button secondary" id="generate-book-audio" type="button">Generate book audio</button>
+        <button class="button quiet" id="edit-epub-narration" type="button" hidden>Choose audiobook text</button>
         <button class="button quiet" id="cancel-book-audio" type="button" hidden>Cancel queued audio</button>
       </div>
       <label class="checkbox-row"><input type="checkbox" id="replace-book-audio"> Replace existing recordings</label>
@@ -884,6 +885,30 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
     </form>
   </dialog>
   <script type="module" src="/src/entry.js"></script>
+  <dialog class="modal epub-narration-dialog" id="epub-narration-dialog" aria-labelledby="epub-narration-title">
+    <form id="epub-narration-form">
+      <header class="modal-header"><h2 id="epub-narration-title">Choose audiobook text</h2><button class="icon-button" type="button" data-close aria-label="Close audiobook text editor">×</button></header>
+      <div class="modal-body form-stack">
+        <p class="field-note">Set a start and end with the cursor or a selection. To skip a passage, select its text and choose Exclude selection. Changes apply the next time you generate audio.</p>
+        <p id="epub-narration-note" class="field-note" hidden></p>
+        <label class="field">EPUB section<select name="section"></select></label>
+        <label class="field">Section text<textarea name="text" rows="12" dir="auto" readonly></textarea></label>
+        <div class="button-row">
+          <button class="button secondary small" type="button" id="epub-narration-start">Start at selection</button>
+          <button class="button secondary small" type="button" id="epub-narration-end">End after selection</button>
+          <button class="button secondary small" type="button" id="epub-narration-exclude">Exclude selection</button>
+        </div>
+        <ul class="epub-narration-selection" id="epub-narration-selection" aria-label="Audiobook boundaries and exclusions" hidden></ul>
+        <p id="epub-narration-status" class="field-note" role="status" hidden></p>
+        <p id="epub-narration-error" class="form-error" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer">
+        <button class="button quiet" type="button" id="epub-narration-reset">Use entire book</button>
+        <button class="button quiet" type="button" data-close>Cancel</button>
+        <button class="button primary" type="submit" id="epub-narration-save">Save selection</button>
+      </footer>
+    </form>
+  </dialog>
   <dialog class="modal pdf-review-dialog" id="pdf-review-dialog" aria-labelledby="pdf-review-title">
     <form id="pdf-review-form">
       <header class="modal-header"><h2 id="pdf-review-title">Review PDF text</h2><button class="icon-button" type="button" data-close aria-label="Close PDF text review"><i data-lucide="x"></i></button></header>

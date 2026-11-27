@@ -9,6 +9,7 @@ import { textWords } from '../shared/reading-text.js';
 import { RequestError } from './books.js';
 import { extractBook, languageChunks } from './book-text.js';
 import { pdfTranscripts } from './pdf-transcript.js';
+import { epubNarration } from './epub-narration.js';
 import { narrationChunks } from './narration-text.js';
 import { narrationOptions, sectionLanguages } from './language-voices.js';
 import { addVocabulary, vocabularySummary } from './vocabulary.js';
@@ -98,6 +99,8 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     db.exec("ALTER TABLE analyses ADD COLUMN languageSelection TEXT NOT NULL DEFAULT '[]'");
   }
   const transcripts = pdfTranscripts(db);
+  const narrationSelection = epubNarration(db);
+  if (!db.prepare('PRAGMA table_info(audio)').all().some((column) => column.name === 'textRanges')) db.exec('ALTER TABLE audio ADD COLUMN textRanges TEXT');
   migrateSpanishFutureSubjunctive(db);
   migrateSpanishVerbForms(db);
   migrateSpanishTaggedMorphology(db);
@@ -118,7 +121,8 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
   let working = false, workerLane = 0;
   const completeAudio = bookNarration({
     db, folder, library, demo, previewAudio, configuration: audioConfig, reserveStorage,
-    queuePart: (book, key, replace) => queue(book, key, replace, false), wake: () => void work(),
+    selectionForBook: narrationSelection.forBook,
+    queuePart: (book, key, replace, ranges) => queue(book, key, replace, false, ranges), wake: () => void work(),
   });
   const scheduledAudio = importNarration({ db, library, demo, configuration: audioConfig, queue: completeAudio.queue, now });
   if (previewAudio) {
@@ -319,6 +323,14 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     return { state: job?.state === 'error' ? 'error' : 'indexing', error: job?.error?.message || null };
   }
 
+  function epubAudioText(book, key) {
+    ensure(book);
+    if (indexed(book)) return narrationSelection.get(book, key);
+    const job = textJobs.get(book.id);
+    if (job?.state === 'cancelled') return { state: 'error', error: 'Text extraction was cancelled. Retry analysis to edit the audiobook.' };
+    return { state: job?.state === 'error' ? 'error' : 'indexing', error: job?.error?.message || null };
+  }
+
   function savePdfReview(book, body) {
     if (!indexed(book)) throw new RequestError(409, 'Wait until the current PDF text has been indexed.');
     if (transcripts.save(book, body, () => {
@@ -389,22 +401,24 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     };
   }
 
-  function queue(book, key, replace = false, start = true) {
+  function queue(book, key, replace = false, start = true, ranges = null) {
     if (!config.baseUrl) throw new RequestError(422, 'Connect a Kokoro server in Settings → Narration.');
     const row = chapter(book, key);
     if (!/[\p{L}\p{N}]/u.test(row.text)) throw new RequestError(422, 'This section has no selectable text for narration.');
     if (demo && row.text.length > 20000) throw new RequestError(422, 'Demo narration supports sections of up to 20,000 characters.');
     const options = narrationOptions(config, sectionLanguages(db.prepare('SELECT languages FROM chapters WHERE book=?').all(book.id), book.language));
-    const candidates = db.prepare('SELECT * FROM audio WHERE book=? AND chapter=? AND digest=? AND options=? ORDER BY created DESC,rowid DESC')
-      .all(book.id, key, row.digest, JSON.stringify(options));
+    const textRanges = ranges ? JSON.stringify(ranges) : null;
+    const candidates = db.prepare('SELECT * FROM audio WHERE book=? AND chapter=? AND digest=? AND options=? AND textRanges IS ? ORDER BY created DESC,rowid DESC')
+      .all(book.id, key, row.digest, JSON.stringify(options), textRanges);
     const running = candidates.find((candidate) => ['queued', 'generating', 'aligning'].includes(candidate.state));
     if (running) return publicAudio(running);
     const cached = candidates.find((candidate) => candidate.state === 'ready' && hasUsableTimings(candidate.timings, candidate.duration));
     if (!replace && cached) return publicAudio(cached);
-    db.prepare('INSERT INTO audio(id, book, chapter, digest, options, state, created) VALUES(?,?,?,?,?,?,?)')
-      .run(randomUUID(), book.id, key, row.digest, JSON.stringify(options), 'queued', Date.now());
+    const id = randomUUID();
+    db.prepare('INSERT INTO audio(id,book,chapter,digest,options,state,created,textRanges) VALUES(?,?,?,?,?,?,?,?)')
+      .run(id, book.id, key, row.digest, JSON.stringify(options), 'queued', Date.now(), textRanges);
     if (start) void work();
-    return publicAudio(audioRow(book, key));
+    return publicAudio(db.prepare('SELECT * FROM audio WHERE id=?').get(id));
   }
 
   async function analyze(row) {
@@ -475,12 +489,12 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     const temporary = join(folder, job.id);
     await mkdir(temporary, { recursive: true });
     const language = db.prepare('SELECT language FROM analyses WHERE book=?').get(job.book).language;
-    const signature = JSON.stringify([job.digest, job.options, row.text, row.speechBlocks, row.languages]);
+    const signature = JSON.stringify([job.digest, job.options, job.textRanges, row.text, row.speechBlocks, row.languages]);
     let checkpoint = pausedAudio.get(job.id); pausedAudio.delete(job.id);
     if (checkpoint?.signature !== signature) checkpoint = null;
     const words = checkpoint?.words || textWords(row.text, language);
     checkpoint ||= { signature, book: job.book, words, timings: words.map((word) => ({ ...word, start: null, end: null })), files: [],
-      chunks: narrationChunks(row, language), index: 0, offset: 0, report: trackWork(`audio:${job.id}`, job.book) };
+      chunks: narrationChunks(row, language, JSON.parse(job.textRanges || 'null')), index: 0, offset: 0, report: trackWork(`audio:${job.id}`, job.book) };
     const { timings, files, chunks, report } = checkpoint;
     report('generating', checkpoint.index, chunks.length, 'passages');
     let offset = checkpoint.offset, paused = false;
@@ -772,7 +786,11 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       const uploaded = db.prepare('SELECT id FROM recordings WHERE book=?').all(book).flatMap(({ id }) => ['.source', '.mp3', '.transcript.json', '.chapters'].map((suffix) => join(folder, id + suffix)));
       return [...audio, ...complete, ...uploaded];
     },
-    settings, save, voices, info, ensure, unit, chapters, remove, audioFile, prune, cancel, cancelProcess, pdfReview, savePdfReview, epubRevision, epubText,
+    settings, save, voices, info, ensure, unit, chapters, remove, audioFile, prune, cancel, cancelProcess, pdfReview, savePdfReview, epubRevision, epubText, epubAudioText,
+    saveEpubAudioText(book, body) {
+      if (!indexed(book)) throw new RequestError(409, 'Wait until the EPUB text has been indexed.');
+      return narrationSelection.save(book, body);
+    },
     textProcesses: () => [...textJobs].map(([book, job]) => ({ book, state: job.state, error: job.error?.message || null })),
     textSections(book, { original = false } = {}) {
       const rows = db.prepare('SELECT key,ordinal,title,text,digest,tokens,languages,pdfSourceText FROM chapters WHERE book=? ORDER BY ordinal').all(book.id);

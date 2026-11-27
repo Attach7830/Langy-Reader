@@ -462,6 +462,10 @@ html[data-immersion="true"] #abs-sync-status { display: none; }
 .modal-header h2 { font-size: 35px; }
 .modal-body { padding: 19px 22px; display: grid; gap: 14px; }
 .modal-footer { display: flex; justify-content: flex-end; align-items: center; gap: 7px; padding: 12px 20px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+.epub-narration-dialog { width: min(780px, calc(100vw - 24px)); }
+.epub-narration-selection { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.epub-narration-range { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--border); }
+.epub-narration-range > div { min-width: 0; overflow-wrap: anywhere; }
 .modal-footer .button.danger[hidden] { display: none; }
 .pdf-review-dialog { width: min(950px, calc(100vw - 24px)); }
 .pdf-review-navigation { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }

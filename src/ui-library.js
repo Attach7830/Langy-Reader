@@ -16,6 +16,7 @@ import { archiveTitleActions } from './archive-title-controls.js';
 import { pdfOCR } from './pdf-ocr.js';
 import { reviewPdfText } from './pdf-review.js';
 import { adjustPdfTiming } from './pdf-timing.js';
+import { epubNarrationEditor } from './epub-narration.js';
 import { bookLanguageSuggestions } from './reading-languages.js';
 import { showReadingTime } from './ui-reading-time.js';
 import { audiobookshelfBook } from './audiobookshelf-ui.js';
@@ -56,6 +57,10 @@ export function libraryScreen({ progress, onRemove, detectMetadata, safeMode = f
   } });
   const pdfTiming = adjustPdfTiming({ saved(book) {
     audioChanged(book.id); toast('Page timing saved.');
+    void showLearning(book);
+  } });
+  const epubNarration = epubNarrationEditor({ saved(book) {
+    toast('Audiobook text selection saved.');
     void showLearning(book);
   } });
   let learningBook, learningTimer, libraryTimer, learningVisit = 0, libraryVisit = 0, learningParts = {}, learningPending = {};
@@ -511,6 +516,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, safeMode = f
     audioUI.reset();
     learningBook = book;
     $('#review-pdf-text').hidden = !editablePdf(book);
+    $('#edit-epub-narration').hidden = snapshot.demo || book.format !== 'epub' || book.canEdit === false;
     $('#open-reviewed-epub').hidden = true;
     $('#adjust-pdf-timing').hidden = true;
     $('#edit-book-languages').hidden = book.canEdit === false || snapshot.demo && book.id === 'sample';
@@ -536,6 +542,10 @@ export function libraryScreen({ progress, onRemove, detectMetadata, safeMode = f
     if (editablePdf(book)) { learningDialog.close(); pdfReview.open(book); }
   });
   $('#open-reviewed-epub').addEventListener('click', () => learningDialog.close());
+  $('#edit-epub-narration').addEventListener('click', () => {
+    const book = learningBook;
+    if (book?.format === 'epub' && book.canEdit !== false && !snapshot.demo) { learningDialog.close(); epubNarration.open(book); }
+  });
   $('#adjust-pdf-timing').addEventListener('click', () => {
     const book = learningBook, audio = learningParts.result?.narration?.audio;
     if (editablePdf(book) && audio?.state === 'ready') { learningDialog.close(); void pdfTiming.open(book, audio.id); }

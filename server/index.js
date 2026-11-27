@@ -301,6 +301,14 @@ app.get('/api/books/:id/ocr', async (req, res) => {
 });
 if (!demo) {
   app.get('/api/books/:id/epub-text', (req, res) => res.json(learning.epubText(library.getBook(req.params.id, req.visitor))));
+  const editableEpub = (req) => {
+    const book = library.getBook(req.params.id, req.visitor);
+    if (book.canEdit === false) throw new RequestError(403, 'Only the book owner can edit its audiobook text.');
+    if (book.format !== 'epub') throw new RequestError(422, 'Choose an EPUB book.');
+    return book;
+  };
+  app.get('/api/books/:id/epub-narration', (req, res) => res.json(learning.epubAudioText(editableEpub(req), req.query.key)));
+  app.put('/api/books/:id/epub-narration', (req, res) => res.json(learning.saveEpubAudioText(editableEpub(req), req.body)));
   const editablePDF = (req) => {
     const book = library.getBook(req.params.id, req.visitor);
     if (book.canEdit === false) throw new RequestError(403, 'Only the book’s owner can change its PDF text or audio timing.');
