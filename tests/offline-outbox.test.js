@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { offlineChanges } from '../src/offline-store.js';
 import { offlineRequest, flushOfflineChanges, setOfflineAccount } from '../src/offline.js';
+import { bookmarkTargetKey } from '../shared/bookmark-targets.js';
 
 test('offline packs show only downloaded books, bookmarks survive lost acknowledgements, and accounts cannot inherit another reader’s changes', async (t) => {
   const dom = new JSDOM('', { url: 'https://langy.test' }), originals = new Map();
@@ -26,18 +27,20 @@ test('offline packs show only downloaded books, bookmarks survive lost acknowled
   const loading = [];
   assert.deepEqual((await offlineRequest('/api/library', { onProgress: (event) => loading.push(event) })).books.map((book) => book.id), ['book']);
   assert.deepEqual(loading.filter((event) => event.label === 'Loading saved books…').map(({ complete, total }) => [complete, total]), [[0, 1], [1, 1]]);
-  const base = '/api/books/book/bookmarks', body = { target: 'epubcfi(/6/2!/4/2/1:7)', label: 'My passage', note: 'A note' };
+  const base = '/api/books/book/bookmarks', body = { target: { text: true, key: 'pdf:4', from: 18 }, label: 'My passage', note: 'A note' };
   const saved = await offlineRequest(base, { method: 'POST', body }); assert.equal(saved.queued, true); assert.equal(saved.bookmarks[0].label, 'My passage');
   let loseAck = true, requests = 0; const remote = new Map();
   globalThis.fetch = async (_path, options) => {
-    requests++; const value = JSON.parse(options.body); remote.set(value.target, { ...value, id: 'server-id' });
+    requests++; const value = JSON.parse(options.body); remote.set(bookmarkTargetKey(value.target), { ...value, id: 'server-id' });
     if (loseAck) { loseAck = false; throw new Error('Connection lost after save'); }
     return Response.json({ bookmarks: [...remote.values()] });
   };
   await flushOfflineChanges(); assert.equal(changeMap.size, 1); await flushOfflineChanges(); assert.equal(changeMap.size, 0); assert.equal(remote.size, 1); assert.equal(requests, 2);
   const listed = await offlineRequest(base); assert.equal(listed.bookmarks[0].id, 'server-id');
-  await offlineRequest(base + '/server-id', { method: 'DELETE' }); assert.equal((await offlineRequest(base)).bookmarks.length, 0);
-  assert.equal([...changeMap.values()][0].path, base + '/remove');
+  const savedAgain = await offlineRequest(base, { method: 'POST', body: { target: { from: 18, key: 'pdf:4', text: true }, label: 'My passage' } });
+  assert.equal(savedAgain.bookmarks.length, 1); assert.equal(savedAgain.bookmarks[0].note, 'A note');
+  await offlineRequest(base + '/' + savedAgain.bookmarks[0].id, { method: 'DELETE' }); assert.equal((await offlineRequest(base)).bookmarks.length, 0);
+  assert.equal([...changeMap.values()].at(-1).path, base + '/remove');
   await offlineRequest('/api/books/book/currently-reading', { method: 'PATCH', body: { currentlyReading: true } });
   assert.ok((await offlineRequest('/api/library')).books[0].starredAt);
   await offlineRequest('/api/books/book/set-aside', { method: 'PATCH', body: { setAside: true } });

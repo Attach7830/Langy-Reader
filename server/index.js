@@ -6,6 +6,7 @@ import express from 'express';
 import multer from 'multer';
 import { maxUpload, openLibrary, RequestError } from './books.js';
 import { openAccounts } from './accounts.js';
+import { bookmarkTargetKey } from '../shared/bookmark-targets.js';
 import { userStorage } from './user-storage.js';
 import { fontDownloads } from './font-downloads.js';
 import { openBookImports } from './book-imports.js';
@@ -293,7 +294,8 @@ app.get('/api/books/:id/offline', async (req, res) => {
   pack.narration.absConnected = (usesOwnerAudiobookshelf(req) && audiobookshelf.settings().connected); res.json(pack);
 });
 app.post('/api/books/:id/bookmarks/remove', (req, res) => {
-  const book = library.getBook(req.params.id, req.visitor), existing = library.bookmarks(book.id, req.visitor).find((item) => item.target === req.body?.target);
+  const book = library.getBook(req.params.id, req.visitor), target = bookmarkTargetKey(req.body?.target);
+  const existing = library.bookmarks(book.id, req.visitor).find((item) => bookmarkTargetKey(item.target) === target);
   res.json(existing ? library.removeBookmark(book.id, existing.id, req.visitor) : { bookmarks: library.bookmarks(book.id, req.visitor) });
 });
 app.post('/api/books/:id/character-guide', ...demoGenerations, async (req, res) => {
@@ -576,7 +578,8 @@ for (const [path, generate] of [['word', ai.word], ['summary', ai.summary], ['ph
   app.post(`/api/ai/${path}`, ...demoGenerations, async (req, res) => {
     const controller = new AbortController();
     res.on('close', () => controller.abort());
-    const answer = await generate(req.body ?? {}, controller.signal);
+    const task = path === 'phrase' && req.body?.web === true ? ai.phraseWithWeb : generate;
+    const answer = await task(req.body ?? {}, controller.signal);
     if (!controller.signal.aborted) res.json(typeof answer === 'string' ? { text: answer } : answer);
   });
 }

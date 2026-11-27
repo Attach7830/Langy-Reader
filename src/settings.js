@@ -1,4 +1,4 @@
-import { defaults } from '../shared/reader-preferences.js';
+import { defaults, shortcutDefaults } from '../shared/reader-preferences.js';
 import { languageLabel } from './languages.js';
 export { defaults } from '../shared/reader-preferences.js';
 
@@ -38,6 +38,8 @@ export const shortcuts = {
   rewindAudio: 'Rewind audio 10 seconds',
   forwardAudio: 'Fast forward audio 10 seconds',
   bookmarks: 'Open bookmarks',
+  bookmarkSelection: 'Bookmark selection',
+  explainSelection: 'Explain phrase',
 };
 
 function read(key, defaultValue) {
@@ -52,12 +54,8 @@ function write(key, value) {
 
 export function getSettings() {
   const object = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  const saved = object(read('langy-settings-v1', {})), savedKeys = object(saved.keys);
-  const keys = { ...defaults.keys, ...savedKeys };
-  // New defaults must never take a key already assigned by an existing reader.
-  for (const [name, key] of Object.entries(defaults.keys))
-    if (!Object.hasOwn(savedKeys, name) && Object.values(savedKeys).includes(key)) keys[name] = '';
-  return { ...defaults, ...saved, keys, audioRecordings: { ...object(saved.audioRecordings) } };
+  const saved = object(read('langy-settings-v1', {}));
+  return { ...defaults, ...saved, keys: shortcutDefaults(saved.keys), audioRecordings: { ...object(saved.audioRecordings) } };
 }
 
 const listeners = new Set();

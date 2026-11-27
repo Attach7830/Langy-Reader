@@ -1,6 +1,7 @@
 import { offlineChanges, offlineOwner, packCaches, cachedResponse, cacheJSON, savedPack } from './offline-store.js';
 import { offlineLookup } from './offline-data.js';
 import { learningLanguages } from '../shared/learning-languages.js';
+import { bookmarkTargetKey } from '../shared/bookmark-targets.js';
 import { accountSession } from './auth.js';
 
 let activeBook, flushing, notifiedOwner;
@@ -37,8 +38,13 @@ async function bookmarkList(path) {
   const queued = (await offlineChanges.all()).filter((item) => item.owner === offlineOwner() && item.base === path).sort((a, b) => a.created - b.created);
   let result = entries;
   for (const item of queued) {
-    result = result.filter((entry) => entry.target !== item.body.target);
-    if (item.kind === 'bookmark-save') result = [{ id: item.id, ...item.body, created: item.created }, ...result];
+    const target = bookmarkTargetKey(item.body.target);
+    const previous = result.find((entry) => bookmarkTargetKey(entry.target) === target);
+    result = result.filter((entry) => entry !== previous);
+    if (item.kind === 'bookmark-save') {
+      const note = item.body.note === undefined ? previous?.note || '' : (item.body.note || '').trim();
+      result = [{ id: item.id, ...item.body, note, created: item.created }, ...result];
+    }
   }
   return { bookmarks: result };
 }

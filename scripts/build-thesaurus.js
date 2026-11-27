@@ -78,8 +78,7 @@ try {
           const [data, gloss = ''] = line.split(' | ', 2);
           const [offset, , pos, count, ...words] = data.split(/\s+/u);
           const terms = words.slice(0, 2 * Number.parseInt(count, 16)).filter((_, index) => index % 2 === 0);
-          const definition = gloss.split(';', 1)[0].trim();
-          const label = definition.length > 96 ? `${definition.slice(0, 96).replace(/\s+\S*$/u, '')}…` : definition;
+          const label = gloss.split(/;\s*"/u, 1)[0].trim();
           senseLabels.set(`${offset}-${pos === 's' ? 'a' : pos}`, label);
           addSense('en', pos, label, terms);
         }

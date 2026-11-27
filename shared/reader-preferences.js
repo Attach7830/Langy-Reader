@@ -7,7 +7,7 @@ export const defaults = {
   languageDefaultsMode: 'shared', languageDefaults: {},
   uiLanguage: 'en', nativeLanguage: '', cacheAI: true, cacheCovers: true,
   progressSyncEnabled: true, syncDeviceName: 'Langy browser',
-  keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's', playback: 'p', audioToolbar: 'a', pinyin: 'y', returnLocation: 'b', rewindAudio: '[', forwardAudio: ']', bookmarks: 'm' },
+  keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's', playback: 'p', audioToolbar: 'a', pinyin: 'y', returnLocation: 'b', rewindAudio: '[', forwardAudio: ']', bookmarks: 'm', bookmarkSelection: 'k', explainSelection: 'e' },
   autoHideDocks: false,
   tapToTurn: false, swipeToTurn: true, tapCenterFullscreen: true,
   doubleTapToTurn: true,
@@ -16,6 +16,15 @@ export const defaults = {
 
 export const accountFields = Object.keys(defaults).filter((key) => !['progressSyncEnabled', 'syncDeviceName'].includes(key));
 export const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+export function shortcutDefaults(saved) {
+  const assigned = isObject(saved) ? saved : {};
+  const keys = { ...defaults.keys, ...assigned };
+  // An existing assignment takes precedence over a newly introduced default.
+  for (const [action, key] of Object.entries(defaults.keys)) {
+    if (!Object.hasOwn(assigned, action) && Object.values(assigned).includes(key)) keys[action] = '';
+  }
+  return keys;
+}
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const maps = new Set(['keys', 'audioRecordings', 'languageDefaults']);
 export const accountPreferences = (value) => Object.fromEntries(accountFields.filter((key) => Object.hasOwn(value, key)).map((key) => [key, value[key]]));

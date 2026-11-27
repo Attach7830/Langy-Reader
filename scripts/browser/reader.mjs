@@ -725,7 +725,8 @@ try {
     await page.touchscreen.tap(point.x, point.y); await delay(450); assert.equal(await page.locator('#word-help').isVisible(), false);
     await page.keyboard.press('s'); assert.equal(await page.locator('#summary-panel').isVisible(), false);
     await source.evaluate(paragraph => { const range = document.createRange(), node = paragraph.firstChild; range.setStart(node, 0); range.setEnd(node, 10); getSelection().removeAllRanges(); getSelection().addRange(range); document.dispatchEvent(new Event('selectionchange')); });
-    await delay(250); assert.equal(await page.locator('#phrase-help').isVisible(), false);
+    await page.locator('[data-bookmark-selection]').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('[data-explain-phrase]').isVisible(), false);
     await source.evaluate(() => getSelection().removeAllRanges());
     await page.locator('#reader-more > summary').click(); await page.locator('#book-tools-button').click();
     assert.equal(await page.locator('#book-search-form').isVisible(), true); assert.equal(await page.locator('#character-guide-tools').isVisible(), false);
@@ -821,13 +822,46 @@ try {
     await desktopPage.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 2 of 3');
     await desktopPage.keyboard.press('Control+ArrowLeft');
     await desktopPage.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 1 of 3'); await delay(300);
-    let phrases = 0;
-    await desktopPage.route('**/api/ai/phrase', async (route) => { phrases++; const data = route.request().postDataJSON(); assert.equal(data.phrase, 'La viajera'); assert.ok(data.context.includes('casa tranquila')); await route.fulfill({ json: { text: 'The traveler is the woman arriving at the house.' } }); });
-    await desktopPage.frameLocator('#viewer iframe').locator('#source').evaluate((source) => { const node = source.firstChild, range = document.createRange(); range.setStart(node, 0); range.setEnd(node, 10); const selected = getSelection(); selected.removeAllRanges(); selected.addRange(range); document.dispatchEvent(new Event('selectionchange')); });
-    await desktopPage.locator('#phrase-help').waitFor({ state: 'visible' }); assert.equal(phrases, 0);
-    await desktopPage.locator('[data-explain-phrase]').click(); await desktopPage.locator('[data-phrase-answer]').filter({ hasText: 'The traveler' }).waitFor(); assert.equal(phrases, 1);
+    const phrases = [], selection = desktopPage.frameLocator('#viewer iframe').locator('#source');
+    await desktopPage.route('**/api/ai/phrase', async (route) => {
+      const data = route.request().postDataJSON(); phrases.push(data.web === true);
+      assert.equal(data.phrase, 'La viajera'); assert.ok(data.context.includes('casa tranquila'));
+      await route.fulfill({ json: data.web ? { text: 'A traveler is someone on a journey. [1]', sources: [{ id: 1, title: 'Dictionary entry', url: 'https://example.org/traveler' }] }
+        : { text: Array(90).fill('The traveler is the woman arriving at the house.').join('\n') } });
+    });
+    const select = (from, to) => selection.evaluate((source, [start, end]) => {
+      const node = source.firstChild, range = document.createRange(), selected = getSelection();
+      range.setStart(node, start); range.setEnd(node, end); selected.removeAllRanges(); selected.addRange(range);
+    }, [from, to]);
+    await select(0, 10);
+    const panel = desktopPage.locator('#phrase-help'), answer = desktopPage.locator('[data-phrase-answer]');
+    await panel.waitFor({ state: 'visible' });
+    assert.equal(await panel.locator('button:visible > svg').count(), 2);
+    assert.deepEqual(phrases, []);
+    await selection.dispatchEvent('keydown', { key: 'e', bubbles: true, cancelable: true });
+    await answer.filter({ hasText: 'The traveler' }).waitFor(); assert.deepEqual(phrases, [false]);
+    assert.equal(await panel.evaluate((element) => {
+      const box = element.getBoundingClientRect(), scroll = element.querySelector('.phrase-response');
+      return box.top >= 0 && box.left >= 0 && box.right <= innerWidth && box.bottom <= innerHeight && scroll.scrollHeight > scroll.clientHeight;
+    }), true);
+    await panel.getByRole('button', { name: 'Search the web', exact: true }).click();
+    assert.equal(await panel.getByRole('link', { name: 'Dictionary entry' }).getAttribute('href'), 'https://example.org/traveler');
+    assert.deepEqual(phrases, [false, true]);
     await desktopPage.screenshot({ path: output + '/contextual-phrase-desktop.png' });
-    await desktopPage.locator('[data-close-phrase]').click();
+    await desktopPage.keyboard.press('Escape'); await panel.waitFor({ state: 'hidden' });
+    await select(3, 10);
+    await panel.getByRole('button', { name: 'Bookmark selection', exact: true }).click();
+    const bookmarkDialog = desktopPage.locator('#bookmarks-dialog'), note = bookmarkDialog.locator('textarea');
+    assert.equal(await note.evaluate((node) => node === document.activeElement), true);
+    await desktopPage.keyboard.press('Enter'); await bookmarkDialog.waitFor({ state: 'hidden' });
+    await select(11, 16);
+    await selection.dispatchEvent('keydown', { key: 'k', bubbles: true, cancelable: true });
+    await note.fill('Review this verb.'); await desktopPage.keyboard.press('Enter');
+    await bookmarkDialog.waitFor({ state: 'hidden' });
+    const { bookmarks } = await (await desktop.request.get(base + `/api/books/${book.id}/bookmarks`)).json();
+    const withoutNote = bookmarks.find(({ label }) => label === 'viajera'), withNote = bookmarks.find(({ label }) => label === 'llegó');
+    assert.equal(withoutNote?.note, ''); assert.equal(withNote?.note, 'Review this verb.');
+    assert.match(withoutNote.target, /^epubcfi\(.+:3\)$/u); assert.match(withNote.target, /^epubcfi\(.+:11\)$/u);
     await desktopPage.locator('#open-process-queue').click(); await desktopPage.locator('#downloads-dialog').waitFor({ state: 'visible' });
     assert.equal(await desktopPage.locator('#process-dismiss-minutes').inputValue(), '0');
     assert.equal(await desktopPage.locator('#downloads-title').textContent(), 'Process queue');
