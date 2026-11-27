@@ -1,5 +1,11 @@
 import { RequestError } from './books.js';
 
+export function hasAdjustablePageStarts(segments, duration) {
+  return segments.length >= 2 && Number.isFinite(duration) && segments.every(({ key, start, end }, index) =>
+    /^pdf:[1-9]\d*$/u.test(key) && Number.isFinite(start) && start >= 0 && start < duration && Number.isFinite(end) && end > start
+    && (!index || start > segments[index - 1].start));
+}
+
 export function validatePageStarts(segments, duration, value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new RequestError(422, 'Provide PDF page start times.');
   const keys = new Set(segments.map((segment) => segment.key));
@@ -8,7 +14,9 @@ export function validatePageStarts(segments, duration, value) {
   const changes = {};
   for (const [index, segment] of segments.entries()) {
     const time = Object.hasOwn(value, segment.key) ? value[segment.key] : segment.start;
-    if (!Number.isFinite(time) || time < 0 || time >= duration || time <= previous || (!index && time !== segment.start)) {
+    const next = segments[index + 1];
+    const end = next && Object.hasOwn(value, next.key) ? value[next.key] : segment.end;
+    if (!Number.isFinite(time) || time < 0 || time >= duration || time >= end || time <= previous || (!index && time !== segment.start)) {
       throw new RequestError(422, 'Page starts must be in order and inside the recording. The first page keeps its start.');
     }
     if (time !== segment.start) changes[segment.key] = time;

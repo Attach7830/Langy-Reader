@@ -9,12 +9,14 @@ const clock = (time) => {
 export function adjustPdfTiming({ saved }) {
   const dialog = $('#pdf-timing-dialog'), form = $('#pdf-timing-form'), select = form.elements.page;
   const audio = $('#pdf-timing-audio'), save = $('#pdf-timing-save'), mark = $('#pdf-timing-mark');
+  const fields = $('#pdf-timing-controls');
   const jump = $('#pdf-timing-jump'), reset = $('#pdf-timing-reset'), nudges = $$('[data-pdf-nudge]', form);
   let editor;
 
   const selected = () => editor?.pages?.[Number(select.value)];
   function controls() {
     const page = selected(), ready = Boolean(page && Number.isFinite(audio.duration) && !editor.saving);
+    fields.hidden = save.hidden = !page;
     select.disabled = !page || editor.saving;
     jump.disabled = !ready;
     mark.disabled = !ready || select.selectedIndex === 0;
@@ -22,7 +24,7 @@ export function adjustPdfTiming({ saved }) {
     save.disabled = !page || editor.saving || !editor.dirty;
     for (const button of nudges) button.disabled = !ready;
     $('#pdf-timing-opening').textContent = page?.opening || '';
-    message('#pdf-timing-status', page ? `Page ${page.number} starts at ${clock(page.start)}${select.selectedIndex === 0 ? ' · Start of the recording' : ''}` : '');
+    if (page) message('#pdf-timing-status', `Page ${page.number} starts at ${clock(page.start)}${select.selectedIndex === 0 ? ' · Start of the recording' : ''}`);
   }
 
   function showPages() {
@@ -65,21 +67,37 @@ export function adjustPdfTiming({ saved }) {
     } catch (error) { if (editor === session) message('#pdf-timing-error', error.message); }
     finally { if (editor === session) { session.saving = false; controls(); } }
   });
-  dialog.addEventListener('close', () => {
+  function clearEditor() {
+    editor?.controller.abort(); editor = undefined;
+    if (audio.hasAttribute('src')) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
+  }
+  dialog.addEventListener('close', () => { if (!dialog.open) clearEditor(); });
+  return { async open(book, recording, { pageKey } = {}) {
     if (dialog.open) return;
-    editor?.controller.abort(); editor = undefined; audio.pause(); audio.removeAttribute('src'); audio.load();
-  });
-  return { async open(book, recording) {
-    if (dialog.open) return;
-    const path = `/api/books/${encodeURIComponent(book.id)}/pdf-timing/${encodeURIComponent(recording)}`;
+    clearEditor();
+    select.replaceChildren(); controls();
+    message('#pdf-timing-error'); message('#pdf-timing-status');
+    dialog.showModal();
+    if (!recording?.pdfTimingAvailable) {
+      const explanations = {
+        loading: 'Wait for the audiobook details to load, then reopen this tool.',
+        ready: 'This recording needs at least two synced PDF pages to adjust its page turns.',
+        queued: 'Wait for the audiobook to finish, then reopen this tool.',
+        assembling: 'Wait for the audiobook to finish, then reopen this tool.',
+      };
+      message('#pdf-timing-status', explanations[recording?.state ?? 'loading']
+        || 'Generate this PDF’s audiobook or sync a recording in Analysis & audio to adjust page turns.');
+      return;
+    }
+    const path = `/api/books/${encodeURIComponent(book.id)}/pdf-timing/${encodeURIComponent(recording.id)}`;
     const session = editor = { book, path, controller: new AbortController() };
-    select.replaceChildren(); controls(); message('#pdf-timing-error');
-    message('#pdf-timing-status', 'Loading page timings…'); dialog.showModal();
+    message('#pdf-timing-status', 'Loading page timings…');
     try {
       const data = await api(path, { signal: session.controller.signal });
       if (editor !== session) return;
       Object.assign(session, data); showPages();
-      if (session.pages.length > 1) select.selectedIndex = 1;
+      const pageIndex = session.pages.findIndex(({ key }) => key === pageKey);
+      select.selectedIndex = pageIndex >= 0 ? pageIndex : 1;
       controls(); audio.src = data.url;
     } catch (error) {
       if (editor === session) { message('#pdf-timing-status'); message('#pdf-timing-error', error.message); }

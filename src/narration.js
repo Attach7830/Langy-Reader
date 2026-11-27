@@ -18,9 +18,11 @@ function atTime(items, time, field = 'start') {
   return found;
 }
 export function narration({ preferences, renderer, book, navigate, changePreferences, safeMode = false,
-  textEdition = () => false, highlight = () => true, readingPosition = () => null }) {
+  textEdition = () => false, highlight = () => true, readingPosition = () => null,
+  editablePdf = () => false, showPdfTiming }) {
   const player = $('#narration-player'), audio = $('#narration-audio');
   const play = $('#narration-play'), generate = $('#narration-generate');
+  const adjustTiming = $('#narration-adjust-pdf-timing');
   const status = $('#narration-status'), seek = $('#narration-seek');
   const clock = $('#narration-time'), completion = $('#narration-completion'), percent = $('#narration-percent');
   const chapters = $('#narration-chapter'), markers = $('#narration-markers');
@@ -326,6 +328,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   }
   function apply() {
     enabled = preferences().audioEnabled; player.hidden = !enabled || Boolean(preferences().audioToolbarHidden);
+    adjustTiming.hidden = safeMode || !showPdfTiming || !editablePdf(book());
     const toggle = $('#audio-toggle');
     toggle.setAttribute('aria-pressed', String(!player.hidden));
     toggle.title = player.hidden ? 'Show audio toolbar' : 'Hide audio toolbar';
@@ -354,6 +357,12 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     else pausePlayback();
   }
   play.addEventListener('click', toggle);
+  adjustTiming.addEventListener('click', () => {
+    const active = book();
+    if (adjustTiming.hidden || !editablePdf(active)) return;
+    pausePlayback();
+    showPdfTiming(active, recording, renderer()?.audioUnit?.()?.key);
+  });
   podcastToggle.addEventListener('click', () => changePreferences({ podcastMode: !preferences().podcastMode }));
   recordingChoice.addEventListener('change', () => {
     const active = book();

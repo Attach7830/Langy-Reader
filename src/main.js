@@ -127,6 +127,8 @@ const phrases = phraseHelp({ book: () => activeBook, preferences: () => settings
 });
 const audio = narration({
   safeMode, textEdition: () => readingPdfEpub, highlight: () => readingFormat() === 'epub',
+  editablePdf: (book) => library.editablePdf(book),
+  showPdfTiming: (book, recording, pageKey) => library.showPdfTiming(book, recording, { pageKey }),
   preferences: () => temporaryAudioVisible ? { ...settings, audioToolbarHidden: false } : settings, renderer: () => renderer, book: () => activeBook,
   readingPosition: () => activePosition?.target,
   navigate: (target) => move(0, target, { audio: true }),

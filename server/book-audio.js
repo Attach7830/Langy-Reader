@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { RequestError } from './books.js';
 import { hasUsableTimings } from './audio-timing.js';
 import { narrationOptions, sectionLanguages } from './language-voices.js';
-import { applyPageStarts, validatePageStarts } from './pdf-timing.js';
+import { applyPageStarts, hasAdjustablePageStarts, validatePageStarts } from './pdf-timing.js';
 
 const run = promisify(execFile);
 const pending = new Set(['queued', 'generating', 'aligning']);
@@ -41,20 +41,23 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
     if (!row) return { state: 'missing' };
     const parts = JSON.parse(row.parts);
     const complete = parts.filter(({ id }) => db.prepare("SELECT id FROM audio WHERE id=? AND state='ready'").get(id)).length;
-    let timing;
+    let timing, pdfTimingAvailable;
     if (row.state === 'ready') {
       const segments = JSON.parse(row.segments), markers = JSON.parse(row.markers);
       // PDF page overrides track the scan. The text edition displays the same
       // words used for alignment, so it follows the original word times.
       timing = textEdition ? { segments: segments.map(({ pageOnly, ...part }) => part), markers }
         : applyPageStarts(segments, markers, JSON.parse(row.pdfTiming));
+      // Uploaded chapter markers refer to the recording's original clock.
+      if (row.kind === 'uploaded') timing.markers = markers;
+      pdfTimingAvailable = hasAdjustablePageStarts(segments, row.duration);
     }
     return {
       id: row.id, state: row.state, error: row.error, complete, total: parts.length, duration: row.duration,
       kind: row.kind, name: row.name, quality: row.quality ? JSON.parse(row.quality) : null, alignmentRevision: row.alignmentRevision,
       ...(row.state === 'ready' ? {
         url: `/api/books/${row.book}/audio/${row.id}`,
-        ...timing, approximateSections: timing.segments.filter((part) => part.approximate || part.pageOnly).length,
+        ...timing, pdfTimingAvailable, approximateSections: timing.segments.filter((part) => part.approximate || part.pageOnly).length,
       } : {}),
     };
   }
@@ -108,24 +111,27 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
   }
 
   function timingRecording(book, id) {
-    const row = db.prepare("SELECT * FROM book_audio WHERE id=? AND book=? AND state='ready' AND kind='generated'").get(id, book.id);
-    if (!row) throw new RequestError(404, 'This finished PDF audiobook was not found.');
-    if (row.digest !== digest(sections(book))) throw new RequestError(409, 'Generate audio for the current PDF text first.');
-    return row;
+    const row = db.prepare("SELECT * FROM book_audio WHERE id=? AND book=? AND state='ready'").get(id, book.id);
+    if (!row) throw new RequestError(404, 'This synced PDF audiobook was not found.');
+    if (row.digest !== digest(sections(book))) throw new RequestError(409, 'Sync an audiobook with the current PDF text first.');
+    const segments = JSON.parse(row.segments);
+    if (!hasAdjustablePageStarts(segments, row.duration)) throw new RequestError(422, 'This recording needs at least two synced PDF pages.');
+    return { row, segments };
   }
 
   function pdfTiming(book, id) {
-    const row = timingRecording(book, id), starts = JSON.parse(row.pdfTiming);
+    const { row, segments } = timingRecording(book, id);
+    const starts = JSON.parse(row.pdfTiming);
     const text = db.prepare('SELECT substr(text,1,260) AS opening FROM chapters WHERE book=? AND key=?');
     return { revision: row.alignmentRevision, url: `/api/books/${book.id}/audio/${row.id}`, duration: row.duration,
-      pages: JSON.parse(row.segments).map(({ key, start }) => ({ key, number: Number(key.slice(4)), original: start,
+      pages: segments.map(({ key, start }) => ({ key, number: Number(key.slice(4)), original: start,
         start: starts[key] ?? start, opening: text.get(book.id, key)?.opening || '' })) };
   }
 
   function savePdfTiming(book, id, body) {
-    const row = timingRecording(book, id);
+    const { row, segments } = timingRecording(book, id);
     if (body.revision !== row.alignmentRevision) throw new RequestError(409, 'The timing changed. Reopen the editor before saving.');
-    const starts = validatePageStarts(JSON.parse(row.segments), row.duration, body.starts);
+    const starts = validatePageStarts(segments, row.duration, body.starts);
     const value = JSON.stringify(starts);
     if (row.pdfTiming !== value) db.prepare('UPDATE book_audio SET pdfTiming=?,alignmentRevision=alignmentRevision+1 WHERE id=?').run(value, row.id);
     return pdfTiming(book, id);

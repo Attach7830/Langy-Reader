@@ -8,6 +8,7 @@ import { RequestError } from './books.js';
 import { synchronizeChunk } from './audio-timing.js';
 import { chapterAudio } from './chapter-audio.js';
 import { sectionLanguages } from './language-voices.js';
+import { validatePageStarts } from './pdf-timing.js';
 import { env } from 'node:process';
 
 const run = promisify(execFile);
@@ -187,9 +188,15 @@ export function uploadedAudio({ db, folder, library, languageCall, wake, isResca
         }
       }
       const chapters = markers.sort((a, b) => a.time - b.time).filter((marker, index, all) => !index || marker.time > all[index - 1].time + .001);
-      db.prepare('INSERT INTO book_audio(id,book,digest,options,state,parts,segments,markers,duration,created,kind,name,quality) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET digest=excluded.digest, state=excluded.state,parts=excluded.parts,segments=excluded.segments,markers=excluded.markers,quality=excluded.quality,alignmentRevision=book_audio.alignmentRevision+1')
+      // Keep manual page starts that still work with the new alignment.
+      let pdfTiming = '{}';
+      if (previous?.pdfTiming && previous.pdfTiming !== '{}') {
+        try { pdfTiming = JSON.stringify(validatePageStarts(segments, job.duration, JSON.parse(previous.pdfTiming))); }
+        catch (error) { if (!(error instanceof RequestError) || error.status !== 422) throw error; }
+      }
+      db.prepare('INSERT INTO book_audio(id,book,digest,options,state,parts,segments,markers,duration,created,kind,name,quality,pdfTiming) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET digest=excluded.digest, state=excluded.state,parts=excluded.parts,segments=excluded.segments,markers=excluded.markers,quality=excluded.quality,pdfTiming=excluded.pdfTiming,alignmentRevision=book_audio.alignmentRevision+1')
         .run(job.id, job.book, createHash('sha256').update(JSON.stringify(sections.map(({ key, digest, markers }) => [key, digest, markers]))).digest('hex'), '{}', 'ready', JSON.stringify(parts), JSON.stringify(segments), JSON.stringify(chapters),
-          job.duration, job.created, 'uploaded', job.name, JSON.stringify(quality));
+          job.duration, job.created, 'uploaded', job.name, JSON.stringify(quality), pdfTiming);
       db.prepare("UPDATE recordings SET state='ready',progress=1,quality=?,parts=?,error=NULL WHERE id=?")
         .run(JSON.stringify(quality), JSON.stringify(parts), job.id);
       onSave();

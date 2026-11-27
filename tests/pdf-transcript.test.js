@@ -67,6 +67,11 @@ test('PDF review drives vocabulary and generated audio on the original pages, wi
     if (endpoint === '/align') return Response.json({
       timings: body.words.map((_, index) => ({ start: index / body.words.length, end: (index + .8) / body.words.length })),
     });
+    if (endpoint === '/transcribe') return Response.json({ heard: [{ word: '端午节', start: .1, end: .9 }] });
+    if (endpoint === '/match-recording') return Response.json({
+      timings: body.words.map((_, index) => ({ start: .9 * index / body.words.length, end: .9 * (index + .8) / body.words.length })),
+      matchedWords: body.words.length, strongMatchCharacters: 100, matchedSpeechRatio: 1,
+    });
     throw new Error('Unexpected request: ' + endpoint);
   });
   const ai = { async readingLevel() { return { band: 'Intermediate' }; } };
@@ -120,6 +125,7 @@ test('PDF review drives vocabulary and generated audio on the original pages, wi
   });
   assert.deepEqual(spoken, [revised, original[3]]);
   assert.deepEqual(recording.segments.map(({ key }) => key), ['pdf:2', 'pdf:4']);
+  assert.equal(recording.pdfTimingAvailable, true);
   assert.equal(recording.segments[0].pageOnly, true);
   assert.ok(learning.unit(book, 'pdf:2', recording.id).audio.timings.some((stamp) => stamp.start != null && !stamp.estimated));
   assert.equal(learning.unit(book, 'pdf:3', recording.id).audio.state, 'missing');
@@ -159,4 +165,29 @@ test('PDF review drives vocabulary and generated audio on the original pages, wi
   assert.equal(saved.pages[1].start, newStart);
   reopened.savePdfTiming(book, recording.id, { revision: saved.revision, starts: {} });
   assert.deepEqual(reopened.narration(book).audio.segments, recording.segments);
+
+  const source = join(dir, 'uploaded.wav');
+  await writeFile(source, speech);
+  const uploaded = await reopened.recordings.accept(book, { path: source, size: speech.length, originalname: 'uploaded.wav' }, {});
+  const synced = async () => {
+    await waitFor(() => {
+      const item = reopened.recordings.list(book).find(({ id }) => id === uploaded.id);
+      assert.notEqual(item.state, 'error', item.error);
+      return item.state === 'ready';
+    });
+    return reopened.narration(book, uploaded.id).audio;
+  };
+  reopened.recordings.queue(book, uploaded.id);
+  const imported = await synced();
+  assert.equal(imported.kind, 'uploaded');
+  assert.equal(imported.pdfTimingAvailable, true);
+  const importedTiming = reopened.pdfTiming(book, uploaded.id);
+  const adjustedStart = importedTiming.pages[1].start / 2;
+  reopened.savePdfTiming(book, uploaded.id, { revision: importedTiming.revision, starts: { 'pdf:4': adjustedStart } });
+  assert.equal(reopened.narration(book, uploaded.id).audio.segments[1].start, adjustedStart);
+  assert.deepEqual(reopened.narration(book, uploaded.id).audio.markers, imported.markers);
+  assert.equal(reopened.narration(book, uploaded.id, { textEdition: true }).audio.segments[1].start, importedTiming.pages[1].start);
+
+  reopened.recordings.queue(book, uploaded.id);
+  assert.equal((await synced()).segments[1].start, adjustedStart, 'resync preserves valid manual page starts');
 });
