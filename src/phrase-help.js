@@ -19,7 +19,7 @@ function phraseContext({ root, range, phrase }) {
   return context.slice(start, start + 4000);
 }
 
-export function phraseHelp({ book, preferences, request, roots = () => [], onBookmark = () => false, onSelection = () => {} }) {
+export function phraseHelp({ book, preferences, request, explanations = true, roots = () => [], onBookmark = () => false, onSelection = () => {} }) {
   const panel = document.querySelector('#phrase-help');
   const response = panel.querySelector('.phrase-response'), answer = panel.querySelector('[data-phrase-answer]');
   const webStatus = panel.querySelector('[data-phrase-web-status]'), sources = panel.querySelector('[data-phrase-sources]');
@@ -83,7 +83,7 @@ export function phraseHelp({ book, preferences, request, roots = () => [], onBoo
     if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
     const phrase = (selection.rangeCount === 1 ? selection.toString() : range.toString()).trim();
     if (!phrase) return null;
-    return { root, range: range.cloneRange(), phrase, book: active.id, canExplain: !active.l1Folder && phrase.length <= 700 };
+    return { root, range: range.cloneRange(), phrase, book: active.id, canExplain: explanations && !active.l1Folder && phrase.length <= 700 };
   }
 
   function show(value) {

@@ -8,6 +8,8 @@ import { openLibrary } from '../server/books.js';
 import { openLearning } from '../server/learning.js';
 import { bookTools } from '../server/book-tools.js';
 import { textWords } from '../shared/reading-text.js';
+import { pdfEpub } from '../src/pdf-epub.js';
+import JSZip from 'jszip';
 
 async function waitFor(read) {
   for (let attempt = 0; attempt < 300; attempt++) {
@@ -75,6 +77,7 @@ test('PDF review drives vocabulary and generated audio on the original pages, wi
   await waitFor(() => learning.info(book).state === 'ready');
   const initial = learning.pdfReview(book, 2);
   assert.equal(initial.total, 4);
+  assert.equal(learning.epubRevision(book), null);
   assert.deepEqual(initial.page, { number: 2, original: original[1], text: original[1], boxes: [] });
   assert.throws(() => learning.savePdfReview(book, { revision: initial.revision, excluded: [1, 2, 3, 4], edits: [] }), { status: 422 });
 
@@ -91,6 +94,17 @@ test('PDF review drives vocabulary and generated audio on the original pages, wi
   assert.deepEqual(learning.textSections(book).map(({ key, text }) => [key, text]), [
     ['pdf:1', ''], ['pdf:2', revised], ['pdf:3', ''], ['pdf:4', original[3]],
   ]);
+  const edition = learning.epubText(book);
+  assert.equal(edition.total, 4);
+  assert.deepEqual(edition.pages, [
+    { number: 2, title: 'Page 2', text: revised }, { number: 4, title: 'Page 4', text: original[3] },
+  ]);
+  const archive = await JSZip.loadAsync(await pdfEpub({ ...book, title: '中文 & <故事>' }, edition));
+  assert.equal(await archive.file('mimetype').async('text'), 'application/epub+zip');
+  assert.match(await archive.file('EPUB/book.opf').async('text'), /中文 &amp; &lt;故事&gt;/u);
+  assert.match(await archive.file('EPUB/page-2.xhtml').async('text'), /五月是端午节。/u);
+  assert.equal(archive.file('EPUB/page-1.xhtml'), null);
+  assert.equal(archive.file('EPUB/page-3.xhtml'), null);
   const [glossary] = bookTools({ learning }).search(book, '龙舟').results;
   assert.equal(glossary.key, 'pdf:2');
   assert.equal(glossary.from, original[1].indexOf('龙舟'));
@@ -107,6 +121,7 @@ test('PDF review drives vocabulary and generated audio on the original pages, wi
   assert.deepEqual(spoken, [revised, original[3]]);
   assert.deepEqual(recording.segments.map(({ key }) => key), ['pdf:2', 'pdf:4']);
   assert.equal(recording.segments[0].pageOnly, true);
+  assert.ok(learning.unit(book, 'pdf:2', recording.id).audio.timings.some((stamp) => stamp.start != null && !stamp.estimated));
   assert.equal(learning.unit(book, 'pdf:3', recording.id).audio.state, 'missing');
   const nextBoxes = [...boxes].reverse();
   const saveBoxes = (boxes) => learning.savePdfReview(book, { revision, excluded: [1, 3], edits: [], boxes: [{ page: 2, boxes }] });
@@ -115,6 +130,7 @@ test('PDF review drives vocabulary and generated audio on the original pages, wi
   assert.deepEqual(learning.pdfReview(book, 2).page.boxes, nextBoxes);
   assert.equal(learning.info(book).state, 'ready', 'box changes do not reset analysis');
   assert.equal(learning.narration(book).audio.id, recording.id, 'box changes keep the finished recording');
+  assert.equal(learning.epubRevision(book), edition.revision, 'box edits keep the same EPUB text revision');
 
   const file = await readFile(learning.audioFile(book, recording.id));
   const timing = learning.pdfTiming(book, recording.id);
@@ -129,6 +145,10 @@ test('PDF review drives vocabulary and generated audio on the original pages, wi
   assert.equal(adjusted.segments[1].start, newStart);
   assert.equal(adjusted.segments[1].pageOnly, true);
   assert.equal(adjusted.markers.find(({ key }) => key === 'pdf:4').time, newStart);
+  const epubAudio = learning.narration(book, recording.id, { textEdition: true }).audio;
+  assert.equal(epubAudio.url, adjusted.url);
+  assert.equal(epubAudio.segments[0].pageOnly, undefined);
+  assert.equal(epubAudio.segments[1].start, recording.segments[1].start);
   assert.deepEqual(await readFile(learning.audioFile(book, recording.id)), file);
   assert.deepEqual(await readFile(library.filePath(book)), bytes);
 

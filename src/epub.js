@@ -219,10 +219,12 @@ async function inferOutline(book, signal) {
   return entries;
 }
 
-export async function openEpub({ host, url, position, language, settings, hooks, signal }) {
-  const response = await readingFile(url, { signal });
-  if (!response.ok) throw new Error('Could not retrieve this EPUB.');
-  const buffer = await response.arrayBuffer();
+export async function openEpub({ host, url, archive, pdfSource, position, language, settings, hooks, signal }) {
+  if (!archive) {
+    const response = await readingFile(url, { signal });
+    if (!response.ok) throw new Error('Could not retrieve this EPUB.');
+    archive = await response.arrayBuffer();
+  }
   signal.throwIfAborted();
   const book = ePub(undefined, { replacements: 'blobUrl' });
   const earlierSections = new Map();
@@ -231,6 +233,12 @@ export async function openEpub({ host, url, position, language, settings, hooks,
   let spineSizes = [], syncResolution;
   let preferences = settings;
   let disposed = false;
+  const pdfPage = (index) => pdfSource?.pages[index];
+  const sourceKey = (index) => pdfSource ? `pdf:${pdfPage(index)}` : `epub:${index}`;
+  const pdfIndex = (page) => {
+    const index = pdfSource.pages.findIndex((number) => number >= page);
+    return index < 0 ? pdfSource.pages.length - 1 : index;
+  };
   const size = () => [host.clientWidth, host.clientHeight];
   function destroy() {
     if (disposed) return;
@@ -252,7 +260,7 @@ export async function openEpub({ host, url, position, language, settings, hooks,
   }
 
   try {
-    await book.open(buffer, 'binary');
+    await book.open(archive, 'binary');
     signal.throwIfAborted();
     const navigation = epubContents(book), comparePosition = new ePub.CFI();
     spineSizes = book.spine.spineItems.map((section) => {
@@ -311,12 +319,14 @@ export async function openEpub({ host, url, position, language, settings, hooks,
         const anchor = section.document?.getElementById(entry.target.fragment);
         if (anchor && comparePosition.compare(section.cfiFromElement(anchor), lastTarget) <= 0) heading = entry.label;
       }
-      heading ||= section.document?.querySelector('h1,h2,h3')?.textContent?.replace(/\s+/gu, ' ').trim() || `Section ${start.index + 1}`;
+      const origin = pdfPage(start.index);
+      heading ||= section.document?.querySelector('h1,h2,h3')?.textContent?.replace(/\s+/gu, ' ').trim()
+        || (origin ? `Page ${origin}` : `Section ${start.index + 1}`);
       const count = book.spine.length;
       const percent = (start.index + page / total) / count;
       hooks.position({
-        target: lastTarget, heading, label: `Page ${page} of ${total}`,
-        detail: `Section ${start.index + 1} of ${count}`,
+        target: origin ?? lastTarget, ...(origin ? { editionTarget: lastTarget } : {}), heading, label: `Page ${page} of ${total}`,
+        detail: origin ? `PDF page ${origin} of ${pdfSource.total}` : `Section ${start.index + 1} of ${count}`,
         percent: Math.min(1, percent), previous: !location.atStart, next: !location.atEnd, reflowed,
       });
     }
@@ -325,7 +335,7 @@ export async function openEpub({ host, url, position, language, settings, hooks,
     if (typeof position === 'string' && position.startsWith('epubcfi(')) {
       try { await display(position); resumedTarget = position; }
       catch { await display(); }
-    } else await display();
+    } else await display(pdfSource && Number.isInteger(position) ? pdfIndex(position) : undefined);
     await new Promise(requestAnimationFrame);
     const resumed = await rendition.currentLocation();
     if (resumedTarget && resumed?.start) sourceAnchor = { target: resumedTarget, index: resumed.start.index, page: resumed.start.displayed.page };
@@ -394,6 +404,10 @@ export async function openEpub({ host, url, position, language, settings, hooks,
     function syncPosition() {
       if (reflowing || disposed) return null;
       const current = rendition.currentLocation()?.start || rendition.location?.start;
+      if (pdfSource) {
+        const target = pdfPage(current?.index);
+        return target ? { progress: String(target), percentage: target / pdfSource.total, target } : null;
+      }
       const contents = rendition.getContents().find((item) => item.sectionIndex === current?.index);
       if (!contents?.content || !current?.cfi) return null;
       let point;
@@ -412,6 +426,14 @@ export async function openEpub({ host, url, position, language, settings, hooks,
     }
 
     async function resumeProgress(remote) {
+      if (pdfSource) {
+        const saved = Number.isInteger(remote.langyTarget) ? remote.langyTarget : /^\d+$/u.test(remote.progress) ? Number(remote.progress) : null;
+        const page = saved ?? Math.round(remote.percentage * pdfSource.total);
+        const index = pdfIndex(page);
+        await display(index);
+        syncResolution = { exact: saved === pdfPage(index) };
+        await settle(); return;
+      }
       if (typeof remote.langyTarget === 'string' && remote.langyTarget.startsWith('epubcfi(')) {
         try {
           await display(remote.langyTarget);
@@ -469,12 +491,13 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       get pageSections() {
         const labels = new Map();
         for (const item of epubContents(book)) if (item.target && !labels.has(item.target.index)) labels.set(item.target.index, item.label);
-        return book.spine.spineItems.map(({ index }) => ({ index, label: labels.get(index) || `Section ${index + 1}` }));
+        return book.spine.spineItems.map(({ index }) => ({ index, label: labels.get(index) || (pdfSource ? `Page ${pdfPage(index)}` : `Section ${index + 1}`) }));
       },
       readingRoots() { return rendition.getContents().map((contents) => contents.content).filter(Boolean); },
       bookmarkTarget(range) {
         const contents = rendition.getContents().find((content) => content.document === range.startContainer.ownerDocument);
         if (!contents) return;
+        if (pdfSource) return pdfPage(contents.sectionIndex);
         const start = range.cloneRange();
         start.collapse(true);
         return contents.cfiFromRange(start);
@@ -482,7 +505,7 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       vocabularyPages() {
         if (reflowing) return [];
         return rendition.getContents().filter((contents) => contents.content).map((contents) => ({
-          key: `epub:${contents.sectionIndex}`, root: contents.content, track: () => trackText(contents.content, language),
+          key: sourceKey(contents.sectionIndex), root: contents.content, track: () => trackText(contents.content, language),
         }));
       },
       audioUnit() {
@@ -490,9 +513,12 @@ export async function openEpub({ host, url, position, language, settings, hooks,
         const index = activeSection;
         const contents = rendition.getContents().find((content) => content.sectionIndex === index);
         if (!contents?.content) return null;
-        return { key: `epub:${index}`, root: contents.content, track: () => trackText(contents.content, language) };
+        return { key: sourceKey(index), root: contents.content, track: () => trackText(contents.content, language) };
       },
-      audioTarget(key) { return { index: Number(key.split(':')[1]) }; },
+      audioTarget(key) {
+        const ordinal = Number(key.split(':')[1]);
+        return { index: pdfSource ? pdfIndex(ordinal) : ordinal };
+      },
       async revealWord(range, { valid = () => true } = {}) {
         if (!valid() || !range.startContainer.isConnected) return;
         const contents = rendition.getContents().find((content) => content.document === range.startContainer.ownerDocument);
@@ -512,6 +538,9 @@ export async function openEpub({ host, url, position, language, settings, hooks,
       },
       async go(target) {
         sourceAnchor = undefined;
+        if (pdfSource && Number.isInteger(target)) {
+          await resize(); await display(pdfIndex(target)); await settle(); return;
+        }
         if (Number.isInteger(target?.page)) {
           await resize();
           const index = Number.isInteger(target.index) ? target.index : activeSection;
@@ -533,11 +562,17 @@ export async function openEpub({ host, url, position, language, settings, hooks,
         if (target?.sync) return resumeProgress(target.sync);
         if (target?.text) {
           await resize();
-          const section = book.spine.get(Number(target.key.split(':')[1]));
+          const ordinal = Number(target.key.split(':')[1]);
+          const index = pdfSource ? pdfIndex(ordinal) : ordinal;
+          if (pdfSource && pdfPage(index) !== ordinal) { await display(index); await settle(); return; }
+          const section = book.spine.get(index);
           await section.load(book.load.bind(book)); signal.throwIfAborted();
           const track = trackText(section.document.querySelector('body') || section.document.documentElement, language);
           const word = track.words.find((item) => item.to > target.from), range = word && track.rangeFor(word);
-          if (!range) throw new Error('This text match could not be located.');
+          if (!range) {
+            if (pdfSource) { await display(index); await settle(); return; }
+            throw new Error('This text match could not be located.');
+          }
           const match = section.cfiFromRange(range);
           await display(match); await settle();
           const location = await rendition.currentLocation();

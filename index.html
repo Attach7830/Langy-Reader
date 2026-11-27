@@ -51,13 +51,13 @@
       <span>Langy Reader</span>
     </a>
     <div class="header-actions"><details class="account-menu" data-account-control hidden><summary class="button quiet small" aria-label="Account options"><span data-account-name></span></summary><div class="library-menu-panel"><button class="button quiet small" type="button" data-settings="account">Account settings</button><button class="button quiet small" type="button" data-sign-out>Log out</button><button class="button quiet small" type="button" data-sign-out data-switch-user>Switch user</button></div></details>
-      <button class="ai-status" id="ai-status" type="button" title="Check local AI"><span class="status-dot"></span><span>Checking AI</span></button>
+      <button class="ai-status" id="ai-status" data-full-access type="button" title="Check local AI"><span class="status-dot"></span><span>Checking AI</span></button>
       <a class="button quiet" id="about-link" href="#about" aria-label="About Langy Reader" title="About Langy Reader"><i data-lucide="info"></i><span>About</span></a>
       <a class="button quiet" id="howto-link" href="#howto"><span>How to</span></a>
-      <a class="button quiet" href="#discover" aria-label="Discover books"><i data-lucide="sparkles"></i><span>Discover</span></a>
+      <a class="button quiet" href="#discover" data-full-access aria-label="Discover books"><i data-lucide="sparkles"></i><span>Discover</span></a>
       <button class="button quiet" type="button" data-settings="reading" aria-label="Settings"><i data-lucide="settings-2"></i><span>Settings</span></button>
     </div>
-    <details class="mobile-library-menu"><summary class="icon-button" aria-label="More library options">•••</summary><div class="library-menu-panel"><button class="button quiet" type="button" data-settings="account" data-account-control hidden>Account</button><button class="button quiet" type="button" data-account-control hidden data-sign-out>Log out</button><button class="button quiet" type="button" data-account-control hidden data-sign-out data-switch-user>Switch user</button><button class="button quiet" type="button" id="mobile-reading-history">Reading history</button><button class="button quiet" type="button" id="mobile-new-category">New collection</button><a class="button quiet" href="#proficiency">Reading profile</a><a class="button quiet" id="mobile-about-link" href="#about">About</a><a class="button quiet" href="#howto">How to</a></div></details>
+    <details class="mobile-library-menu"><summary class="icon-button" aria-label="More library options">•••</summary><div class="library-menu-panel"><button class="button quiet" type="button" data-settings="account" data-account-control hidden>Account</button><button class="button quiet" type="button" data-account-control hidden data-sign-out>Log out</button><button class="button quiet" type="button" data-account-control hidden data-sign-out data-switch-user>Switch user</button><button class="button quiet" type="button" id="mobile-reading-history">Reading history</button><button class="button quiet" type="button" id="mobile-new-category" data-full-access>New collection</button><a class="button quiet" href="#proficiency">Reading profile</a><a class="button quiet" id="mobile-about-link" href="#about">About</a><a class="button quiet" href="#howto">How to</a></div></details>
   </header>
 
   <main id="library-screen" class="library-layout">
@@ -65,10 +65,10 @@
       <nav class="library-nav">
         <button class="rail-item" type="button" id="all-books"><i data-lucide="library-big"></i><span>All books</span><span class="count" id="all-count"></span></button>
         <a class="rail-item" href="#proficiency"><i data-lucide="chart-no-axes-combined"></i><span>Reading profile</span></a>
-        <a class="rail-item" href="#discover"><i data-lucide="sparkles"></i><span>Discover books</span></a>
+        <a class="rail-item" href="#discover" data-full-access><i data-lucide="sparkles"></i><span>Discover books</span></a>
         <div class="rail-heading">
           <span>Categories</span>
-          <button class="icon-button small" id="add-category" title="New category" aria-label="New category" type="button"><i data-lucide="plus"></i></button>
+          <button class="icon-button small" id="add-category" data-full-access title="New category" aria-label="New category" type="button"><i data-lucide="plus"></i></button>
         </div>
         <div id="categories"></div>
       </nav>
@@ -76,12 +76,13 @@
     <section class="library-main" aria-labelledby="library-title">
       <div class="library-heading">
         <div><h1 id="library-title">Your library</h1><p id="library-description"></p></div>
-        <button class="button primary" id="import-book" type="button"><i data-lucide="plus"></i><span>Import book</span></button>
+        <button class="button primary" id="import-book" data-full-access type="button"><i data-lucide="plus"></i><span>Import book</span></button>
       </div>
+      <p class="field-note" data-safe-mode-notice hidden>Safe mode is on. You can read and listen to the books you have access to, and save your bookmarks and progress.</p>
       <div class="library-view-actions"><label id="shared-books-control" class="checkbox-row shared-books-toggle" hidden><input id="show-shared-books" type="checkbox" checked> Show shared books</label><button id="open-reading-history" class="button quiet small" type="button">Reading history</button><button id="library-details-toggle" class="button quiet small" type="button" aria-pressed="false">Show reading details</button></div>
       <details class="library-view-options"><summary class="button quiet small">View</summary><div class="form-stack"><label class="field">Library layout<select id="library-layout"><option value="auto">Automatic</option><option value="1">1 column</option><option value="2">2 columns</option><option value="3">3 columns</option><option value="4">4 columns</option><option value="list">List</option></select></label><label class="checkbox-row"><input id="library-covers-only" type="checkbox"> Covers only</label></div></details>
-      <div class="mobile-collections"><select id="mobile-category" aria-label="Collection"><option value="all">All books</option></select><button type="button" class="icon-button" id="mobile-edit-category" aria-label="Edit selected collection" disabled><i data-lucide="pencil"></i></button><button type="button" class="icon-button" id="mobile-add-category" aria-label="New collection"><i data-lucide="plus"></i></button></div>
-      <div class="storage-status" id="library-storage" hidden>
+      <div class="mobile-collections"><select id="mobile-category" aria-label="Collection"><option value="all">All books</option></select><button type="button" class="icon-button" id="mobile-edit-category" data-full-access aria-label="Edit selected collection" disabled><i data-lucide="pencil"></i></button><button type="button" class="icon-button" id="mobile-add-category" data-full-access aria-label="New collection"><i data-lucide="plus"></i></button></div>
+      <div class="storage-status" id="library-storage" data-full-access hidden>
         <span id="storage-summary"></span>
         <button class="button quiet small" id="refresh-storage" type="button" aria-label="Refresh available storage">Refresh</button>
         <meter id="storage-meter" min="0" max="1" value="0" aria-label="Library drive space used or reserved"></meter>
@@ -111,7 +112,7 @@
       </div>
       <p class="field-note" id="offline-status" role="status" hidden></p>
       <div id="books" class="book-grid"></div>
-      <details id="archive-downloads" hidden><summary>Book downloads</summary><div id="archive-download-list" class="form-stack"></div></details>
+      <details id="archive-downloads" data-full-access hidden><summary>Book downloads</summary><div id="archive-download-list" class="form-stack"></div></details>
       <div id="empty-library" class="empty-state" hidden>
         <i data-lucide="book-open"></i><h2 id="empty-title"></h2><p id="empty-detail"></p>
       </div>
@@ -239,6 +240,7 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
         <button class="button quiet reader-primary-action" id="audio-toggle" type="button" title="Narration" aria-label="Narration" aria-pressed="false"><i data-lucide="headphones"></i><span>Audio</span></button>
         <button class="icon-button" id="fullscreen" type="button" title="Full screen" aria-label="Full screen" aria-pressed="false"><i data-lucide="maximize"></i></button>
         <details id="reader-more" class="reader-more"><summary class="icon-button" aria-label="More reading tools" title="More reading tools">•••</summary><div class="reader-more-menu">
+        <a class="button quiet" id="reader-format-link" hidden><i data-lucide="book-open"></i><span></span></a>
         <button class="icon-button" id="jump-page" type="button" title="Jump to page" aria-label="Jump to page" aria-controls="page-jump-dialog"><i data-lucide="book-open"></i></button>
         <button class="icon-button" id="sync-progress" type="button" title="Sync reading progress" aria-label="Sync reading progress" aria-controls="sync-notice" hidden><i data-lucide="rotate-ccw"></i></button>
         <button class="icon-button" id="bookmarks-button" type="button" title="Bookmarks (M)" aria-label="Bookmarks"><i data-lucide="bookmark"></i></button>
@@ -324,7 +326,7 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
       </div>
       <div class="footer-start">
         <button type="button" class="button quiet word-settings" data-settings="language"><i data-lucide="languages"></i><span id="word-mode-label"></span></button>
-        <button type="button" class="button quiet pinyin-toggle" id="pinyin-toggle" aria-label="Pinyin" title="Show pinyin" aria-pressed="false" hidden>Pinyin</button>
+        <button type="button" class="button quiet pinyin-toggle" id="pinyin-toggle" data-full-access aria-label="Pinyin" title="Show pinyin" aria-pressed="false" hidden>Pinyin</button>
         <div id="pdf-zoom" class="zoom-controls" hidden>
           <button id="zoom-out" class="icon-button small" aria-label="Zoom out" type="button"><i data-lucide="minus"></i></button>
           <button id="zoom-reset" class="button quiet" aria-label="Fit PDF to page" type="button">Fit</button>
@@ -342,7 +344,7 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
     <div class="reader-dock-edge bottom-edge" aria-hidden="true"></div>
   </section>
 
-  <nav class="mobile-navigation" id="mobile-navigation" aria-label="App navigation"><a href="#library" aria-label="Library"><i data-lucide="library-big"></i><span>Library</span></a><button type="button" data-open-processes aria-label="Process queue"><i data-lucide="download"></i><span>Processes</span><span id="mobile-process-count" hidden></span></button><a href="#discover" aria-label="Discover books"><i data-lucide="sparkles"></i><span>Discover</span></a><button type="button" data-settings="reading" aria-label="Settings"><i data-lucide="settings-2"></i><span>Settings</span></button></nav>
+  <nav class="mobile-navigation" id="mobile-navigation" aria-label="App navigation"><a href="#library" aria-label="Library"><i data-lucide="library-big"></i><span>Library</span></a><button type="button" data-open-processes data-full-access aria-label="Process queue"><i data-lucide="download"></i><span>Processes</span><span id="mobile-process-count" hidden></span></button><a href="#discover" data-full-access aria-label="Discover books"><i data-lucide="sparkles"></i><span>Discover</span></a><button type="button" data-settings="reading" aria-label="Settings"><i data-lucide="settings-2"></i><span>Settings</span></button></nav>
   <dialog class="modal mobile-actions-modal" id="book-actions-dialog" aria-labelledby="book-actions-title"><header class="modal-header"><h2 id="book-actions-title" data-user-content>Book options</h2><button class="icon-button" type="button" data-close aria-label="Close book options"><i data-lucide="x"></i></button></header><div class="modal-body form-stack" id="book-actions-body"></div></dialog>
   <dialog class="modal" id="archive-title-dialog" aria-labelledby="archive-title-heading">
     <form id="archive-title-form">
@@ -375,7 +377,7 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
     </div>
   </dialog>
   <dialog class="modal" id="sign-out-dialog" aria-labelledby="sign-out-title"><header class="modal-header"><h2 id="sign-out-title">Switch user</h2><button class="icon-button" type="button" data-close aria-label="Cancel sign out">×</button></header><form id="sign-out-form" class="modal-body form-stack"><p data-app-only hidden>Downloaded books stay on this device for when you sign back in. Other users can only open their own downloads. Your server library stays saved.</p><label class="checkbox-row" data-app-only hidden><input id="sign-out-remove-downloads" type="checkbox"> Remove this account’s downloaded books from this device</label><p id="sign-out-error" class="form-error" role="alert" hidden></p><button id="sign-out-confirm" type="submit" class="button primary">Switch user</button></form></dialog>
-  <button id="open-process-queue" class="button secondary process-queue-toggle" type="button" aria-label="Process queue" aria-controls="downloads-dialog" aria-haspopup="dialog"><i data-lucide="list" aria-hidden="true"></i><span class="process-queue-label">Process queue</span><span id="process-queue-count" aria-hidden="true" hidden></span></button>
+  <button id="open-process-queue" data-full-access class="button secondary process-queue-toggle" type="button" aria-label="Process queue" aria-controls="downloads-dialog" aria-haspopup="dialog"><i data-lucide="list" aria-hidden="true"></i><span class="process-queue-label">Process queue</span><span id="process-queue-count" aria-hidden="true" hidden></span></button>
   <aside id="phrase-help" class="phrase-help" aria-label="Selected text actions" hidden>
     <div class="phrase-actions">
       <button type="button" data-bookmark-selection class="icon-button" aria-label="Bookmark selection" title="Bookmark selection"><i data-lucide="bookmark" aria-hidden="true"></i></button>
@@ -402,7 +404,7 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
   <dialog id="kavita-dialog" class="modal kavita-modal" aria-labelledby="kavita-title"><header class="modal-header"><h2 id="kavita-title">Browse Kavita</h2><button type="button" class="icon-button" data-close aria-label="Close Kavita">×</button></header><div class="modal-body form-stack"><div class="download-actions"><button id="kavita-back" class="button quiet small" type="button" disabled>Back</button><button id="kavita-home" class="button quiet small" type="button">Home</button></div><h3 id="kavita-catalogue-title">Your catalogue</h3><div class="kavita-search"><input id="kavita-query" aria-label="Search Kavita" placeholder="Title or author"><button id="kavita-search" class="button secondary small" type="button">Search</button></div><div class="form-grid"><label class="field">Import into folder<select id="kavita-folder"><option value="">Uncategorized</option></select></label><label class="field">Book language<select id="kavita-language"><option value="">Detect automatically</option></select></label></div><p id="kavita-result" class="field-note" role="status" hidden></p><p id="kavita-error" class="form-error" role="alert" hidden></p><div id="kavita-entries" class="form-stack"></div><div id="kavita-navigation" class="download-actions"></div></div></dialog>
   <dialog class="modal" id="downloads-dialog" aria-labelledby="downloads-title">
     <header class="modal-header"><h2 id="downloads-title">Process queue</h2><button class="icon-button" type="button" data-close aria-label="Close process queue"><i data-lucide="x"></i></button></header>
-    <p class="process-guidance field-note">One task runs at a time. Anna’s Archive downloads have priority by default; your choices override this. Tasks switch at the next safe stopping point.</p>
+    <p class="process-guidance field-note">Drag tasks by their handles to change the order. Anna’s Archive downloads lead by default. The running task switches at the next safe stopping point.</p>
     <p class="process-guidance field-note">Server tasks continue while you read. Long stages may take several minutes; progress appears as each part finishes.</p>
     <p id="process-checked-at" class="process-guidance field-note" hidden></p>
     <div class="modal-body form-stack"><label class="field">Auto-dismiss completed tasks after (minutes)<input id="process-dismiss-minutes" type="number" min="0" max="10080" step="any" value="0"></label><p class="field-note">0 dismisses completed tasks immediately. Errors and replacement approvals stay until you act.<span data-app-only hidden> Downloaded books stay available in your library.</span></p><p id="process-empty" class="field-note">No processes in the queue.</p><div id="process-list" class="form-stack" aria-label="Background processes"></div><p id="process-error" class="form-error" hidden></p><button id="clear-finished-processes" class="button quiet small" type="button">Dismiss finished tasks</button><section id="process-downloads" class="form-stack" hidden><h3>Book downloads</h3><p class="field-note">Books download one at a time. Keep Langy open; you can read or browse while downloads run. The queue resumes when you reopen the app or reconnect.</p><p class="field-note">Priority changes can restart a transfer. Saved offline books stay available.</p><div id="offline-download-list" class="form-stack" aria-label="Book pack downloads"></div><p id="offline-download-error" class="form-error" role="alert" hidden></p></section></div>
@@ -423,13 +425,13 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
       <header class="settings-heading"><button class="button quiet" type="button" id="settings-back" data-settings-back><i data-lucide="arrow-left"></i><span>Back</span></button><h1 id="settings-title" tabindex="-1">Settings</h1></header>
       <nav class="tabs" aria-label="Settings sections">
         <button type="button" data-settings-tab="reading">Appearance</button>
-        <button type="button" data-settings-tab="language">Language help</button>
+        <button type="button" data-settings-tab="language" data-full-access>Language help</button>
         <button type="button" data-settings-tab="account" data-account-control hidden>Account</button>
         <button type="button" data-settings-tab="shortcuts">Hotkeys</button>
-        <button type="button" data-settings-tab="narration">Narration</button>
-        <button type="button" data-settings-tab="sources">Book sources</button>
-        <button type="button" data-settings-tab="devices">Devices</button>
-        <button type="button" data-settings-tab="ai" hidden>AI connection</button>
+        <button type="button" data-settings-tab="narration" data-full-access>Narration</button>
+        <button type="button" data-settings-tab="sources" data-full-access>Book sources</button>
+        <button type="button" data-settings-tab="devices" data-full-access>Devices</button>
+        <button type="button" data-settings-tab="ai" data-full-access hidden>AI connection</button>
       </nav>
       <section class="modal-body form-stack" data-settings-panel="account" id="account-panel" hidden>
         <div><h2>Account</h2><p><strong id="account-name" data-user-content></strong> · <span id="account-role"></span></p><div class="button-row"><button class="button quiet small" type="button" data-sign-out>Log out</button><button class="button quiet small" type="button" data-sign-out data-switch-user>Switch user</button></div><p class="field-note">Switch user returns to sign-in so another reader can open their own library.</p><p class="field-note" id="account-offline-note" hidden>Connect to your server to manage accounts or change a password.</p></div>
@@ -446,7 +448,7 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
           <p class="field-note">Tap a word for help; double-tap it to play audio from there. Double-tap blank center space to play/pause. Swipe up to toggle audio controls. Swipe down to close controls, or open sections when controls are hidden. Pinch to resize text.</p>
         </fieldset>
         <label class="checkbox-row"><input name="immersionMode" type="checkbox"> Immersion mode</label>
-        <p class="field-note">Hide page numbers, progress bars and audio clocks. Word help and reading controls stay available.</p>
+        <p class="field-note">Hide page numbers, reading progress and the Process queue button. Audio timing stays visible in the player.</p>
         <label class="checkbox-row"><input name="quietLibrary" type="checkbox"> Quiet library</label>
         <label class="checkbox-row"><input name="cacheCovers" type="checkbox" checked> Cache cover images on this device</label>
         <p class="field-note">Loads previously viewed covers from this device. Up to 120 images are kept for each signed-in user; changed covers refresh automatically. Turning this off or logging out clears the cache.</p>
@@ -472,7 +474,7 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
           <label class="field">Font size <input name="size" type="number" min="13" max="40" step="1" required><small class="field-note" id="font-size-device-note"></small></label>
           <label class="field">Line spacing <input name="line" type="number" min="1.2" max="2.4" step="0.05" required></label>
         </div>
-        <fieldset class="form-stack"><legend>Imported fonts</legend><p class="field-note">Use your own TTF, OTF, WOFF or WOFF2 fonts for EPUB reading. Up to 10 fonts, 32 MiB each and 128 MiB per account. Fonts are private to your account and cached on this device. PDF pages keep their original typography.</p><label class="field">Font file<input id="font-file" type="file" accept=".ttf,.otf,.woff,.woff2"></label><label class="field">Font name<input id="font-import-name" maxlength="100" placeholder="Optional display name"></label><button id="import-font" class="button secondary" type="button">Import font</button><details class="form-stack"><summary>Download a free font</summary><p class="field-note">Search Google Fonts through Fontsource, or paste a direct font link from <a href="https://fonts.google.com/" target="_blank" rel="noopener noreferrer">Google Fonts</a>, <a href="https://fontsource.org/" target="_blank" rel="noopener noreferrer">Fontsource</a> or the official Noto repository. A language subset includes only its listed characters; other scripts use Langy’s fallback fonts. Review the font’s licence on its source page.</p><label class="field">Font family<input id="free-font-query" maxlength="80" placeholder="For example: Lora"></label><button id="free-font-search" class="button secondary small" type="button">Search free fonts</button><label class="field">Family<select id="free-font-family"><option value="">Choose a font</option></select></label><label class="field">Language subset, weight and style<select id="free-font-variant"><option value="">Choose a variant</option></select></label><button id="free-font-download" class="button secondary small" type="button">Download selected font</button><label class="field">Or paste a direct font file URL<input id="font-download-url" type="url" maxlength="4096" placeholder="https://…/font.ttf"></label><button id="download-font-url" class="button secondary small" type="button">Download font from URL</button></details><p id="font-import-status" class="field-note" role="status" hidden></p><div id="imported-font-list" class="form-stack"></div><p id="font-preview" class="field-note">A good story travels with you. 中文阅读。</p></fieldset>
+        <fieldset class="form-stack" data-full-access><legend>Imported fonts</legend><p class="field-note">Use your own TTF, OTF, WOFF or WOFF2 fonts for EPUB reading. Up to 10 fonts, 32 MiB each and 128 MiB per account. Fonts are private to your account and cached on this device. PDF pages keep their original typography.</p><label class="field">Font file<input id="font-file" type="file" accept=".ttf,.otf,.woff,.woff2"></label><label class="field">Font name<input id="font-import-name" maxlength="100" placeholder="Optional display name"></label><button id="import-font" class="button secondary" type="button">Import font</button><details class="form-stack"><summary>Download a free font</summary><p class="field-note">Search Google Fonts through Fontsource, or paste a direct font link from <a href="https://fonts.google.com/" target="_blank" rel="noopener noreferrer">Google Fonts</a>, <a href="https://fontsource.org/" target="_blank" rel="noopener noreferrer">Fontsource</a> or the official Noto repository. A language subset includes only its listed characters; other scripts use Langy’s fallback fonts. Review the font’s licence on its source page.</p><label class="field">Font family<input id="free-font-query" maxlength="80" placeholder="For example: Lora"></label><button id="free-font-search" class="button secondary small" type="button">Search free fonts</button><label class="field">Family<select id="free-font-family"><option value="">Choose a font</option></select></label><label class="field">Language subset, weight and style<select id="free-font-variant"><option value="">Choose a variant</option></select></label><button id="free-font-download" class="button secondary small" type="button">Download selected font</button><label class="field">Or paste a direct font file URL<input id="font-download-url" type="url" maxlength="4096" placeholder="https://…/font.ttf"></label><button id="download-font-url" class="button secondary small" type="button">Download font from URL</button></details><p id="font-import-status" class="field-note" role="status" hidden></p><div id="imported-font-list" class="form-stack"></div><p id="font-preview" class="field-note">A good story travels with you. 中文阅读。</p></fieldset>
         <label class="checkbox-row"><input name="pdfNight" type="checkbox"> Dim PDF pages in dark themes</label>
       </section>
       <section class="modal-body" data-settings-panel="language" hidden>
@@ -765,6 +767,7 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
       <p id="learning-stats"></p>
       <p id="learning-word-count" class="field-note"></p>
       <button class="button secondary small" id="review-pdf-text" type="button" hidden>Review PDF text</button>
+      <a class="button secondary small" id="open-reviewed-epub" hidden>Read simplified EPUB</a>
       <button class="button quiet small" id="edit-book-languages" type="button">Set book languages</button>
       <div id="learning-vocabulary"></div>
       <button class="button secondary small" id="open-book-vocabulary" type="button" disabled>Words below threshold</button>
@@ -901,10 +904,10 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
             <p id="pdf-review-preview-status" class="field-note" role="status" hidden></p>
             <button class="button quiet small" id="pdf-review-copy" type="button" disabled>Use selected PDF text</button>
             <div class="pdf-box-tools">
-              <p class="field-note">Draw around the passages you want. Extraction fills this page’s editor in box order.</p>
+              <p class="field-note">Draw around the passages you want. Press Enter in the PDF preview to extract text in box order.</p>
               <div class="button-row">
                 <button class="button quiet small" id="pdf-review-draw-box" type="button" aria-pressed="false" disabled>Draw boxes</button>
-                <button class="button secondary small" id="pdf-review-extract-boxes" type="button" disabled>Extract boxes to editor</button>
+                <button class="button secondary small" id="pdf-review-extract-boxes" type="button" aria-keyshortcuts="Enter" disabled>Extract boxes to editor</button>
               </div>
               <ol id="pdf-review-boxes" class="pdf-box-list" aria-label="PDF selection boxes in reading order" hidden></ol>
               <label class="checkbox-row"><input id="pdf-review-box-ocr" type="checkbox" disabled> Run OCR on all boxes</label>
@@ -918,8 +921,10 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
               <button class="button quiet small" id="pdf-review-original" type="button">Use extracted text</button>
               <button class="button secondary small" id="pdf-review-remove-latin" type="button" disabled>Remove Latin characters</button>
               <button class="button secondary small" id="pdf-review-remove-numerals" type="button" disabled>Remove numerals</button>
+              <button class="button secondary small" id="pdf-review-remove-symbols" type="button" title="Remove parentheses, brackets and symbols from this page" disabled>Remove symbols</button>
             </div>
-            <label class="field">Text for audio and vocabulary <textarea name="text" rows="14" dir="auto" spellcheck="false"></textarea></label>
+            <label class="field">Text for EPUB, audio and vocabulary <textarea name="text" rows="14" dir="auto" spellcheck="false"></textarea></label>
+            <p class="field-note">Press R outside the text fields to run all three cleanup actions.</p>
           </div>
         </div>
         <p id="pdf-review-error" class="form-error" role="alert" hidden></p>

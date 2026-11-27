@@ -17,7 +17,8 @@ function atTime(items, time, field = 'start') {
   }
   return found;
 }
-export function narration({ preferences, renderer, book, navigate, changePreferences, readingPosition = () => null }) {
+export function narration({ preferences, renderer, book, navigate, changePreferences, safeMode = false,
+  textEdition = () => false, highlight = () => true, readingPosition = () => null }) {
   const player = $('#narration-player'), audio = $('#narration-audio');
   const play = $('#narration-play'), generate = $('#narration-generate');
   const status = $('#narration-status'), seek = $('#narration-seek');
@@ -33,7 +34,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   let wantPlaying = false, enabled = false, initialSeek = true, highlighted, highlightedWindow;
   let waitingForMetadata = true;
   let manualNavigation = false, navigationVersion = 0, manualPage;
-  let pendingWordTime, wordPlayback = 0;
+  let pendingWordTime, resumePosition, wordPlayback = 0;
   const cache = new Map();
   const ready = () => recording?.state === 'ready';
   const playbackSpeed = () => Number.isFinite(audio.playbackRate) && audio.playbackRate > 0 ? audio.playbackRate : 1;
@@ -95,7 +96,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   function drawHighlight() {
     const stamp = timed[atTime(timed, audio.currentTime)];
     const word = stamp && !stamp.estimated && audio.currentTime <= stamp.end ? timingMap.get(stamp.index) : null;
-    if (!enabled || !preferences().audioHighlight || !word) { clearHighlight(); return; }
+    if (!enabled || !highlight() || !preferences().audioHighlight || !word) { clearHighlight(); return; }
     if (word === highlighted) return;
     clearHighlight();
     const range = local?.rangeFor(word), win = local?.root.ownerDocument.defaultView;
@@ -115,6 +116,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     clearHighlight(); drawHighlight();
   }
   async function loadCurrent() {
+    if (safeMode && !ready()) return;
     const active = book(), current = renderer()?.audioUnit?.();
     if (!active || !current) return;
     const recordingId = ready() ? recording.id : undefined;
@@ -143,7 +145,8 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     if (!initialSeek || waitingForMetadata || !ready() || !current || descriptor?.root !== current.root || unit?.key !== current.key
       || !descriptor?.root.isConnected || unit?.recordingId !== recording.id || !Number.isFinite(audio.duration)) return;
     initialSeek = false;
-    audio.currentTime = pendingWordTime ?? firstVisibleTime(); pendingWordTime = undefined;
+    audio.currentTime = pendingWordTime ?? (resumePosition?.recording === recording.id ? resumePosition.time : firstVisibleTime());
+    pendingWordTime = resumePosition = undefined;
     controls();
   }
   // Page changes run serially; another scrub replaces the pending target.
@@ -221,11 +224,11 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     recording = result.audio; connection = result.connected; previewAudio = Boolean(result.previewAudio); absConnected = Boolean(result.absConnected);
     const isReady = ready();
     if (!isReady) play.disabled = seek.disabled = true;
-    generate.hidden = !enabled || isReady || !['missing', 'error', 'cancelled'].includes(recording.state);
+    generate.hidden = safeMode || !enabled || isReady || !['missing', 'error', 'cancelled'].includes(recording.state);
     generate.disabled = !connection;
     generate.title = previewAudio ? 'Connect Kokoro on a self-hosted installation to generate audio.' : '';
     generate.textContent = recording.state === 'error' ? 'Retry book audio' : 'Generate book audio';
-    status.textContent = previewAudio && !isReady ? 'Audio and podcast preview · Narration is not connected in this demo.' : ({
+    status.textContent = safeMode && !isReady ? 'No saved audiobook is available.' : previewAudio && !isReady ? 'Audio and podcast preview · Narration is not connected in this demo.' : ({
       missing: recordingCount ? 'Choose a synced recording, or generate book audio.' : connection ? 'Generate the complete book to listen.' : 'Connect Kokoro in Settings → Narration.',
       queued: `Generating book audio · ${recording.complete} / ${recording.total} sections`,
       assembling: 'Finishing the complete book recording…', cancelled: 'Book audio generation cancelled.', error: recording.error,
@@ -258,7 +261,10 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
       clearTimeout(poll);
       try {
         const selected = preferences().audioRecordings?.[active.id] || '';
-        const result = await api(`/api/books/${active.id}/narration${selected ? `?recording=${encodeURIComponent(selected)}` : ''}`, { signal: controller.signal });
+        const query = new URLSearchParams();
+        if (selected) query.set('recording', selected);
+        if (textEdition()) query.set('view', 'epub');
+        const result = await api(`/api/books/${active.id}/narration${query.size ? '?' + query : ''}`, { signal: controller.signal });
         if (epoch !== lifecycle) return;
         const choices = result.recordings || [];
         recordingCount = choices.length;
@@ -303,11 +309,12 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     if (book()?.id === event.detail?.book) void loadRecording();
   });
   window.addEventListener('online', () => { if (book()) void loadRecording(); });
-  function stop() {
+  function stop(position) {
     lifecycle++; controller?.abort(); clearTimeout(poll); cancelAnimationFrame(animation);
     audio.onloadedmetadata = null; audio.pause(); audio.removeAttribute('src'); audio.load(); clearHighlight();
     recording = unit = descriptor = local = recordingBook = bookRequest = undefined;
     timed = []; timingMap.clear(); cache.clear();
+    resumePosition = position;
     following = followAgain = forceFollow = wantPlaying = false;
     manualNavigation = false; manualPage = pendingWordTime = undefined; navigationVersion++; wordPlayback++;
     initialSeek = true; waitingForMetadata = true;

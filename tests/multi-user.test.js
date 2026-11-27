@@ -245,6 +245,52 @@ test('self-hosted users have private libraries, owner-controlled sharing and iso
     await f.api('/api/admin/users/' + user.id,admin,{method:'PATCH',body:{storageLimit:null}});
     assert.equal((await f.api('/api/storage',member)).unlimited,true);
   });
+  await t.test('Safe mode restricts an existing session to its library and personal reading data', async () => {
+    const { users } = await f.api('/api/admin/users', admin);
+    const user = users.find((item) => item.username === 'member');
+    const operator = users.find((item) => item.role === 'admin');
+    const policy = '/api/admin/users/' + user.id;
+    const book = '/api/books/' + privateBook.id;
+    await f.api(policy, member, { method: 'PATCH', body: { safeMode: true }, status: 403 });
+    await f.api('/api/admin/users/' + operator.id, admin, { method: 'PATCH', body: { safeMode: true }, status: 422 });
+    await f.api(policy, admin, { method: 'PATCH', body: { safeMode: 'true' }, status: 422 });
+    await f.api(policy, admin, { method: 'PATCH', body: { safeMode: true } });
+    assert.equal((await f.api('/api/account', member)).user.safeMode, true);
+    const library = await openLibrary(f.dir), bytes = await sampleBook(), file = join(library.uploads, 'unindexed.epub');
+    await writeFile(file, bytes);
+    await library.importBook('unindexed', { path: file, size: bytes.length, originalname: 'unindexed.epub' },
+      { title: 'Unindexed book', language: 'es' }, { id: user.id, userId: user.id });
+    const snapshot = await f.api('/api/library', member);
+    assert.ok(snapshot.books.some((item) => item.id === privateBook.id && !item.canEdit));
+    assert.equal(snapshot.books.find((item) => item.id === 'unindexed').learning.state, 'missing');
+    assert.equal((await f.api('/api/books/unindexed/learning', member)).analysis.state, 'missing', 'opening an unindexed book must not start work');
+    assert.equal((await fetch(f.base() + book + '/file', { headers: member, method: 'HEAD' })).status, 200);
+    await f.api(book + '/learning', member);
+    await f.api(book + '/narration', member);
+    const mark = await f.api(book + '/bookmarks', member, { body: { target: cfi, label: 'Continue here' } });
+    assert.ok(mark);
+    await f.api(book + '/read-status', member, { method: 'PATCH', body: { read: true } });
+    for (const [method, path] of [
+      ['GET', '/api/processes'], ['GET', '/api/storage'], ['GET', '/api/kavita/catalogue'],
+      ['GET', '/api/settings/ai'], ['GET', '/api/fonts/catalogue'], ['GET', '/api/book-catalogue/gutenberg'],
+      ['GET', '/api/sharing/recipients'], ['GET', '/opds/books'], ['GET', book + '/ocr'],
+      ['GET', book + '/offline'], ['POST', '/api/ai/phrase'], ['POST', '/api/imports/web'],
+      ['POST', '/api/books'], ['POST', book + '/narration'], ['POST', book + '/pdf-review/ocr'],
+      ['PATCH', book], ['PUT', '/api/settings/kavita'], ['DELETE', book],
+    ]) {
+      const result = await f.api(path, member, { method, status: 403 });
+      assert.match(result.error, /Safe mode/u);
+    }
+    await f.api('/api/library', basic('member', memberPass), { status: 401 });
+    await f.api('/kosync/users/auth', sync('member', memberPass), { status: 401 });
+    await f.api('/api/processes', third);
+    await f.api(policy, admin, { method: 'PATCH', body: { role: 'admin' }, status: 422 });
+    await f.start();
+    assert.equal((await f.api('/api/account', member)).user.safeMode, true);
+    await f.api(policy, admin, { method: 'PATCH', body: { safeMode: false } });
+    assert.equal((await f.api('/api/account', member)).user.safeMode, false);
+    await f.api('/api/processes', member);
+  });
   await t.test('disabling or resetting an account revokes sessions and device credentials without losing its books', async () => {
     const users = (await f.api('/api/admin/users', admin)).users, user = users.find((item) => item.username === 'member');
     await f.api('/api/admin/users/' + user.id, admin, { method: 'PATCH', body: { disabled: true } });

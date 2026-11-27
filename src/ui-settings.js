@@ -13,7 +13,7 @@ import { fontSettings } from './ui-fonts.js';
 import { coverSearchSettings } from './ui-cover-settings.js';
 import { languageDefaultsEditor } from './ui-language-defaults.js';
 
-export function settingsPage({ preferences, apply, navigate, back }) {
+export function settingsPage({ preferences, apply, navigate, back, safeMode = false }) {
   const narration = narrationSettings();
   const archive = archiveSettings();
   const kavita = kavitaConnection();
@@ -30,6 +30,7 @@ export function settingsPage({ preferences, apply, navigate, back }) {
   const languageDefaults = languageDefaultsEditor();
   const readingLanguages = readingLanguagesPicker({ host: $('#reading-language-list'), input: $('#reading-language-choice'), add: $('#reading-language-add'), error: (text) => message('#settings-error', text), changed: (values) => languageDefaults.languages(values) });
   const aiTab = $('[data-settings-tab="ai"]');
+  if (safeMode) for (const tab of $$('[data-settings-tab][data-full-access]')) tab.hidden = true;
   const themeButtons = Object.entries(themes).map(([value, theme]) => {
     const label = element('label', 'theme-option');
     const input = document.createElement('input');
@@ -315,8 +316,8 @@ export function settingsPage({ preferences, apply, navigate, back }) {
     leave() { active = false; visit++; recording = undefined; },
     get active() { return active; },
     setDemo(demo) {
-      canConfigureAI = !demo;
-      aiTab.hidden = demo;
+      canConfigureAI = !demo && !safeMode;
+      aiTab.hidden = demo || safeMode;
     },
   };
 }

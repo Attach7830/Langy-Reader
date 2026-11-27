@@ -10,6 +10,14 @@ export function accountPolicyFields(value = {}, { current = false } = {}) {
     else { input.defaultValue = input.value = initial; label.append(document.createTextNode(title), input); }
     root.append(label); controls[key] = input; return input;
   }
+  const safeMode = field('safeMode', 'Safe mode', 'checkbox', Boolean(value.safeMode));
+  const safeNote = element('p', 'field-note', 'Allows reading and listening to existing books and keeping personal reading data. Disables uploads, book editing, processing, AI and device integrations.');
+  root.append(safeNote);
+  function setReader(reader) {
+    safeMode.disabled = safeMode.closest('label').hidden = safeNote.hidden = !reader;
+    if (!reader) safeMode.checked = false;
+  }
+  setReader(value.role !== 'admin');
   field('sharedArchive', 'Allow use of the administrator’s Anna’s Archive membership key', 'checkbox', Boolean(value.sharedArchive));
   root.append(element('p','field-note','Readers need this permission or their own private membership key. Administrators manage the shared connection.'));
   field('storageLimit', 'Saved library limit (GiB, blank for unlimited)', 'number', value.storageLimit == null ? '' : value.storageLimit / 1024 ** 3, { min: '0', max: '1048576', step: 'any' });
@@ -21,12 +29,17 @@ export function accountPolicyFields(value = {}, { current = false } = {}) {
   field('sessionHours', 'Session sign-in duration (hours)', 'number', value.sessionHours ?? 24, { min: '1', max: '168', step: '1' });
   field('maxSessions', 'Maximum browser sessions', 'number', value.maxSessions ?? 30, { min: '1', max: '100', step: '1' });
   field('allowDevices', 'Allow OPDS / KOReader device sign-ins', 'checkbox', value.allowDevices !== false);
-  return { root, read() {
+  return { root, setReader, read() {
     if (!Object.values(controls).every((input) => input.reportValidity())) throw new Error('Check the account permissions and limits.');
     const result = Object.fromEntries(Object.entries(controls).map(([key, input]) => [key, input.type === 'checkbox' ? input.checked
       : key === 'expiresAt' ? input.value ? new Date(input.value).getTime() : null
       : key === 'storageLimit' ? input.value === '' ? null : Math.round(Number(input.value) * 1024 ** 3) : Number(input.value)]));
     if (current) delete result.expiresAt;
     return result;
-  }, reset() { for (const input of Object.values(controls)) { if (input.type === 'checkbox') input.checked = input.dataset.accountPolicy !== 'sharedArchive'; else input.value = ({ rememberDays: 30, sessionHours: 24, maxSessions: 30 })[input.dataset.accountPolicy] ?? ''; } } };
+  }, reset() {
+    for (const input of Object.values(controls)) {
+      if (input.type === 'checkbox') input.checked = input.defaultChecked;
+      else input.value = input.defaultValue;
+    }
+  } };
 }

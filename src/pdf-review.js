@@ -5,6 +5,7 @@ import { pdfTextHistory } from './pdf-text-history.js';
 const readable = (value) => typeof value === 'string' && /[\p{L}\p{N}]/u.test(value);
 const latinLetters = /(?=\p{Letter})\p{Script=Latin}\p{Mark}*/gu;
 const numerals = /\p{Number}\p{Mark}*/gu;
+const symbols = /(?![.,!?;:'"¡¿‘’“”«»…。、，！？；：「」『』–—-])[\p{Punctuation}\p{Symbol}]\p{Mark}*/gu;
 
 function parsePageRanges(value, total) {
   const pages = new Set();
@@ -35,7 +36,7 @@ export function reviewPdfText({ saved }) {
   const preview = $('#pdf-review-preview'), original = $('#pdf-review-original'), copy = $('#pdf-review-copy');
   const extract = $('#pdf-review-extract-boxes'), forceOCR = $('#pdf-review-box-ocr');
   const undo = $('#pdf-review-undo'), redo = $('#pdf-review-redo');
-  const removeLatin = $('#pdf-review-remove-latin'), removeNumerals = $('#pdf-review-remove-numerals');
+  const removeLatin = $('#pdf-review-remove-latin'), removeNumerals = $('#pdf-review-remove-numerals'), removeSymbols = $('#pdf-review-remove-symbols');
   let editor, poll;
   const history = pdfTextHistory(text, (value) => {
     const { number, text: savedText } = editor.page;
@@ -62,6 +63,7 @@ export function reviewPdfText({ saved }) {
     redo.disabled = text.disabled || !history.canRedo;
     removeLatin.disabled = text.disabled || text.value.search(latinLetters) === -1;
     removeNumerals.disabled = text.disabled || text.value.search(numerals) === -1;
+    removeSymbols.disabled = text.disabled || text.value.search(symbols) === -1;
   }
 
   function controls() {
@@ -152,8 +154,8 @@ export function reviewPdfText({ saved }) {
     } finally { if (editor === session) { session.loading = false; controls(); } }
   }
 
-  function removeCharacters(pattern) {
-    const filtered = (value) => value.replace(pattern, '');
+  function removeCharacters(...patterns) {
+    const filtered = (value) => patterns.reduce((text, pattern) => text.replace(pattern, ''), value);
     const { value, selectionStart, selectionEnd, selectionDirection } = text;
     history.replace(filtered(value), {
       start: filtered(value.slice(0, selectionStart)).length,
@@ -163,6 +165,7 @@ export function reviewPdfText({ saved }) {
   }
   removeLatin.addEventListener('click', () => removeCharacters(latinLetters));
   removeNumerals.addEventListener('click', () => removeCharacters(numerals));
+  removeSymbols.addEventListener('click', () => removeCharacters(symbols));
   undo.addEventListener('click', () => history.move('undo'));
   redo.addEventListener('click', () => history.move('redo'));
   document.addEventListener('keydown', (event) => {
@@ -174,7 +177,19 @@ export function reviewPdfText({ saved }) {
       history.move(event.shiftKey ? 'redo' : 'undo');
       return;
     }
-    if (field || command || event.shiftKey) return;
+    if (field || command) return;
+    if (event.key.toLowerCase() === 'r' && !event.repeat && !text.disabled) {
+      event.preventDefault();
+      removeCharacters(latinLetters, numerals, symbols);
+      return;
+    }
+    if (event.shiftKey) return;
+    if (event.key === 'Enter' && preview.contains(event.target) && !event.repeat && !extract.disabled && !editor?.extraction
+      && !event.target.closest?.('a, button')) {
+      event.preventDefault();
+      extract.click();
+      return;
+    }
     const turn = event.key === 'ArrowLeft' ? previous : event.key === 'ArrowRight' ? next : null;
     if (turn && !turn.disabled) {
       event.preventDefault();

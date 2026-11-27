@@ -10,12 +10,13 @@ const parameters = { N: 32768, r: 8, p: 3, maxmem: 64 * 1024 ** 2 };
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 const md5 = (value) => createHash('md5').update(value).digest('hex'); // KOReader wire protocol only; never stored unhashed.
 const passwordValid = (value) => typeof value === 'string' && value.length >= 15 && value.length <= 256;
-const policyDefaults = { sharedArchive: 0, storageLimit: null, expiresAt: null, allowRemember: 1, rememberDays: 30, sessionHours: 24, maxSessions: 30, allowDevices: 1 };
+const policyDefaults = { safeMode: 0, sharedArchive: 0, storageLimit: null, expiresAt: null, allowRemember: 1, rememberDays: 30, sessionHours: 24, maxSessions: 30, allowDevices: 1 };
+const booleanPermissions = ['safeMode', 'sharedArchive', 'allowRemember', 'allowDevices'];
 const publicUser = ({ id, username, role, disabled, created, ...policy }) => ({ id, username, role, disabled: Boolean(disabled), created,
-  ...Object.fromEntries(Object.keys(policyDefaults).map((key) => [key, ['sharedArchive', 'allowRemember', 'allowDevices'].includes(key) ? Boolean(policy[key]) : policy[key] ?? policyDefaults[key]])) });
+  ...Object.fromEntries(Object.keys(policyDefaults).map((key) => [key, booleanPermissions.includes(key) ? Boolean(policy[key]) : policy[key] ?? policyDefaults[key]])) });
 function accountPolicy(body, previous = policyDefaults) {
   const result = { ...policyDefaults, ...previous };
-  for (const key of ['sharedArchive', 'allowRemember', 'allowDevices']) if (body[key] !== undefined) {
+  for (const key of booleanPermissions) if (body[key] !== undefined) {
     if (typeof body[key] !== 'boolean') throw new RequestError(422, 'Choose valid account permissions.'); result[key] = Number(body[key]);
   }
   for (const [key, max] of [['rememberDays', 365], ['sessionHours', 168], ['maxSessions', 100]]) if (body[key] !== undefined) {
@@ -25,6 +26,9 @@ function accountPolicy(body, previous = policyDefaults) {
     if (body[key] !== null && (!Number.isSafeInteger(body[key]) || body[key] < 0 || body[key] > (key === 'storageLimit' ? 1024 ** 5 : 8640000000000000))) throw new RequestError(422, 'Choose a valid storage limit or expiry date.'); result[key] = body[key];
   }
   return Object.fromEntries(Object.keys(policyDefaults).map((key) => [key, result[key]]));
+}
+function checkSafeMode(role, policy) {
+  if (role === 'admin' && policy.safeMode) throw new RequestError(422, 'Safe mode is for reader accounts. Turn it off before assigning the administrator role.');
 }
 const cookies = (req) => Object.fromEntries((req.get('Cookie') || '').split(';').flatMap((part) => {
   const at = part.indexOf('='); return at < 0 ? [] : [[part.slice(0, at).trim(), part.slice(at + 1).trim()]];
@@ -80,7 +84,7 @@ export async function openAccounts(dir, { demo = false, username = 'reader', pas
   const enabled = !demo && Boolean(db.prepare('SELECT 1 FROM users LIMIT 1').get());
   const attempts = new Map(), verified = new Map(); let inFlight = 0, dummy;
   function visitorForUser(user) {
-    return { id: user.owner, userId: user.id, username: user.username, role: user.role, accountKey: user.settingsKey, authenticated: true };
+    return { id: user.owner, userId: user.id, username: user.username, role: user.role, accountKey: user.settingsKey, authenticated: true, safeMode: Boolean(user.safeMode) };
   }
   function visitorForOwner(owner = '', expires = null) { const user = userByOwner(owner); return user ? visitorForUser(user) : owner ? { id: owner, expires } : undefined; }
   function throttle(key) {
@@ -94,12 +98,13 @@ export async function openAccounts(dir, { demo = false, username = 'reader', pas
     if (!enabled || typeof name !== 'string' || name.length > 128 || typeof value !== 'string' || value.length > 256) return null;
     const key = digest(`${sync}:${name.toLowerCase()}:${value}`), hit = verified.get(key), user = db.prepare('SELECT * FROM users WHERE username=?').get(name);
     const deviceLogin = sync || source.startsWith('basic:');
-    if (hit && hit.until > now() && active(user) && (!deviceLogin || user.allowDevices) && user.id === hit.id && user.version === hit.version) return visitorForUser(user);
+    const accepted = active(user) && (!deviceLogin || user.allowDevices && !user.safeMode);
+    if (hit && hit.until > now() && accepted && user.id === hit.id && user.version === hit.version) return visitorForUser(user);
     throttle(`${source}:${name.toLowerCase()}`); inFlight++;
     try {
       if (!dummy) dummy = hashPassword(randomBytes(24).toString('hex'));
       const valid = await verifyPassword(value, user?.[sync ? 'sync' : 'password'] || await dummy);
-      if (!valid || !active(user) || deviceLogin && !user.allowDevices) return null;
+      if (!valid || !accepted) return null;
       // Check again after the KDF, so a concurrent disable/reset takes effect.
       const latest = userById(user.id);
       if (!active(latest) || latest.version !== user.version) return null;
@@ -158,11 +163,12 @@ export async function openAccounts(dir, { demo = false, username = 'reader', pas
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/u.test(name)) throw new RequestError(422, 'Use a username of 1–64 letters, numbers, dots, underscores or hyphens.');
     if (reservedUsernames.some((value) => value && value.toLowerCase() === name.toLowerCase())) throw new RequestError(409, 'That username is reserved for the existing device-sync account.');
     if (!passwordValid(body.password)) throw new RequestError(422, 'Use a password of 15–256 characters.');
-    if (!['user', 'admin'].includes(body.role || 'user')) throw new RequestError(422, 'Choose a valid account role.');
+    const role = body.role || 'user', policy = accountPolicy(body);
+    if (!['user', 'admin'].includes(role)) throw new RequestError(422, 'Choose a valid account role.');
+    checkSafeMode(role, policy);
     if (db.prepare('SELECT 1 FROM users WHERE username=?').get(name)) throw new RequestError(409, 'That username is already in use.');
     const id = randomUUID(), hashes = await Promise.all([hashPassword(body.password), hashPassword(md5(body.password))]);
-    const policy = accountPolicy(body);
-    try { db.prepare(`INSERT INTO users(id,username,password,sync,role,owner,settingsKey,created,${Object.keys(policy).join(',')}) VALUES(${Array(8 + Object.keys(policy).length).fill('?').join(',')})`).run(id, name, ...hashes, body.role || 'user', id, `user-id:${id}`, now(), ...Object.values(policy)); }
+    try { db.prepare(`INSERT INTO users(id,username,password,sync,role,owner,settingsKey,created,${Object.keys(policy).join(',')}) VALUES(${Array(8 + Object.keys(policy).length).fill('?').join(',')})`).run(id, name, ...hashes, role, id, `user-id:${id}`, now(), ...Object.values(policy)); }
     catch (error) { if (error.errcode === 2067 || error.code?.includes('CONSTRAINT')) throw new RequestError(409, 'That username is already in use.'); throw error; }
     return publicUser(userById(id));
   }
@@ -171,6 +177,7 @@ export async function openAccounts(dir, { demo = false, username = 'reader', pas
     if (body.role !== undefined && !['user', 'admin'].includes(body.role) || body.disabled !== undefined && typeof body.disabled !== 'boolean') throw new RequestError(422, 'Choose valid account permissions.');
     const role = body.role ?? user.role, disabled = body.disabled === undefined ? user.disabled : Number(body.disabled);
     const policy = accountPolicy(body, user);
+    checkSafeMode(role, policy);
     if (id === meta('bootstrap') && (role !== 'admin' || disabled)) throw new RequestError(409, 'The environment administrator must stay active with the administrator role.');
     if (id === meta('bootstrap') && policy.expiresAt !== null) throw new RequestError(409, 'The initial administrator account cannot expire.');
     if (user.role === 'admin' && !user.disabled && (role !== 'admin' || disabled) && db.prepare("SELECT count(*) AS n FROM users WHERE role='admin' AND disabled=0").get().n <= 1) throw new RequestError(409, 'Keep at least one active administrator.');

@@ -36,11 +36,18 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
     has_spoken_text(text) AS narratable FROM chapters WHERE book=? ORDER BY ordinal`).all(book.id);
   const newest = (book) => db.prepare("SELECT * FROM book_audio WHERE book=? AND kind='generated' ORDER BY created DESC,rowid DESC LIMIT 1").get(book.id);
 
-  function publicRecording(row) {
+  function publicRecording(row, { textEdition = false } = {}) {
     if (!row) return { state: 'missing' };
     const parts = JSON.parse(row.parts);
     const complete = parts.filter(({ id }) => db.prepare("SELECT id FROM audio WHERE id=? AND state='ready'").get(id)).length;
-    const timing = row.state === 'ready' ? applyPageStarts(JSON.parse(row.segments), JSON.parse(row.markers), JSON.parse(row.pdfTiming)) : null;
+    let timing;
+    if (row.state === 'ready') {
+      const segments = JSON.parse(row.segments), markers = JSON.parse(row.markers);
+      // PDF page overrides track the scan. The text edition displays the same
+      // words used for alignment, so it follows the original word times.
+      timing = textEdition ? { segments: segments.map(({ pageOnly, ...part }) => part), markers }
+        : applyPageStarts(segments, markers, JSON.parse(row.pdfTiming));
+    }
     return {
       id: row.id, state: row.state, error: row.error, complete, total: parts.length, duration: row.duration,
       kind: row.kind, name: row.name, quality: row.quality ? JSON.parse(row.quality) : null, alignmentRevision: row.alignmentRevision,
@@ -51,11 +58,11 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
     };
   }
 
-  function status(book, selected) {
+  function status(book, selected, options) {
     const latest = () => db.prepare('SELECT * FROM book_audio WHERE book=? ORDER BY created DESC,rowid DESC LIMIT 1').get(book.id);
     const row = selected ? db.prepare("SELECT * FROM book_audio WHERE book=? AND id=? AND state='ready'").get(book.id, selected) || latest() : latest();
     const current = sections(book);
-    return { connected: Boolean(configuration().baseUrl), previewAudio, audio: publicRecording(row && row.digest === digest(current) ? row : null) };
+    return { connected: Boolean(configuration().baseUrl), previewAudio, audio: publicRecording(row && row.digest === digest(current) ? row : null, options) };
   }
 
   function queue(book, replace = false) {

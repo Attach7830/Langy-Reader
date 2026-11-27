@@ -226,6 +226,20 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
   const textJobs = new Map(), textLanes = { epub: Promise.resolve(), pdf: Promise.resolve() };
   const selectionOf = (book) => JSON.stringify(bookLanguages(book).sort());
   const indexed = (book, revision = transcripts.textRevision(book)) => db.prepare('SELECT 1 FROM analyses WHERE book=? AND contentRevision=? AND textVersion=1').get(book.id, revision);
+  function epubRevision(book) {
+    if (demo || book.format !== 'pdf') return null;
+    const revision = transcripts.textRevision(book);
+    if ((!book.ocrComplete && revision === (book.contentRevision || '')) || !indexed(book, revision)) return null;
+    return db.prepare('SELECT 1 FROM chapters WHERE book=? AND has_spoken_text(text) LIMIT 1').get(book.id) ? revision || 'ocr' : null;
+  }
+  function epubText(book) {
+    const revision = epubRevision(book);
+    if (!revision) throw new RequestError(409, 'The simplified EPUB needs indexed OCR or revised PDF text.');
+    const { total } = db.prepare('SELECT count(*) AS total FROM chapters WHERE book=?').get(book.id);
+    const pages = db.prepare('SELECT key,title,text FROM chapters WHERE book=? AND has_spoken_text(text) ORDER BY ordinal').all(book.id)
+      .map(({ key, title, text }) => ({ number: Number(key.slice(4)), title, text }));
+    return { revision, total, pages };
+  }
   function prepareText(book, retry = false) {
     const revision = transcripts.textRevision(book);
     if (vocabulary.bookCounts(book) && indexed(book, revision)) return Promise.resolve(true);
@@ -279,6 +293,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
 
   function resetAnalysis(book, selection = selectionOf(book), revision = transcripts.textRevision(book)) {
     pausedAnalyses.delete(book.id);
+    db.prepare('DELETE FROM worker_progress WHERE id=?').run(`analysis:${book.id}`);
     db.prepare(`INSERT INTO analyses(book,owner,language,languageSelection,contentRevision,state) VALUES(?,?,?,?,?,'queued')
       ON CONFLICT(book) DO UPDATE SET language=excluded.language,languageSelection=excluded.languageSelection,contentRevision=excluded.contentRevision,state='queued',error=NULL,
       metrics=NULL,lemmas=NULL,wordCount=NULL,method=NULL,textVersion=0`).run(book.id, book.owner || '', book.language, selection, revision);
@@ -317,15 +332,15 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     return { revision: transcripts.revision(book) };
   }
 
-  function info(book) {
-    ensure(book);
-    const row = db.prepare('SELECT state, lemmas, wordCount, method, error, metrics FROM analyses WHERE book=?').get(book.id);
+  function info(book, { startWork = true } = {}) {
+    if (startWork) ensure(book);
+    const row = db.prepare('SELECT state, lemmas, wordCount, method, error, metrics FROM analyses WHERE book=?').get(book.id) ?? { state: 'missing' };
     const count = row.lemmas ? JSON.parse(row.lemmas).length : null;
-    if (row.state === 'ready' && !estimates.status(book)) estimates.queue(book);
+    if (startWork && row.state === 'ready' && !estimates.status(book)) estimates.queue(book);
     const reading = estimates.status(book);
     const counts = vocabulary.bookCounts(book), textJob = textJobs.get(book.id);
-    const counting = { state: counts ? 'ready' : textJob?.state || 'queued', error: textJob?.error?.message || null };
-    return { state: row.state, lemmaCount: count, wordCount: row.wordCount, counts, counting, reading, method: row.method, error: row.error,
+    const counting = { state: counts ? 'ready' : textJob?.state || (startWork ? 'queued' : 'missing'), error: textJob?.error?.message || null };
+    return { state: row.state, lemmaCount: count, wordCount: row.wordCount ?? null, counts, counting, reading, method: row.method ?? null, error: row.error ?? null,
       vocabulary: row.metrics ? JSON.parse(row.metrics) : null };
   }
 
@@ -364,9 +379,9 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     };
   }
 
-  function chapters(book) {
+  function chapters(book, options) {
     return {
-      analysis: info(book),
+      analysis: info(book, options),
       narration: narration(book), rescanAvailable: !demo,
       chapters: db.prepare('SELECT key, title, lemmas,metrics, length(trim(text)) AS characters,has_spoken_text(text) AS spoken FROM chapters WHERE book=? ORDER BY ordinal').all(book.id)
         .map(({ lemmas, spoken, metrics, ...row }) => ({ ...row, vocabulary: metrics ? JSON.parse(metrics) : null, narratable: Boolean(spoken) && (!demo || row.characters <= 20000),
@@ -570,7 +585,9 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
         const parts = new Set(parents.flatMap((row) => JSON.parse(row.parts).map((part) => part.id)));
         const add = (type, id, row, created) => {
           const text = textJobs.get(row.book), blocked = text && ['queued','running'].includes(text.state);
-          rows.push({ id, created, ready: !blocked, dependencies: blocked ? [`indexing:${row.book}`] : [], data: { type, job: row } });
+          // Revising the source can queue a fresh analysis under the same book ID.
+          rows.push({ id, created, ready: !blocked, allowRequeue: type === 'analysis',
+            dependencies: blocked ? [`indexing:${row.book}`] : [], data: { type, job: row } });
         };
         for (const row of db.prepare("SELECT * FROM analyses WHERE state='queued' ORDER BY rowid").all()) add('analysis', `analysis:${row.book}`, row);
         for (const row of parents) add('book', `narration:${row.id}`, row, row.created);
@@ -742,8 +759,8 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       catch { await remove(row.book); }
     }
   }
-  function narration(book, selected) {
-    const result = completeAudio.status(book, selected);
+  function narration(book, selected, options) {
+    const result = completeAudio.status(book, selected, options);
     if (book.format === 'pdf' && transcripts.textRevision(book) !== (book.contentRevision || '') && !indexed(book)) result.audio = { state: 'missing' };
     result.audio.rescan = result.audio.id ? rescans.status(book, result.audio.id) : null;
     return { ...result, scheduled: scheduledAudio.status(book), recordings: demo ? [] : recordings.list(book).filter((item) => item.state === 'ready').map(({ id, name }) => ({ id, name })) };
@@ -755,7 +772,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       const uploaded = db.prepare('SELECT id FROM recordings WHERE book=?').all(book).flatMap(({ id }) => ['.source', '.mp3', '.transcript.json', '.chapters'].map((suffix) => join(folder, id + suffix)));
       return [...audio, ...complete, ...uploaded];
     },
-    settings, save, voices, info, ensure, unit, chapters, remove, audioFile, prune, cancel, cancelProcess, pdfReview, savePdfReview,
+    settings, save, voices, info, ensure, unit, chapters, remove, audioFile, prune, cancel, cancelProcess, pdfReview, savePdfReview, epubRevision, epubText,
     textProcesses: () => [...textJobs].map(([book, job]) => ({ book, state: job.state, error: job.error?.message || null })),
     textSections(book, { original = false } = {}) {
       const rows = db.prepare('SELECT key,ordinal,title,text,digest,tokens,languages,pdfSourceText FROM chapters WHERE book=? ORDER BY ordinal').all(book.id);

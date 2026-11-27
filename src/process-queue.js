@@ -6,13 +6,17 @@ import { androidApp } from './platform.js';
 import { processElapsed, processProgress } from './process-progress.js';
 import { translateUI } from './i18n.js';
 import { archiveTitleActions } from './archive-title-controls.js';
+import { processDrag } from './process-drag.js';
 
 const active = (job) => ['queued', 'running', 'waiting', 'downloading'].includes(job.state);
 export function processQueue({ now = Date.now, changePreferences = saveSettings } = {}) {
   const dialog = $('#downloads-dialog'), list = $('#process-list'), empty = $('#process-empty'), button = $('#open-process-queue');
   let disposed = false, account, libraryRevision, jobs = [], local = processTasks.snapshot(), timer, pending, redraw, expiry, signature = '', dismissed = new Set(), history = processHistory({ now });
+  let moving = false;
+  const drag = processDrag(list, dialog, { move: moveTask, refresh: render });
   const version = (job) => JSON.stringify([job.id, job.state, job.created || 0, job.detail, job.phase]);
   function render() {
+    if (drag.active || disposed) return;
     const minutes = getSettings().processDismissMinutes;
     // Polling must not replace a number while the reader is editing it.
     if (document.activeElement !== $('#process-dismiss-minutes')) $('#process-dismiss-minutes').value = minutes;
@@ -31,9 +35,18 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
     if (next !== signature) {
       signature = next; entries.sort((a, b) => Number(!active(a)) - Number(!active(b))
         || (a.queuePosition ?? Infinity) - (b.queuePosition ?? Infinity) || Number(b.state === 'running') - Number(a.state === 'running') || b.created - a.created);
+      const canDrag = entries.filter((job) => job.canPrioritize).length > 1;
       list.replaceChildren(...entries.map((job) => {
         const card = element('article', 'download-card process-card'); card.dataset.process = job.id;
-        card.append(element('h3', '', job.label));
+        const heading = element('div', 'process-card-heading');
+        if (canDrag && job.canPrioritize) {
+          const handle = element('span', 'process-drag-handle', '⠿');
+          handle.dataset.processDragHandle = ''; card.dataset.processDraggable = '';
+          handle.title = 'Drag to change priority';
+          handle.setAttribute('aria-hidden', 'true');
+          heading.append(handle);
+        }
+        heading.append(element('h3', '', job.label)); card.append(heading);
         if (active(job) && job.cancellable) {
           const cancel=element('button','icon-button small process-cancel','×');cancel.type='button';cancel.setAttribute('aria-label','Cancel '+job.label);cancel.title='Cancel process';
           cancel.addEventListener('click',async () => {cancel.disabled=true;
@@ -139,6 +152,16 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
       finally { pending = undefined; if (!disposed) timer = setTimeout(() => void refresh(), document.hidden ? 30000 : dialog.open || jobs.some(active) ? 2000 : 5000); timer?.unref?.(); }
     })(); return pending;
   }
+  async function moveTask(id, target, position) {
+    if (moving || disposed) return;
+    moving = true;
+    try {
+      await api(`/api/processes/${encodeURIComponent(id)}/priority`, { method: 'POST', body: { action: 'move', target, position } });
+      await pending;
+      await refresh();
+    } catch (error) { message('#process-error', error.message); }
+    finally { moving = false; render(); }
+  }
   function open() { if (!dialog.open) dialog.showModal(); render(); void refresh(); }
   button.addEventListener('click', open);
   for (const control of document.querySelectorAll('[data-open-processes]')) control.addEventListener('click', open);
@@ -151,5 +174,5 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
   window.addEventListener('langy-processes-changed', () => { clearTimeout(timer); timer = setTimeout(() => void refresh(), 100); });
   window.addEventListener('online', () => void refresh());
   document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); });
-  return { dispose() { disposed = true; clearTimeout(timer); clearTimeout(expiry); cancelAnimationFrame(redraw); unsubscribe(); unsubscribeSettings(); }, setAccount(id) { if (account !== id) { jobs = []; libraryRevision = undefined; dismissed.clear(); signature = ''; let storage; try { storage = localStorage; } catch {} history = processHistory({ now, storage, key: `langy-process-finished-${id || ''}` }); processTasks.setAccount(id); } account = id; void refresh(); } };
+  return { dispose() { disposed = true; drag.cancel(); clearTimeout(timer); clearTimeout(expiry); cancelAnimationFrame(redraw); unsubscribe(); unsubscribeSettings(); }, setAccount(id) { if (account !== id) { jobs = []; libraryRevision = undefined; dismissed.clear(); signature = ''; let storage; try { storage = localStorage; } catch {} history = processHistory({ now, storage, key: `langy-process-finished-${id || ''}` }); processTasks.setAccount(id); } account = id; void refresh(); } };
 }
