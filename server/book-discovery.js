@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { baseLanguage } from '../shared/language.js';
 import { normalizeLanguage, RequestError } from './books.js';
 import { waitForOpenLibrary } from './open-library-rate.js';
-import { consumeProcesses } from './process-scheduler.js';
+import { consumeProcesses, PROCESS_YIELD } from './process-scheduler.js';
 
 const clean = (value, limit) => typeof value === 'string' ? value.replace(/[\x00-\x1f]/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, limit) : '';
 const titleKey = (value) => clean(value, 500).normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -58,7 +58,7 @@ export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl = 
     UPDATE discoveries SET state='error',error='Discovery was interrupted by a restart. Try again.'
       WHERE state IN ('queued','scanning','searching','ranking');`);
   let active, running, stopped = false, catalogueLane = Promise.resolve();
-  const catalogueCache = new Map();
+  const catalogueCache = new Map(), checkpoints = new Map();
   const rowFor = (visitor) => db.prepare('SELECT * FROM discoveries WHERE owner=?').get(ownerOf(visitor));
   const prune = () => db.prepare('DELETE FROM discoveries WHERE expires<=?').run(Date.now());
   function booksFor(visitor) {
@@ -107,6 +107,7 @@ export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl = 
     const row = rowFor(visitor);
     if (row && busy(row.state)) {
       db.prepare("UPDATE discoveries SET state='cancelled',error=NULL WHERE owner=? AND id=?").run(row.owner, row.id);
+      checkpoints.delete(row.id);
       if (active?.id === row.id) active.control.abort();
     }
     return status(visitor);
@@ -140,6 +141,14 @@ export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl = 
     });
   }
   async function generate(row, signal) {
+    const saved = checkpoints.get(row.id) || {};
+    const yieldIfNeeded = () => {
+      signal.throwIfAborted();
+      if (!scheduler?.shouldYield()) return false;
+      checkpoints.set(row.id, saved);
+      db.prepare("UPDATE discoveries SET state='queued' WHERE owner=? AND id=? AND state!='cancelled'").run(row.owner, row.id);
+      return true;
+    };
     const input = JSON.parse(row.request);
     const visitor = visitorForOwner(row.owner, row.expires);
     const all = booksFor(visitor), ordered = [...all].sort((a, b) => Number(b.read) - Number(a.read) || b.addedAt - a.addedAt);
@@ -149,21 +158,24 @@ export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl = 
     const stage = (state) => { signal.throwIfAborted(); if (!current()) throw new DOMException('Cancelled', 'AbortError'); db.prepare('UPDATE discoveries SET state=? WHERE owner=? AND id=?').run(state, row.owner, row.id); };
     const modelUnchanged = () => { const config = ai.settings(); if (config.model !== input.model || config.provider !== input.provider) throw new RequestError(409, 'The AI model changed. Request fresh recommendations.'); };
     stage('scanning'); modelUnchanged();
-    const plan = await ai.discoveryPlan({ library: selected, requestedLanguage: input.language, focus: input.focus, totalBooks: all.length }, signal);
+    const plan = saved.plan ||= await ai.discoveryPlan({ library: selected, requestedLanguage: input.language, focus: input.focus, totalBooks: all.length }, signal);
+    if (yieldIfNeeded()) return PROCESS_YIELD;
     const queries = [...new Set((Array.isArray(plan.queries) ? plan.queries : []).map((value) => clean(value, 300)).filter(Boolean))].slice(0, 3);
     const catalogueQueries = [...new Set((Array.isArray(plan.catalogueQueries) ? plan.catalogueQueries : []).map((value) => clean(value, 250)).filter(Boolean))].slice(0, 2);
     const leads = (Array.isArray(plan.candidates) ? plan.candidates : []).filter((item) => clean(item?.title, 180) && clean(item?.author, 140)).slice(0, 8);
     if (!queries.length || !catalogueQueries.length) throw new RequestError(502, 'The model did not provide useful book searches. Try again.');
     stage('searching');
     const warnings = [], webResults = [], seenLinks = new Set();
-    const searches = await Promise.allSettled(queries.map((query) => webSearch(query, signal)));
+    const searches = saved.searches ||= await Promise.allSettled(queries.map((query) => webSearch(query, signal)));
+    if (yieldIfNeeded()) return PROCESS_YIELD;
     for (const result of searches) if (result.status === 'fulfilled') for (const item of result.value) if (!seenLinks.has(item.url)) { seenLinks.add(item.url); webResults.push({ ...item, id: `web-${webResults.length + 1}` }); }
     if (!webResults.length) warnings.push('General web search returned no usable results. These recommendations use Open Library catalogue records only. Check that the search service is running with JSON enabled.');
     const code = languageCodes[input.language], languageFilter = code ? ` AND language:${code}` : '';
     const batch = leads.map((item) => `(title:${quote(clean(item.title, 180))} AND author:${quote(clean(item.author, 140))})`).join(' OR ');
     const lookups = [...(batch ? ['(' + batch + ')' + languageFilter] : []), ...catalogueQueries.map((query) => '(' + query + ')' + languageFilter)];
-    const catalogues = await Promise.allSettled(lookups.map((query) => catalogue(query, signal)));
+    const catalogues = saved.catalogues ||= await Promise.allSettled(lookups.map((query) => catalogue(query, signal)));
     signal.throwIfAborted();
+    if (yieldIfNeeded()) return PROCESS_YIELD;
     const owned = new Set(booksFor(visitor).map((book) => titleKey(book.title))), candidates = new Map(), identities = new Set();
     for (const result of catalogues) if (result.status === 'fulfilled') for (const item of result.value) {
       const title = clean(item.title, 250), authors = (Array.isArray(item.author_name) ? item.author_name : []).map((author) => clean(author, 160)).filter(Boolean).slice(0, 3);
@@ -208,12 +220,15 @@ export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl = 
       .map((row) => ({ id: `discovery:${row.id}`, created: row.created, data: row })), async (row) => {
       active = { id: row.id, control: new AbortController() };
       const signal = AbortSignal.any([active.control.signal, AbortSignal.timeout(timeoutMs)]);
-      try { await abortable(() => withAI(visitorForOwner(row.owner, row.expires), () => generate(row, signal)), signal); }
+      try { return await abortable(() => withAI(visitorForOwner(row.owner, row.expires), () => generate(row, signal)), signal); }
       catch (error) {
         if (stopped || active?.control.signal.aborted) return;
         const message = error instanceof RequestError ? error.message : error.name === 'TimeoutError' ? 'Book discovery timed out. Retry or choose a faster local model.' : 'Book discovery failed. Check the AI connection and search service, then retry.';
         db.prepare("UPDATE discoveries SET state='error',error=? WHERE owner=? AND id=? AND state!='cancelled'").run(message, row.owner, row.id);
-      } finally { active = undefined; }
+      } finally {
+        if (db.prepare('SELECT state FROM discoveries WHERE owner=? AND id=?').get(row.owner, row.id)?.state !== 'queued') checkpoints.delete(row.id);
+        active = undefined;
+      }
     }).finally(() => { running = undefined; });
     return running;
   }

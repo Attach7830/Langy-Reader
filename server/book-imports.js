@@ -10,7 +10,7 @@ import { importNarrationOptions } from './import-narration.js';
 import { publicDownload, downloadURL } from './public-download.js';
 import { bookConverter } from './book-conversion.js';
 import { conversionLimit, convertsToEPUB } from '../shared/import-formats.js';
-import { consumeProcesses } from './process-scheduler.js';
+import { consumeProcesses, PROCESS_YIELD, watchProcessPriority } from './process-scheduler.js';
 
 const pending = new Set(['queued','downloading','converting','importing']);
 
@@ -30,7 +30,8 @@ export async function openBookImports(dir,{library,demo=false,request=publicDown
     try{await consumeProcesses(scheduler,()=>closed?[]:[...jobs.values()].filter((job)=>job.state==='queued').map((job)=>({
       id:`${job.kind==='conversion'?'conversion':job.kind==='kavita'?'kavita-import':'web-import'}:${job.id}`,created:job.created,data:job,
     })),async(job)=>{
-      const path=join(library.uploads,'web-'+job.id+'.part'),source=join(library.uploads,'source-'+job.id),controller=new AbortController();controllers.set(job.id,controller);let response,converted,release=()=>{};
+      const path=join(library.uploads,'web-'+job.id+'.part'),source=join(library.uploads,'source-'+job.id),controller=new AbortController();controllers.set(job.id,controller);let response,converted,release=()=>{},yielding=false;
+      const stopPriority=watchProcessPriority(scheduler,()=>{yielding=true;controller.abort();},()=>['queued','downloading','converting'].includes(job.state));
       try{
         if (demo && (!job.expires || job.expires <= Date.now())) throw new RequestError(410,'Your demo session expired. Upload the document again.');
         if(!activeOwner(job.owner))throw new RequestError(403,'This account is no longer active.');
@@ -66,8 +67,11 @@ export async function openBookImports(dir,{library,demo=false,request=publicDown
         job.state='importing';persist(job);release();release=()=>{};
         const book=await library.importBook(job.id,file,job.details,visitor);
         job.book=book.id;job.state='ready';persist(job);try{onImport(book,job.details);}catch{}
-      }catch(error){if(job.state!=='cancelled'){job.state='error';job.error=error instanceof RequestError?error.message:job.kind==='conversion'?'Document conversion failed. Upload the source again to retry.':'Book download failed. Check the source and retry.';}persist(job);}
-      finally{response?.destroy();controllers.delete(job.id);release();await converted?.cleanup();await Promise.all([path,source].map((file)=>rm(file,{force:true})));}
+      }catch(error){
+        if(yielding&&job.state!=='cancelled'){job.state='queued';job.error=null;if(job.kind!=='conversion')job.bytes=0;persist(job);return PROCESS_YIELD;}
+        if(job.state!=='cancelled'){job.state='error';job.error=error instanceof RequestError?error.message:job.kind==='conversion'?'Document conversion failed. Upload the source again to retry.':'Book download failed. Check the source and retry.';}persist(job);
+      }
+      finally{stopPriority();response?.destroy();controllers.delete(job.id);release();await converted?.cleanup();await Promise.all([path,...(yielding&&job.state==='queued'?[]:[source])].map((file)=>rm(file,{force:true})));}
     });}finally{running=false;if(autoStart&&!closed&&[...jobs.values()].some((job)=>job.state==='queued'))queueMicrotask(()=>void pump());}
   }
   function validate(visitor){

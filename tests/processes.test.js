@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openProcesses } from '../server/processes.js';
+import { openProcessScheduler } from '../server/process-scheduler.js';
 
 test('process overview filters book ownership and projects only status fields from every worker queue', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'langy-processes-')), db = new DatabaseSync(join(dir, 'learning.sqlite'));
@@ -30,11 +31,14 @@ test('process overview filters book ownership and projects only status fields fr
     for (const book of ['one', 'two']) next.prepare('INSERT INTO jobs VALUES(?)').run(JSON.stringify({ id: book, [field]: book, state: 'queued', apiKey: 'must-not-leak', kind: 'export', server: 'private-server' }));
   }
   let calls = 0;
+  const scheduler = openProcessScheduler(dir, { paused: true });
   const process = openProcesses(dir, { library: { snapshot(visitor) { calls++; return { books: [{ id: visitor.id, title: 'Owned book' }] }; } },
     account: (visitor) => visitor, discovery: { status: () => ({}) }, learning: { textProcesses: () => [{ book: 'one', state: 'running' }, { book: 'two', state: 'running' }] },
+    scheduler,
     archive: { list: () => [{ id: 'download', state: 'retry_wait', nextAttempt: stamp + 10000, details: { title: 'Queued book' }, apiKey: 'must-not-leak', source: 'private-url' },
+      { id: 'queued', state: 'queued', created: stamp, details: { title: 'Ready to download' } },
       { id: 'finished', state: 'complete', created: stamp }, { id: 'cancelled', state: 'cancelled', created: stamp }, { id: 'failed', state: 'error', created: stamp, error: 'Retry me' }] } });
-  t.after(async () => { process.close(); handles.forEach((handle) => handle.close()); await rm(dir, { recursive: true, force: true }); });
+  t.after(async () => { await scheduler.close(); process.close(); handles.forEach((handle) => handle.close()); await rm(dir, { recursive: true, force: true }); });
   const result = process.list({ id: 'one' }); assert.equal(result.unavailable, false); assert.equal(calls, 1);
   assert.ok(result.jobs.every((job) => !job.bookId || job.bookId === 'one'));
   assert.equal(result.jobs.find((job) => job.kind === 'recording').progress, 40); assert.equal(result.jobs.find((job) => job.kind === 'repair').progress, 50);
@@ -67,6 +71,15 @@ test('process overview filters book ownership and projects only status fields fr
   assert.equal(failures.length, 1); assert.equal(failures[0].retryOcr, 'new');
   handles[1].prepare('INSERT INTO jobs VALUES(?)').run(JSON.stringify({ id: 'successful', source: 'one', state: 'ready', created: 3 }));
   assert.equal(process.list({ id: 'one' }).jobs.some((job) => job.kind === 'ocr'), false, 'a successful retry supersedes previous failures');
+  const tasks = [scheduler.run('estimate:one', () => {}, { created: 1 }), scheduler.run('archive:queued', () => {}, { created: 2 })];
+  const queued = process.list({ id: 'one' }).jobs.filter((job) => job.queuePosition);
+  assert.deepEqual(queued.map((job) => [job.id, job.queuePosition, job.topPriority]), [
+    ['archive:queued', 1, true], ['estimate:one', 2, false],
+  ], 'the process overview exposes the same automatic priority and order used by the scheduler');
+  assert.ok(queued.every((job) => job.canPrioritize), 'both categories retain manual priority controls');
+  scheduler.top('estimate:one');
+  assert.deepEqual(process.list({ id: 'one' }).jobs.filter((job) => job.queuePosition).map((job) => job.id), ['estimate:one','archive:queued']);
+  scheduler.resume(); await Promise.all(tasks);
   const demo = openProcesses(dir, { library: { snapshot: () => ({ books: [{ id: 'two' }] }) }, account: (visitor) => visitor, discovery: { status: () => ({}) }, learning: { textProcesses: () => [] }, demo: true });
   assert.ok(demo.list({ id: 'two' }).jobs.every((job) => job.bookId === 'two')); demo.close();
 });

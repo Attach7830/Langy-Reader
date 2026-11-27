@@ -92,6 +92,7 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
   const surface = window, dialog = $('#offline-dialog'), list = $('#offline-download-list'); let selected, epoch = 0, loading = false, authorized = false, listVersion;
   dismissOnBackdrop(dialog); dismissOnBackdrop($('#downloads-dialog'));
   const pending = (job) => ['queued', 'downloading', 'waiting'].includes(job?.state);
+  const scheduling = (job) => job.pauseRequested ? 'Switching after the current step' : job.paused && job.state === 'queued' ? 'Paused for higher-priority work' : '';
   const describe = (job) => `${({ queued: 'Queued', downloading: 'Downloading', waiting: 'Waiting for connection', complete: 'Downloaded', failed: 'Download failed', cancelled: 'Cancelled' })[job.state]} · ${job.error || downloadProgressLabel(job.progress)}`;
   let expiry; const observedFinished = new Map();
   function renderJobs(jobs) {
@@ -102,31 +103,39 @@ export function offlineDownloads({ queue = readingPackQueue({ download: saveRead
     const duration = (getSettings().processDismissMinutes || 0) * 60000;
     for (const job of jobs) if (['complete', 'cancelled'].includes(job.state) && !observedFinished.has(job.id)) observedFinished.set(job.id, job.finished || Date.now());
     const visibleJobs = jobs.filter((job) => pending(job) || job.state === 'failed' || duration > 0 && Date.now() < observedFinished.get(job.id) + duration)
-      .sort((a, b) => Number(b.state === 'downloading') - Number(a.state === 'downloading') || (b.priority || 0) - (a.priority || 0) || a.created - b.created);
+      .sort((a, b) => Number(!pending(a)) - Number(!pending(b)) || (b.priority || 0) - (a.priority || 0)
+        || Number(b.state === 'downloading') - Number(a.state === 'downloading') || a.created - b.created);
     processTasks.setDownloads(visibleJobs, { includeFinished: true });
     clearTimeout(expiry);
     const done = visibleJobs.filter((job) => ['complete', 'cancelled'].includes(job.state));
     if (done.length) { expiry = setTimeout(() => renderJobs(queue.snapshot()), Math.max(1, Math.min(...done.map((job) => observedFinished.get(job.id) + duration - Date.now())))); expiry?.unref?.(); }
-    const version = JSON.stringify(visibleJobs.map((job) => [job.id, job.state, job.error, job.book.title, job.priority]));
+    const version = JSON.stringify(visibleJobs.map((job) => [job.id, job.state, job.error, job.book.title, job.priority, job.pauseRequested, job.paused]));
     if (version !== listVersion) {
     const cards = visibleJobs.map((job) => {
       const card = element('article', 'download-card'); card.dataset.download = job.book.id;
       const title = element('h3', '', job.book.title); title.setAttribute('data-user-content', '');
       const status = element('p', 'field-note download-status', describe(job));
+      const schedule = element('p', 'field-note download-scheduling', scheduling(job)); schedule.hidden = !scheduling(job);
       const meter = document.createElement('progress'); meter.max = 100; meter.setAttribute('aria-label', `Download progress for ${job.book.title}`);
       if (Number.isFinite(job.progress?.percent)) meter.value = job.progress.percent;
       const actions = element('div', 'download-actions');
-      function action(label, callback) {
+      function action(label, callback, title) {
         const cancel = label === 'Cancel download';
         const button = element('button', cancel ? 'icon-button small process-cancel' : 'button quiet small', cancel ? '×' : label); button.type = 'button';
         if (cancel) {button.setAttribute('aria-label',label);button.title=label;}
-        button.addEventListener('click', () => { void Promise.resolve().then(callback).catch((error) => message('#offline-download-error', error.message)); }); actions.append(button);
+        else if (title) button.title = title;
+        button.addEventListener('click', () => { button.disabled = true; void Promise.resolve().then(callback)
+          .catch((error) => message('#offline-download-error', error.message)).finally(() => { button.disabled = false; }); }); actions.append(button);
       }
       if (pending(job)) action('Cancel download', () => queue.cancel(job.id));
-      if (['queued', 'waiting'].includes(job.state)) action('Raise priority', () => queue.raisePriority(job.id));
+      if (pending(job)) for (const [value, label, title] of [
+        ['raise', 'Raise priority', 'Run ahead of the current task'],
+        ['top', 'Top priority', 'Move ahead of all other tasks'],
+        ['lowest', 'Lowest priority', 'Move behind all other tasks'],
+      ]) action(label, () => queue.prioritize(job.id, value), title);
       if (['waiting', 'failed'].includes(job.state)) action('Retry download', () => queue.retry(job.id));
       if (!pending(job)) action('Dismiss', () => queue.remove(job.id));
-      card.append(title, status, meter, actions); return card;
+      card.append(title, status, schedule, meter, actions); return card;
     });
     list.replaceChildren(...(cards.length ? cards : [element('p', 'field-note', 'No book downloads yet. Choose Save offline in a book’s options.')]));
     listVersion = version;

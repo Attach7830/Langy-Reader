@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { openBookDiscovery, discoveryLink } from '../server/book-discovery.js';
 import { openAISettings } from '../server/ai.js';
+import { openProcessScheduler } from '../server/process-scheduler.js';
 
 const plan = { text: 'Tentative interest in Mexican fiction and memory, based on the library titles.', queries: ['books similar to Pedro Páramo Juan Rulfo', 'Mexican fiction memory novels'], catalogueQueries: ['subject:Mexican_fiction'], candidates: [{ title: 'Los recuerdos del porvenir', author: 'Elena Garro' }] };
 const docs = [
@@ -22,6 +23,7 @@ async function until(check) {
 }
 async function fixture(t, options = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'langy-discovery-')), requests = [], plans = [], rankings = [];
+  const scheduler = options.withScheduler ? openProcessScheduler(dir) : undefined;
   const books = [{ id: 'one', title: 'Pedro Páramo', author: 'Juan Rulfo', language: 'es', categoryId: 'fiction', readAt: 10, addedAt: 5 }];
   const library = { snapshot() { return { categories: [{ id: 'fiction', name: 'Fiction' }], books }; } };
   const config = { model: 'qwen3:8b', provider: 'ollama' };
@@ -36,6 +38,7 @@ async function fixture(t, options = {}) {
   const fetcher = async (value, request) => {
     const url = new URL(value); requests.push({ url, ...request });
     assert.equal(request.redirect, 'error'); assert.ok(request.signal);
+    await options.onRequest?.(url, request);
     if (url.hostname === 'search.test') {
       if (webDown) throw new Error('search offline');
       assert.equal(url.searchParams.get('format'), 'json');
@@ -51,10 +54,10 @@ async function fixture(t, options = {}) {
     assert.match(request.headers['User-Agent'], /Langy-Reader/);
     return Response.json({ docs });
   };
-  const parameters = { library, ai, searchUrl: 'http://search.test:8080', fetcher, catalogueDelay: 0, timeoutMs: options.timeoutMs || 1000 };
+  const parameters = { library, ai, scheduler, searchUrl: 'http://search.test:8080', fetcher, catalogueDelay: 0, timeoutMs: options.timeoutMs || 1000 };
   const discovery = openBookDiscovery(dir, parameters);
-  t.after(async () => { await discovery.close(); await rm(dir, { recursive: true, force: true }); });
-  return { dir, discovery, parameters, books, config, requests, plans, rankings, setWebDown: () => { webDown = true; }, setCatalogueDown: () => { catalogueDown = true; },
+  t.after(async () => { await discovery.close(); await scheduler?.close(); await rm(dir, { recursive: true, force: true }); });
+  return { dir, discovery, scheduler, parameters, books, config, requests, plans, rankings, setWebDown: () => { webDown = true; }, setCatalogueDown: () => { catalogueDown = true; },
     finish: (visitor) => until(() => { const status = discovery.status(visitor); return !status.busy && status.state !== 'idle' && status; }) };
 }
 
@@ -77,6 +80,39 @@ test('discovery scans library metadata, searches the web, verifies catalogue can
   const reopened = openBookDiscovery(f.dir, f.parameters); t.after(() => reopened.close());
   assert.equal(reopened.status().state, 'ready'); assert.equal(reopened.status().id, id);
 });
+
+for (const cancel of [false, true]) {
+  test(cancel ? 'cancelled paused discovery never resumes its cached plan or searches' : 'discovery resumes after yielding without repeating its plan or completed web searches', async (t) => {
+    let f, promoted, promotedStarted = false, release;
+    const held = new Promise((resolve) => { release = resolve; });
+    f = await fixture(t, { withScheduler: true, timeoutMs: 5000, onRequest(url) {
+      if (url.hostname === 'search.test' && !promoted) {
+        promoted = f.scheduler.run('ocr:urgent', async () => { promotedStarted = true; await held; });
+        f.scheduler.top('ocr:urgent');
+      }
+    } });
+    const queued = f.discovery.queue({ language: 'es' });
+    try {
+      await until(() => promotedStarted);
+      assert.equal(f.discovery.status().state, 'queued');
+      assert.equal(f.scheduler.snapshot().queued.find((job) => job.id === `discovery:${queued.id}`).paused, true);
+      assert.equal(f.plans.length, 1);
+      assert.equal(f.requests.filter(({ url }) => url.hostname === 'search.test').length, plan.queries.length);
+      assert.equal(f.requests.filter(({ url }) => url.hostname === 'openlibrary.org').length, 0);
+      assert.equal(f.rankings.length, 0);
+      if (cancel) assert.equal(f.discovery.cancel().state, 'cancelled');
+      release(); await promoted;
+      const result = await f.finish();
+      assert.equal(result.state, cancel ? 'cancelled' : 'ready', result.error);
+      await f.discovery.pump();
+      assert.equal(f.discovery.status().state, cancel ? 'cancelled' : 'ready');
+      assert.equal(f.plans.length, 1, 'a saved plan must not be regenerated after yielding');
+      assert.equal(f.requests.filter(({ url }) => url.hostname === 'search.test').length, plan.queries.length, 'completed searches must not be repeated');
+      assert.equal(f.rankings.length, cancel ? 0 : 1);
+      if (cancel) assert.equal(f.requests.filter(({ url }) => url.hostname === 'openlibrary.org').length, 0);
+    } finally { release(); await promoted; }
+  });
+}
 
 test('library and model changes mark saved discovery stale without automatically sending more searches', async (t) => {
   const f = await fixture(t); f.discovery.queue({}); assert.equal((await f.finish()).state, 'ready');

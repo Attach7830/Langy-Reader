@@ -44,22 +44,97 @@ test('interrupted downloads restart after reopening, offline jobs wait, and anot
   f.account('one'); await f.queue.resume(); await f.queue.idle(); assert.equal(calls.at(-1), 'private');
 });
 
-test('raising a book-pack priority preserves the active transfer and survives reopening the device queue', async (t) => {
-  const release = gate(), calls = [];
-  const f = fixture(t, { async download(book) { calls.push(book.id); if (book.id === 'a') await release.promise; } });
-  t.after(() => release.resolve());
+test('priority switches wait for transfer cleanup, retain higher-ranked work and restart the paused book', async (t) => {
+  const aborted = gate(), cleanup = gate(), calls = [], snapshots = []; let attempts = 0, active = 0, peak = 0;
+  t.after(() => cleanup.resolve());
+  const f = fixture(t, { async download(book, { signal }) {
+    active++; peak = Math.max(peak, active); calls.push(book.id);
+    try {
+      if (book.id === 'a' && ++attempts === 1) {
+        await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+        aborted.resolve(); await cleanup.promise; throw signal.reason;
+      }
+    } finally { active--; }
+  } });
+  f.queue.subscribe((jobs) => snapshots.push(jobs));
   await f.queue.enqueue(book('a'), {}); await f.queue.enqueue(book('b'), {}); await f.queue.enqueue(book('c'), {});
-  await f.queue.raisePriority('one:c');
-  assert.deepEqual(calls, ['a']); assert.equal(f.queue.snapshot().find((job) => job.book.id === 'a').state, 'downloading');
-  assert.equal(f.values.get('one:c').priority, 1);
-  await f.queue.raisePriority('one:a'); assert.equal(f.values.get('one:a').priority, 0, 'the active transfer cannot be promoted');
-  release.resolve(); await f.queue.idle(); assert.deepEqual(calls, ['a', 'c', 'b']);
+  await f.queue.raisePriority('one:c'); await aborted.promise;
+  assert.deepEqual(calls, ['a'], 'the next transfer must wait for temporary-cache cleanup');
+  assert.equal(f.queue.snapshot().find((job) => job.book.id === 'a').pauseRequested, true);
+  await f.queue.prioritize('one:b', 'top'); await f.queue.raisePriority('one:c');
+  assert.ok(f.values.get('one:b').priority > f.values.get('one:c').priority, 'Raise inserts ahead of the active job without tying work already above it');
+  cleanup.resolve(); await f.queue.idle();
+  assert.deepEqual(calls, ['a', 'b', 'c', 'a']); assert.equal(peak, 1);
+  assert.ok(snapshots.some((jobs) => jobs.some((job) => job.book.id === 'a' && job.state === 'queued' && job.paused)));
+  assert.ok(snapshots.every((jobs) => jobs.every((job) => job.state !== 'cancelled')));
+  assert.ok(f.queue.snapshot().every((job) => job.state === 'complete' && !job.pauseRequested));
+});
 
-  f.online(false); await f.queue.enqueue(book('d'), {}); await f.queue.enqueue(book('e'), {}); await f.queue.raisePriority('one:e');
+test('active book downloads accept Raise, Top and Lowest and yield when moved below waiting work', async (t) => {
+  const calls = []; let attempts = 0, signal;
+  const f = fixture(t, { async download(book, options) {
+    calls.push(book.id);
+    if (book.id === 'a' && ++attempts === 1) {
+      signal = options.signal;
+      await new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    }
+  } });
+  await f.queue.enqueue(book('a'), {}); await until(() => signal);
+  await f.queue.prioritize('one:a', 'top'); await f.queue.raisePriority('one:a');
+  assert.equal(f.values.get('one:a').priority, 2); assert.equal(signal.aborted, false);
+  await f.queue.enqueue(book('b'), {}); await f.queue.prioritize('one:a', 'lowest'); await f.queue.idle();
+  assert.deepEqual(calls, ['a', 'b', 'a']); assert.equal(f.values.get('one:a').priority, -1);
+  assert.ok(f.queue.snapshot().every((job) => job.state === 'complete'));
+});
+
+test('manual top and lowest device priorities survive reopening', async (t) => {
+  const calls = [], f = fixture(t, { async download(book) { calls.push(book.id); } });
+  f.online(false);
+  for (const id of ['d', 'e', 'f']) await f.queue.enqueue(book(id), {});
+  await f.queue.prioritize('one:e', 'top'); await f.queue.prioritize('one:d', 'lowest'); await f.queue.raisePriority('one:f');
   f.queue.close();
   const reopened = readingPackQueue({ store: f.store, owner: () => 'one', online: () => true, download: async (book) => calls.push(book.id) });
   t.after(() => reopened.close());
-  await reopened.resume(); await reopened.idle(); assert.deepEqual(calls.slice(-2), ['e', 'd']);
+  await reopened.resume(); await reopened.idle(); assert.deepEqual(calls, ['f', 'e', 'd']);
+});
+
+test('a user cancellation during a priority switch wins over automatic requeuing', async (t) => {
+  const aborted = gate(), cleanup = gate(), calls = []; t.after(() => cleanup.resolve());
+  const f = fixture(t, { async download(book, { signal }) {
+    calls.push(book.id);
+    if (book.id === 'a') {
+      await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+      aborted.resolve(); await cleanup.promise; throw signal.reason;
+    }
+  } });
+  await f.queue.enqueue(book('a'), {}); await f.queue.enqueue(book('b'), {});
+  await f.queue.prioritize('one:b', 'top'); await aborted.promise; await f.queue.cancel('one:a');
+  cleanup.resolve(); await f.queue.idle();
+  assert.deepEqual(calls, ['a', 'b']); assert.equal(f.values.get('one:a').state, 'cancelled');
+  assert.equal(f.values.get('one:a').paused, false); assert.equal(f.values.get('one:b').state, 'complete');
+});
+
+test('a high-priority waiting download only interrupts active work when it becomes ready', async (t) => {
+  const calls = []; let attempts = 0, signal;
+  const f = fixture(t, { async download(book, options) {
+    calls.push(book.id);
+    if (book.id === 'a' && ++attempts === 1) {
+      signal = options.signal;
+      await new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    }
+  } });
+  await f.store.put({ id: 'one:waiting', owner: 'one', book: book('waiting'), options: {}, state: 'waiting', created: 1, priority: 0 });
+  await f.queue.enqueue(book('a'), {}); await until(() => signal);
+  await f.queue.prioritize('one:waiting', 'top'); assert.equal(signal.aborted, false); assert.deepEqual(calls, ['a']);
+  await f.queue.resume(); await f.queue.idle(); assert.deepEqual(calls, ['a', 'waiting', 'a']);
+});
+
+test('a priority request during final commit does not restart a successfully completed pack', async (t) => {
+  const commit = gate(), calls = []; t.after(() => commit.resolve());
+  const f = fixture(t, { async download(book) { calls.push(book.id); if (book.id === 'a') await commit.promise; } });
+  await f.queue.enqueue(book('a'), {}); await f.queue.enqueue(book('b'), {});
+  await f.queue.prioritize('one:b', 'top'); commit.resolve(); await f.queue.idle();
+  assert.deepEqual(calls, ['a', 'b']); assert.ok(f.queue.snapshot().every((job) => job.state === 'complete'));
 });
 
 test('an account cannot raise another account’s device download priority', async (t) => {

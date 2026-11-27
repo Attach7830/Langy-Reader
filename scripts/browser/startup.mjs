@@ -97,15 +97,28 @@ try {
       assert.equal(updated.books.find((book) => book.id === books[1].id).series, 'Second series');
       results.push({ name: 'rapid editing opens the requested book and isolates overlapping save cleanup', pass: true });
       const status = await (await context.request.get(base + '/api/processes')).json();
-      let promoted = false;
-      const queuedJobs = () => ['first', 'second'].map((name, index) => ({ id: `analysis:${name}`, kind: 'analysis', label: 'Analyze book vocabulary',
-        title: `${name} queued book`, state: 'queued', canPrioritize: true, priority: promoted && index === 1 ? 1 : 0,
-        queuePosition: promoted ? 2 - index : index + 1 }));
-      await page.route('**/api/processes/analysis%3Asecond/priority', async (route) => { assert.equal(route.request().method(), 'POST'); promoted = true; await route.fulfill({ status: 202, json: { priority: 1 } }); });
-      await page.route('**/api/processes', (route) => route.fulfill({ json: { accountId: status.accountId, sequential: true, jobs: [{
+      const priorityRequests = [], currentId = 'narration:progress-fixture';
+      const processJobs = [{
         id: 'narration:progress-fixture', kind: 'narration', label: 'Generate audiobook', state: 'running', phase: 'aligning',
-        startedAt: Date.now() - 65000, progress: 12.5, counter: { complete: 1, total: 10, unit: 'sections' }, activity: { complete: 2, total: 8, unit: 'passages' },
-      }, ...queuedJobs()] } }));
+        canPrioritize: true, priority: 0, created: 1, progress: 12.5,
+        counter: { complete: 1, total: 10, unit: 'sections' }, activity: { complete: 2, total: 8, unit: 'passages' },
+      }, ...['first', 'second'].map((name, index) => ({ id: `analysis:${name}`, kind: 'analysis', label: 'Analyze book vocabulary',
+        title: `${name} queued book`, state: 'queued', canPrioritize: true, priority: 0, created: index + 2 }))];
+      const rankedJobs = () => [...processJobs].sort((a, b) => b.priority - a.priority || a.created - b.created)
+        .map((job, index) => ({ ...job, queuePosition: index + 1,
+          ...(job.id === currentId ? { startedAt: Date.now() - 65000, pauseRequested: index > 0 } : {}) }));
+      await page.route('**/api/processes/*/priority', async (route) => {
+        assert.equal(route.request().method(), 'POST');
+        const { action } = route.request().postDataJSON(), id = decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-2));
+        assert.ok(['raise', 'top', 'lowest'].includes(action));
+        const job = processJobs.find((item) => item.id === id), current = processJobs.find((item) => item.id === currentId); assert.ok(job);
+        const priority = action === 'lowest' ? Math.min(0, ...processJobs.map((item) => item.priority)) - 1
+          : action === 'top' ? Math.max(0, ...processJobs.map((item) => item.priority)) + 1 : Math.max(0, job.priority, current.priority) + 1;
+        if (action === 'raise') for (const item of processJobs) if (item !== job && item.priority >= priority) item.priority++;
+        job.priority = priority; priorityRequests.push({ id, action });
+        await route.fulfill({ status: 202, json: { priority } });
+      });
+      await page.route('**/api/processes', (route) => route.fulfill({ json: { accountId: status.accountId, sequential: true, jobs: rankedJobs() } }));
       const queueButton = page.locator('#open-process-queue'), queueLabel = queueButton.locator('.process-queue-label');
       await page.evaluate(() => window.dispatchEvent(new CustomEvent('langy-processes-changed')));
       await page.waitForFunction(() => document.querySelector('#process-queue-count').textContent === '3');
@@ -129,13 +142,41 @@ try {
       assert.match(await card.innerText(), /Synchronizing spoken words/u); assert.match(await card.locator('.process-elapsed').innerText(), /1:0[5-9]/u);
       await page.screenshot({ path: 'browser-results/process-progress.png' });
       results.push({ name: 'background progress shows stage, section and passage counts, and elapsed time', pass: true });
-      await page.locator('[data-process="analysis:second"]').getByRole('button', { name: 'Raise priority' }).click();
+      for (const id of [currentId, 'analysis:first', 'analysis:second']) for (const name of ['Raise priority', 'Top priority', 'Lowest priority']) {
+        assert.equal(await page.locator(`[data-process="${id}"]`).getByRole('button', { name, exact: true }).count(), 1, `${id} exposes ${name}`);
+      }
+      await page.locator('[data-process="analysis:second"]').getByRole('button', { name: 'Raise priority', exact: true }).click();
       await page.locator('[data-process="analysis:second"]').getByText('Priority raised').waitFor();
       assert.deepEqual(await page.locator('#process-list [data-process]').evaluateAll((cards) => cards.map((node) => node.dataset.process)),
-        ['narration:progress-fixture', 'analysis:second', 'analysis:first']);
-      assert.equal(await card.getByRole('button', { name: 'Raise priority' }).count(), 0, 'the current task remains active and cannot be promoted');
+        ['analysis:second', currentId, 'analysis:first']);
+      assert.equal(await card.getByText('Switching after the current step').isVisible(), true);
+      await card.getByRole('button', { name: 'Top priority', exact: true }).click();
+      await card.getByText('Switching after the current step').waitFor({ state: 'hidden' });
+      assert.deepEqual(await page.locator('#process-list [data-process]').evaluateAll((cards) => cards.map((node) => node.dataset.process)),
+        [currentId, 'analysis:second', 'analysis:first']);
+      await card.getByRole('button', { name: 'Lowest priority', exact: true }).click();
+      await card.getByText('Switching after the current step').waitFor();
+      assert.deepEqual(await page.locator('#process-list [data-process]').evaluateAll((cards) => cards.map((node) => node.dataset.process)),
+        ['analysis:second', 'analysis:first', currentId]);
+      assert.deepEqual(priorityRequests, [{ id: 'analysis:second', action: 'raise' }, { id: currentId, action: 'top' }, { id: currentId, action: 'lowest' }]);
       await page.screenshot({ path: 'browser-results/process-priority.png' });
-      results.push({ name: 'raising priority moves a queued book ahead while the current task keeps running', pass: true });
+      results.push({ name: 'Raise, Top and Lowest change global queue order including the running task and show pending switches', pass: true });
+      const desktopViewport = page.viewportSize();
+      try {
+        await page.setViewportSize({ width: 393, height: 851 }); await card.scrollIntoViewIfNeeded();
+        const overflow = await page.locator('#downloads-dialog').evaluate((dialog) => ({
+          dialog: dialog.scrollWidth > dialog.clientWidth + 1,
+          controls: [...dialog.querySelectorAll('.process-card .download-actions')].some((actions) => {
+            const bounds = actions.getBoundingClientRect();
+            return actions.scrollWidth > actions.clientWidth + 1 || [...actions.querySelectorAll('button')].some((button) => {
+              const box = button.getBoundingClientRect(); return box.left < bounds.left - 1 || box.right > bounds.right + 1;
+            });
+          }),
+        }));
+        assert.deepEqual(overflow, { dialog: false, controls: false }, 'priority controls must wrap within the mobile queue');
+        await page.screenshot({ path: 'browser-results/process-priority-mobile.png' });
+        results.push({ name: 'all three priority controls fit the mobile-sized queue without horizontal overflow', pass: true });
+      } finally { await page.setViewportSize(desktopViewport); }
     }
     const failure = await context.newPage(); failure.on('pageerror', (error) => errors.push(error.message)); let broken = true;
     await failure.route('**/api/library', (route) => broken ? route.fulfill({ status: 503, json: { error: 'Synthetic unavailable library' } }) : route.continue());

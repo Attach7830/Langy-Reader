@@ -8,7 +8,7 @@ import { pipeline } from 'node:stream/promises';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { RequestError } from './books.js';
 import { maxAudioUpload } from './uploaded-audio.js';
-import { consumeProcesses } from './process-scheduler.js';
+import { consumeProcesses, PROCESS_YIELD } from './process-scheduler.js';
 
 const encode = encodeURIComponent;
 const hash = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -442,6 +442,9 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
     await call('/api/upload', { method: 'POST', body: data, signal: AbortSignal.timeout(1800000) });
     operation.getStore()?.signal.throwIfAborted();
     job.state = 'linking'; job.phase = 'indexing'; job.exportedAt = now(); persist(job);
+    // The confirmed upload is a durable checkpoint. Never interrupt the upload
+    // itself: its remote outcome must be known before another task takes over.
+    if (scheduler?.shouldYield()) return PROCESS_YIELD;
     await reconcileExport(job, book);
   }
   async function pump() {
@@ -488,7 +491,7 @@ export async function openAudiobookshelf(dir, { library, learning, demo = false,
           }
           job.state = 'running'; job.error = null; job.phase = 'checking'; job.retryAt = null; persist(job);
           const book = library.getBook(job.book);
-          await operation.run(controller,() => job.kind === 'export' ? runExport(job,book) : runImport(job,book));
+          return await operation.run(controller,() => job.kind === 'export' ? runExport(job,book) : runImport(job,book));
         } catch (error) {
           if (job.userCancelled) return;
           job.error = error instanceof RequestError ? error.message : 'Audiobookshelf transfer failed. Check the connection and retry.';

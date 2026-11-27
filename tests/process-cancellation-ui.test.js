@@ -42,6 +42,45 @@ test('Raise priority posts the selected queued task and refreshes its queue posi
   assert.equal(document.querySelector('#process-list').firstElementChild.dataset.process, 'narration:second');
 });
 
+test('running and queued priority controls post their actions and show pending switches in requested order', async (t) => {
+  const dom = new JSDOM(await readFile(new URL('../index.html', import.meta.url), 'utf8'), { url: 'https://langy.test', pretendToBeVisual: true });
+  const originals = new Map(), oldFetch = globalThis.fetch;
+  for (const key of ['window','document','location','localStorage','requestAnimationFrame','cancelAnimationFrame','CustomEvent']) {
+    originals.set(key, Object.getOwnPropertyDescriptor(globalThis,key));
+    Object.defineProperty(globalThis,key,{configurable:true,value:key.includes('AnimationFrame')?dom.window[key].bind(dom.window):dom.window[key]});
+  }
+  const jobs = [
+    { id: 'analysis:running', label: 'Running task', state: 'running', queuePosition: 2, canPrioritize: true, pauseRequested: true },
+    { id: 'archive:next', label: 'Download book', state: 'queued', queuePosition: 1, canPrioritize: true, topPriority: true },
+    { id: 'recording:paused', label: 'Sync audiobook', state: 'queued', queuePosition: 3, canPrioritize: true, paused: true },
+    { id: 'analysis:shared', label: 'Shared task', state: 'queued', queuePosition: 4, canPrioritize: false },
+  ], requests = [];
+  globalThis.fetch = async (path, options = {}) => {
+    if (options.method === 'POST') { requests.push({ path, body: JSON.parse(options.body) }); return Response.json({ priority: 1 }); }
+    return Response.json({ accountId: 'switching-reader', jobs });
+  };
+  const queue = processQueue(); queue.setAccount('switching-reader');
+  t.after(() => { queue.dispose(); globalThis.fetch = oldFetch; dom.window.close(); for (const [key,value] of originals) if (value) Object.defineProperty(globalThis,key,value); else delete globalThis[key]; });
+  for (let i = 0; i < 100 && !document.querySelector('[data-process="analysis:shared"]'); i++) await delay(10);
+  const card = (id) => document.querySelector(`[data-process="${id}"]`);
+  const labels = ['Raise priority', 'Top priority', 'Lowest priority'];
+  assert.equal(document.querySelector('#process-list').firstElementChild.dataset.process, 'archive:next');
+  assert.match(card('analysis:running').textContent, /Switching after the current step/u);
+  assert.match(card('recording:paused').textContent, /Paused for higher-priority work/u);
+  assert.match(card('archive:next').textContent, /Anna’s Archive priority/u);
+  for (const id of ['analysis:running', 'archive:next', 'recording:paused']) {
+    assert.deepEqual([...card(id).querySelectorAll('button')].map((button) => button.textContent).filter((label) => labels.includes(label)), labels);
+  }
+  assert.equal([...card('analysis:shared').querySelectorAll('button')].some((button) => labels.includes(button.textContent)), false);
+  for (const [id, label, action] of [['archive:next', 'Top priority', 'top'], ['analysis:running', 'Lowest priority', 'lowest'], ['analysis:running', 'Raise priority', 'raise']]) {
+    const control = [...card(id).querySelectorAll('button')].find((button) => button.textContent === label), count = requests.length;
+    control.click();
+    for (let i = 0; i < 100 && (requests.length === count || control.disabled); i++) await delay(10);
+    assert.deepEqual(requests.at(-1), { path: `/api/processes/${encodeURIComponent(id)}/priority`, body: { action } });
+  }
+  assert.equal(requests.length, 3);
+});
+
 test('finished narration and uploaded-audio sync notify the library to refresh its saved audio badge', async (t) => {
   const dom = new JSDOM(await readFile(new URL('../index.html', import.meta.url), 'utf8'), { url: 'https://langy.test', pretendToBeVisual: true });
   const originals = new Map(), oldFetch = globalThis.fetch;

@@ -21,7 +21,7 @@ import { hasUsableTimings, synchronizeChunk } from './audio-timing.js';
 import { uploadedAudio } from './uploaded-audio.js';
 import { audioRescans } from './audio-rescan.js';
 import { openIvoox } from './ivoox.js';
-import { consumeProcesses } from './process-scheduler.js';
+import { consumeProcesses, PROCESS_YIELD } from './process-scheduler.js';
 import { migrateSpanishFutureSubjunctive, migrateSpanishVerbForms, migrateSpanishTaggedMorphology, migrateLexicalFilters } from './analysis-migrations.js';
 
 const run = promisify(execFile);
@@ -33,6 +33,14 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
   const operationSignal = (milliseconds) => AbortSignal.any([AbortSignal.timeout(milliseconds), ...[workerContext.getStore()?.signal].filter(Boolean)]);
   const folder = join(dir, 'narration');
   await mkdir(folder, { recursive: true });
+  // A priority switch happens between completed operations, never while a
+  // remote request or publication is still in flight. These checkpoints keep
+  // completed passages intact while another job owns the shared worker slot.
+  const pausedAnalyses = new Map(), pausedAudio = new Map();
+  function discardPausedAudio(id) {
+    if (!pausedAudio.delete(id)) return;
+    void rm(join(folder, id), { recursive: true, force: true }).catch(() => {});
+  }
   const db = new DatabaseSync(join(dir, 'learning.sqlite'));
   db.exec(`
     PRAGMA journal_mode = WAL;
@@ -268,6 +276,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     const previous = db.prepare('SELECT * FROM analyses WHERE book=?').get(book.id);
     const selection = selectionOf(book);
     if (!previous || previous.language !== book.language || previous.languageSelection !== selection || previous.contentRevision !== (book.contentRevision || '') || (retry && !['queued', 'running'].includes(previous.state))) {
+      pausedAnalyses.delete(book.id);
       db.prepare(`INSERT INTO analyses(book, owner, language, languageSelection,contentRevision, state) VALUES(?,?,?,?,?,'queued')
         ON CONFLICT(book) DO UPDATE SET language=excluded.language,languageSelection=excluded.languageSelection,contentRevision=excluded.contentRevision,state='queued',error=NULL,
         metrics=NULL,lemmas=NULL,wordCount=NULL,method=NULL,textVersion=0`)
@@ -357,22 +366,23 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     db.prepare("UPDATE analyses SET state='running', error=NULL WHERE book=?").run(row.book);
     const book = library.getBook(row.book, { id: row.owner });
     if (!await prepareText(book)) return;
-    const sections = db.prepare('SELECT * FROM chapters WHERE book=? ORDER BY ordinal').all(book.id)
-      .map((section) => ({ ...section, languages: JSON.parse(section.languages || '[]'), markers: JSON.parse(section.markers || '[]') }));
     const stillCurrent = () => db.prepare("SELECT book FROM analyses WHERE book=? AND language=? AND languageSelection=? AND contentRevision=? AND state='running'").get(book.id, row.language, row.languageSelection, row.contentRevision);
     if (!stillCurrent()) return;
-    const unique = new Set();
-    const report = trackWork(`analysis:${book.id}`, book.id);
-    report('analyzing', 0, sections.length, 'sections');
-    const vocabularyGroups = new Map(), chinesePassages = [];
-    let wordCount = 0;
-    let method = 'contextual';
-    for (const [ordinal, section] of sections.entries()) {
-      const tokens = [];
-      const lemmas = new Set();
-      const sectionGroups = new Map(), chinese = [];
-      const chunks = languageChunks(section, 95000, book.language);
-      for (const [index, chunk] of chunks.entries()) {
+    const signature = JSON.stringify([row.language, row.languageSelection, row.contentRevision]);
+    let checkpoint = pausedAnalyses.get(book.id); pausedAnalyses.delete(book.id);
+    if (checkpoint?.signature !== signature) checkpoint = null;
+    checkpoint ||= { signature, ordinal: 0, passage: null, unique: new Set(), vocabularyGroups: new Map(), chinesePassages: [], wordCount: 0, method: 'contextual',
+      sections: db.prepare('SELECT * FROM chapters WHERE book=? ORDER BY ordinal').all(book.id)
+        .map((section) => ({ ...section, languages: JSON.parse(section.languages || '[]'), markers: JSON.parse(section.markers || '[]') })),
+      report: trackWork(`analysis:${book.id}`, book.id) };
+    const { sections, unique, vocabularyGroups, chinesePassages, report } = checkpoint;
+    report('analyzing', checkpoint.ordinal, sections.length, 'sections');
+    for (; checkpoint.ordinal < sections.length; checkpoint.ordinal++) {
+      const ordinal = checkpoint.ordinal, section = sections[ordinal];
+      checkpoint.passage ||= { index: 0, tokens: [], lemmas: new Set(), sectionGroups: new Map(), chinese: [], chunks: languageChunks(section, 95000, book.language) };
+      const { tokens, lemmas, sectionGroups, chinese, chunks } = checkpoint.passage;
+      while (checkpoint.passage.index < chunks.length) {
+        const index = checkpoint.passage.index, chunk = chunks[index];
         report('analyzing', ordinal, sections.length, 'sections', `Section ${ordinal + 1} of ${sections.length} · passage ${index + 1} of ${chunks.length}`);
         const result = await languageCall('/analyze', { text: chunk.text, language: chunk.language });
         if (!stillCurrent()) return;
@@ -380,9 +390,15 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
         if (chunk.language === 'zh') { chinese.push(chunk.text); chinesePassages.push(chunk.text); }
         tokens.push(...result.tokens.map((token) => ({ ...token, language: chunk.language, from: token.from + chunk.from, to: token.to + chunk.from })));
         if (chunk.language !== 'zh') for (const lemma of result.lemmas) { const identity = `${chunk.language}:${lemma}`; unique.add(identity); lemmas.add(identity); }
-        if (!['contextual', 'characters'].includes(result.method)) method = result.method;
+        if (!['contextual', 'characters'].includes(result.method)) checkpoint.method = result.method;
+        checkpoint.passage.index++;
+        if (scheduler?.shouldYield()) {
+          pausedAnalyses.set(book.id, checkpoint);
+          db.prepare("UPDATE analyses SET state='queued' WHERE book=? AND state='running'").run(book.id);
+          return PROCESS_YIELD;
+        }
       }
-      wordCount += tokens.filter((token) => token.language !== 'zh').length;
+      checkpoint.wordCount += tokens.filter((token) => token.language !== 'zh').length;
       db.prepare(`INSERT INTO chapters(book,key,ordinal,title,text,digest,tokens,lemmas,markers,languages,metrics) VALUES(?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(book,key) DO UPDATE SET ordinal=excluded.ordinal,title=excluded.title,text=excluded.text,
         digest=excluded.digest,tokens=excluded.tokens,lemmas=excluded.lemmas,markers=excluded.markers,languages=excluded.languages,metrics=excluded.metrics`).run(
@@ -391,11 +407,12 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
         JSON.stringify(section.languages || []), JSON.stringify(vocabularySummary(chinese.join('\n'), sectionGroups, book.language)),
       );
       report('analyzing', ordinal + 1, sections.length, 'sections');
+      checkpoint.passage = null;
     }
     if (!stillCurrent()) return;
     const metrics = vocabularySummary(chinesePassages.join('\n'), vocabularyGroups, book.language);
     db.prepare("UPDATE analyses SET state='ready', lemmas=?, wordCount=?, method=?,metrics=? WHERE book=?")
-      .run(JSON.stringify([...unique].sort()), wordCount, metrics.unit === 'characters' ? 'characters' : method, JSON.stringify(metrics), book.id);
+      .run(JSON.stringify([...unique].sort()), checkpoint.wordCount, metrics.unit === 'characters' ? 'characters' : checkpoint.method, JSON.stringify(metrics), book.id);
     vocabulary.reindex(book);
     db.prepare('DELETE FROM worker_progress WHERE id=?').run(`analysis:${book.id}`);
     estimates.queue(book);
@@ -413,15 +430,18 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     const temporary = join(folder, job.id);
     await mkdir(temporary, { recursive: true });
     const language = db.prepare('SELECT language FROM analyses WHERE book=?').get(job.book).language;
-    const words = textWords(row.text, language);
-    const timings = words.map((word) => ({ ...word, start: null, end: null }));
-    const files = [];
-    const chunks = narrationChunks(row, language);
-    const report = trackWork(`audio:${job.id}`, job.book);
-    report('generating', 0, chunks.length, 'passages');
-    let offset = 0;
+    const signature = JSON.stringify([job.digest, job.options, row.text, row.speechBlocks, row.languages]);
+    let checkpoint = pausedAudio.get(job.id); pausedAudio.delete(job.id);
+    if (checkpoint?.signature !== signature) checkpoint = null;
+    const words = checkpoint?.words || textWords(row.text, language);
+    checkpoint ||= { signature, book: job.book, words, timings: words.map((word) => ({ ...word, start: null, end: null })), files: [],
+      chunks: narrationChunks(row, language), index: 0, offset: 0, report: trackWork(`audio:${job.id}`, job.book) };
+    const { timings, files, chunks, report } = checkpoint;
+    report('generating', checkpoint.index, chunks.length, 'passages');
+    let offset = checkpoint.offset, paused = false;
     try {
-      for (const [index, chunk] of chunks.entries()) {
+      for (let index = checkpoint.index; index < chunks.length; index++) {
+        const chunk = chunks[index];
         if (!db.prepare("SELECT id FROM audio WHERE id=? AND state!='cancelled'").get(job.id)) return;
         const chunkWords = words.map((word, tokenIndex) => ({ ...word, tokenIndex })).filter((word) => word.from >= chunk.from && word.from < chunk.to);
         if (!chunkWords.length) continue;
@@ -457,7 +477,14 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
           files.push(padded);
         } else files.push(wav);
         offset += duration + chunk.pauseAfter;
+        checkpoint.index = index + 1; checkpoint.offset = offset;
         report('generating', index + 1, chunks.length, 'passages');
+        workerContext.getStore()?.signal.throwIfAborted();
+        if (scheduler?.shouldYield()) {
+          pausedAudio.set(job.id, checkpoint); paused = true;
+          db.prepare("UPDATE audio SET state='queued' WHERE id=? AND state!='cancelled'").run(job.id);
+          return PROCESS_YIELD;
+        }
       }
       report('saving', chunks.length, chunks.length, 'passages');
       const concat = join(temporary, 'parts.txt');
@@ -474,11 +501,13 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
         db.prepare('DELETE FROM worker_progress WHERE id=?').run(`audio:${job.id}`);
       } finally { release(); }
     } finally {
-      await rm(temporary, { recursive: true, force: true });
+      if (!paused) await rm(temporary, { recursive: true, force: true });
     }
   }
 
   function failed(type, job, error) {
+    if (type === 'analysis' && job) pausedAnalyses.delete(job.book);
+    if (type === 'audio' && job) discardPausedAudio(job.id);
     const text = error instanceof RequestError ? error.message
       : type === 'rescan' ? 'Audio rescan failed. Your existing alignment is unchanged. Check the language service and retry.'
         : type === 'recording' ? 'Recording synchronization failed. Check the language service and retry Sync with book.'
@@ -525,13 +554,17 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
       await consumeProcesses(scheduler, candidates, async ({ type, job }) => {
         const controller = new AbortController(); activeExecution = { type, job, controller };
         try {
-          await workerContext.run(controller, async () => {
+          const result = await workerContext.run(controller, async () => {
             if (type === 'book') {
               for (const part of JSON.parse(job.parts)) {
                 if (!db.prepare("SELECT id FROM book_audio WHERE id=? AND state='queued'").get(job.id)) return;
                 const row = db.prepare('SELECT * FROM audio WHERE id=?').get(part.id);
                 if (!row || ['error','cancelled'].includes(row.state)) throw new RequestError(502, row?.error || 'A section could not be narrated. Retry book audio.');
-                if (row.state !== 'ready') { activeExecution = { type: 'audio', job: row, controller }; await generate(row); }
+                if (row.state !== 'ready') {
+                  activeExecution = { type: 'audio', job: row, controller };
+                  if (await generate(row) === PROCESS_YIELD) return PROCESS_YIELD;
+                }
+                if (scheduler.shouldYield()) return PROCESS_YIELD;
               }
               activeExecution = { type: 'book', job, controller }; await completeAudio.assemble(job);
             } else if (type === 'recording' || type === 'rescan') {
@@ -541,9 +574,12 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
                 const row = db.prepare(`SELECT * FROM ${table} WHERE id=?`).get(job.id);
                 if (!row || !['queued','syncing','assembling'].includes(row.state)) break;
                 await process(row);
+                const next = db.prepare(`SELECT state FROM ${table} WHERE id=?`).get(job.id);
+                if (next && ['queued','syncing','assembling'].includes(next.state) && scheduler.shouldYield()) return PROCESS_YIELD;
               }
-            } else await (type === 'analysis' ? analyze : generate)(job);
+            } else return (type === 'analysis' ? analyze : generate)(job);
           });
+          if (result === PROCESS_YIELD) return PROCESS_YIELD;
           if (autoRepair && !demo && ['analysis','book','recording'].includes(type)) autoRepairBook(job.book);
         } catch (error) {
           if (type === 'book' && activeExecution?.type === 'audio') failed('audio', activeExecution.job, error);
@@ -601,6 +637,8 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
 
   async function remove(id) {
     textJobs.delete(id);
+    pausedAnalyses.delete(id);
+    for (const [audioId, checkpoint] of pausedAudio) if (checkpoint.book === id) pausedAudio.delete(audioId);
     estimates.invalidate(id);
     ivoox?.cancel({ id });
     const sectionRecordings = db.prepare('SELECT id FROM audio WHERE book=?').all(id);
@@ -625,6 +663,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     scheduledAudio.cancel(book);
     const cancelled = completeAudio.cancel(book);
     db.prepare("UPDATE audio SET state='cancelled' WHERE book=? AND state IN ('queued','generating','aligning')").run(book.id);
+    for (const [id, checkpoint] of pausedAudio) if (checkpoint.book === book.id) discardPausedAudio(id);
     if (activeExecution?.job.book === book.id && ['audio','book'].includes(activeExecution.type)) activeExecution.controller.abort(new DOMException('Cancelled','AbortError'));
     return cancelled;
   }
@@ -636,9 +675,12 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     else if (kind === 'narration') completeAudio.cancel(book,id);
     else if (kind === 'audio-section') db.prepare("UPDATE audio SET state='cancelled',error=NULL WHERE book=? AND id=? AND state IN ('queued','generating','aligning')").run(book.id,id);
     else if (['analysis','indexing'].includes(kind)) {
+      pausedAnalyses.delete(book.id);
       db.prepare("UPDATE analyses SET state='cancelled',error=NULL WHERE book=? AND state IN ('queued','running')").run(book.id);
       const text=textJobs.get(book.id); if (text) {text.state='cancelled';text.controller.abort(new DOMException('Cancelled','AbortError'));}
     } else throw new RequestError(422,'This process cannot be cancelled.');
+    for (const [audioId, checkpoint] of pausedAudio) if (checkpoint.book === book.id
+      && !db.prepare("SELECT id FROM audio WHERE id=? AND state!='cancelled'").get(audioId)) discardPausedAudio(audioId);
     const types={analysis:'analysis',indexing:'analysis',narration:'book','audio-section':'audio',recording:'recording',repair:'rescan'};
     if (activeExecution?.job.book === book.id) {
       const sameJob = ['analysis','indexing'].includes(kind) || activeExecution.job.id === id;
@@ -659,7 +701,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     // Section files can be shared by other generated recordings. Retain those references.
     const used = new Set(db.prepare('SELECT parts FROM book_audio WHERE book=?').all(book.id).flatMap((row) => JSON.parse(row.parts).map((part) => part.id)));
     const unused = parts.filter((part) => !used.has(part.id));
-    for (const part of unused) db.prepare('DELETE FROM audio WHERE book=? AND id=?').run(book.id, part.id);
+    for (const part of unused) { pausedAudio.delete(part.id); db.prepare('DELETE FROM audio WHERE book=? AND id=?').run(book.id, part.id); }
     await Promise.allSettled([join(folder, `${id}.mp3`), join(folder, `book-${id}`), ...unused.flatMap((part) => [join(folder, `${part.id}.mp3`), join(folder, part.id)])]
       .map((path) => rm(path, { force: true, recursive: true })));
   }
