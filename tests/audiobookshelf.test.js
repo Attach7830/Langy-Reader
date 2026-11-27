@@ -427,6 +427,14 @@ test('matching title and author automatically link reading and different-duratio
   assert.deepEqual(JSON.parse(patch.options.body), { currentTime: 100, duration: 200, progress: .5, isFinished: false });
   const recording = await f.service.remote(f.book, 'recording');
   assert.equal(recording.currentTime, 50); assert.equal(recording.mode, 'percentage'); assert.equal(recording.approximate, true);
+  assert.equal(recording.scope, saved.scope, 'reading and audio acknowledge the same ABS connection and item');
+  assert.match(recording.scope, /^[a-f0-9]+$/u);
+  f.setProgress({ currentTime: 100, duration: 200, lastUpdate: 3000 });
+  const touched = await f.service.remote(f.book, 'recording');
+  assert.equal(touched.scope, recording.scope); assert.equal(touched.currentTime, recording.currentTime);
+  assert.notEqual(touched.version, recording.version, 'metadata-only changes still retain strict server revision checks');
+  const stale = await f.service.push(f.book, { recording: 'recording', currentTime: 55, baseVersion: recording.version });
+  assert.equal(stale.conflict, true, 'the client must acknowledge a newer revision before overwriting it');
   assert.equal(f.uploads.length, 0); assert.equal(f.imported.length, 0); assert.equal(f.removed.length, 0);
   await f.restart(); assert.equal((await f.service.remote(f.book, 'reading')).item, initial.item);
   assert.equal(f.calls.some((call) => call.options.method === 'DELETE'), false);
