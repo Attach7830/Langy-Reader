@@ -297,6 +297,31 @@ test('library format labels and every selected layout render independently of th
   assert.equal(document.querySelector('#books').dataset.coversOnly, 'true'); assert.equal(document.querySelectorAll('.book-cover').length, 2);
 });
 
+test('Imported download entries expire after five seconds without removing books or resetting on refresh', async (t) => {
+  await browser(t); t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 100000 });
+  const books = [{ id: 'imported-book', title: 'Imported book', format: 'epub', language: 'es', addedAt: 1 }];
+  let jobs = [{ id: 'done', state: 'ready', completedAt: 100000, details: { title: 'Finished download' } },
+    { id: 'old', state: 'ready', completedAt: 90000, details: { title: 'Previous download' } },
+    { id: 'queued', state: 'queued', details: { title: 'Pending download' } },
+    { id: 'error', state: 'error', error: 'Retry needed', details: { title: 'Failed download' } }];
+  globalThis.fetch = async (path) => {
+    assert.equal(path, '/api/library', 'expiry must not issue a delete or download request');
+    return Response.json({ books, categories: [], storage: { available: false }, archive: { jobs } });
+  };
+  const ui = libraryScreen({ progress: {}, onRemove() {} }); t.after(() => ui.dispose()); await ui.refresh();
+  const list = document.querySelector('#archive-download-list'), panel = document.querySelector('#archive-downloads');
+  assert.match(list.textContent, /Finished downloadImported/u); assert.doesNotMatch(list.textContent, /Previous download/u);
+  t.mock.timers.tick(4999); await ui.refresh(); assert.match(list.textContent, /Finished downloadImported/u);
+  t.mock.timers.tick(1); assert.doesNotMatch(list.textContent, /Finished download/u);
+  assert.match(list.textContent, /Pending download/u); assert.match(list.textContent, /Failed download/u);
+  assert.equal(document.querySelectorAll('#books .book-card').length, 1);
+  await ui.refresh(); assert.doesNotMatch(list.textContent, /Finished download/u);
+  jobs = jobs.filter((job) => job.state === 'ready'); await ui.refresh(); assert.equal(panel.hidden, true);
+  ui.dispose();
+  const reopened = libraryScreen({ progress: {}, onRemove() {} }); t.after(() => reopened.dispose()); await reopened.refresh();
+  assert.equal(panel.hidden, true, 'saved completion times keep imported entries dismissed when the view reopens');
+});
+
 test('synced audio is visible in quiet and covers-only libraries and refreshes after recording changes', async (t) => {
   const dom = await browser(t);
   const books = ['synced', 'unsynced'].map((id) => ({ id, title: id, format: 'epub', language: 'es', addedAt: 1, audioSynced: id === 'synced' }));

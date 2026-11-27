@@ -115,10 +115,17 @@ export async function openArchive(dir, { library, demo = false, request = public
   let running = false, closed = false;
   const controllers = new Map();
   function persist(job) { db.prepare('INSERT INTO jobs VALUES(?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(job.id, JSON.stringify(job)); }
-  for (const job of jobs.values()) if (pending.has(job.state)) { job.state = 'queued'; job.bytes = 0; persist(job); }
+  db.exec('BEGIN');
+  try {
+    for (const job of jobs.values()) {
+      if (pending.has(job.state)) { job.state = 'queued'; job.bytes = 0; persist(job); }
+      else if (job.state === 'ready' && !Number.isFinite(job.completedAt)) { job.completedAt = now(); persist(job); }
+    }
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
   const publicJob = (job) => ({ id: job.id, state: job.state, bytes: job.bytes, total: job.total, error: job.error, book: job.book,
     source: job.source, notice: job.notice, reference: job.md5, details: job.details, batchId: job.batchId,
-    nextAttempt: job.nextAttempt || null, attempts: job.attempts || 0, ...(job.source === 'slow' ? { bookUrl: job.bookUrl } : {}) });
+    nextAttempt: job.nextAttempt || null, attempts: job.attempts || 0, completedAt: job.completedAt ?? null, ...(job.source === 'slow' ? { bookUrl: job.bookUrl } : {}) });
   const owned = (job, visitor) => !visitor || (job.owner || '') === (visitor.id || '');
   const findJob = (id, visitor) => { const job = jobs.get(id); if (!job || !owned(job, visitor)) throw new RequestError(404, 'Import not found.'); return job; };
   const latest = (visitor) => { const all = [...jobs.values()].filter((job) => owned(job, visitor)); const job = all.find((item) => pending.has(item.state)) || all.find((item) => ['needs_action', 'retry_wait'].includes(item.state)) || all.at(-1); return job ? publicJob(job) : null; };
@@ -153,7 +160,7 @@ export async function openArchive(dir, { library, demo = false, request = public
     job.outputBook ||= randomUUID(); persist(job);
     const book = await library.importBook(job.outputBook, { path: temporary, size: job.bytes,
       originalname: filename(headers, job.md5, format) }, job.details, { id: job.owner || '' });
-    job.book = book; job.state = 'ready'; job.error = null; job.nextAttempt = null; persist(job);
+    job.book = book; job.state = 'ready'; job.error = null; job.nextAttempt = null; job.completedAt = now(); persist(job);
     try { onImport(book, job.details); } catch { /* Library refresh can start analysis again. */ }
   }
 
@@ -186,7 +193,7 @@ export async function openArchive(dir, { library, demo = false, request = public
 
   async function run(job, config, md5, body) {
     try {
-      if (job.outputBook) { try { job.book = library.getBook(job.outputBook); job.state = 'ready'; job.error = null; job.nextAttempt = null; persist(job); return; } catch {} }
+      if (job.outputBook) { try { job.book = library.getBook(job.outputBook); job.state = 'ready'; job.error = null; job.nextAttempt = null; job.completedAt = now(); persist(job); return; } catch {} }
       if (body.downloadMode === 'slow' || !config.apiKey && config.slowFallback) return slow(job, config);
       const endpoint = new URL('/dyn/api/fast_download.json', config.baseUrl);
       endpoint.search = new URLSearchParams({ md5, key: config.apiKey }).toString();
