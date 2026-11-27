@@ -224,6 +224,8 @@ if (demo) {
   app.get('/api/imports/anna', (req, res) => res.json({ jobs: archive.list(req.visitor) }));
   app.post('/api/imports/anna/batch', (req, res) => res.status(202).json(archive.queueBatch(req.body ?? {}, req.visitor)));
   app.post('/api/imports/anna/:id/retry', (req, res) => res.status(202).json(archive.retry(req.params.id, req.visitor)));
+  app.post('/api/imports/anna/:id/title/retry', (req, res) => res.status(202).json(archive.retryTitle(req.params.id, req.visitor)));
+  app.patch('/api/imports/anna/:id/title', (req, res) => res.json(archive.setTitle(req.params.id, req.body, req.visitor)));
   app.delete('/api/imports/anna/:id', (req, res) => res.json(archive.cancel(req.params.id, req.visitor)));
   app.get('/api/imports/anna/:id', (req, res) => res.json(archive.job(req.params.id, req.visitor)));
   app.post('/api/imports/anna/:id/continue', (req, res) => res.status(202).json(archive.continue(req.params.id, req.body, req.visitor)));

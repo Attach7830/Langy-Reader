@@ -342,6 +342,17 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
 
   <nav class="mobile-navigation" id="mobile-navigation" aria-label="App navigation"><a href="#library" aria-label="Library"><i data-lucide="library-big"></i><span>Library</span></a><button type="button" data-open-processes aria-label="Process queue"><i data-lucide="download"></i><span>Processes</span><span id="mobile-process-count" hidden></span></button><a href="#discover" aria-label="Discover books"><i data-lucide="sparkles"></i><span>Discover</span></a><button type="button" data-settings="reading" aria-label="Settings"><i data-lucide="settings-2"></i><span>Settings</span></button></nav>
   <dialog class="modal mobile-actions-modal" id="book-actions-dialog" aria-labelledby="book-actions-title"><header class="modal-header"><h2 id="book-actions-title" data-user-content>Book options</h2><button class="icon-button" type="button" data-close aria-label="Close book options"><i data-lucide="x"></i></button></header><div class="modal-body form-stack" id="book-actions-body"></div></dialog>
+  <dialog class="modal" id="archive-title-dialog" aria-labelledby="archive-title-heading">
+    <form id="archive-title-form">
+      <header class="modal-header"><h2 id="archive-title-heading">Set book title</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></header>
+      <div class="modal-body form-stack">
+        <p class="field-note">Name this queued import. Its download keeps its place.</p>
+        <label class="field">Book title<input name="title" maxlength="250" required autocomplete="off"></label>
+        <p class="form-error" id="archive-title-error" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer"><button class="button quiet" type="button" data-close>Cancel</button><button class="button primary" type="submit">Save title</button></footer>
+    </form>
+  </dialog>
   <dialog class="modal" id="reading-history-dialog" aria-labelledby="reading-history-title">
     <header class="modal-header"><h2 id="reading-history-title">Reading history</h2><button class="icon-button" type="button" data-close aria-label="Close reading history"><i data-lucide="x"></i></button></header>
     <div class="modal-body form-stack">

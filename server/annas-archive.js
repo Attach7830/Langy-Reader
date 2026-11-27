@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { maxUpload, normalizeLanguage, RequestError } from './books.js';
 import { publicDownload, downloadURL } from './public-download.js';
 import { importNarrationOptions } from './import-narration.js';
-import { archiveFilenameTitle, cleanArchiveTitle } from './archive-title.js';
+import { archiveDownloadTitle, archiveRecordTitle, cleanArchiveTitle } from './archive-title.js';
 import { consumeProcesses, PROCESS_YIELD, watchProcessPriority } from './process-scheduler.js';
 
 const mirrors = ['https://annas-archive.gl', 'https://annas-archive.pk', 'https://annas-archive.gd'];
@@ -38,12 +38,13 @@ function membershipError(status, data) {
   return new RequestError(502, 'Anna’s Archive could not provide a download link. Try again later or select another mirror in Book sources.');
 }
 
-function filename(headers, md5, format) {
+function filename(headers, md5, format, title) {
   const disposition = String(headers['content-disposition'] || '');
   let name = /filename\*=UTF-8''([^;]+)/iu.exec(disposition)?.[1];
   try { name = name && decodeURIComponent(name); } catch { name = ''; }
   name ||= /filename="([^"]+)"/iu.exec(disposition)?.[1] || /filename=([^;]+)/iu.exec(disposition)?.[1];
-  const clean = basename(String(name || md5).replaceAll('\\', '/')).replace(/[\x00-\x1f\x7f]/gu, '').trim().slice(0, 240);
+  if (!cleanArchiveTitle(name && basename(name, extname(name)))) name = title || md5;
+  const clean = basename(String(name || title || md5).replaceAll('\\', '/')).replace(/[\x00-\x1f\x7f]/gu, '').trim().slice(0, 240);
   return (basename(clean, extname(clean)) || md5) + '.' + format;
 }
 
@@ -115,7 +116,10 @@ export async function openArchive(dir, { library, demo = false, request = public
   const jobs = new Map(demo ? [] : db.prepare('SELECT id,json FROM jobs ORDER BY rowid').all().map((row) => [row.id, JSON.parse(row.json)]));
   let running = false, closed = false;
   const controllers = new Map(), continuations = new Set();
-  const titleChecked = new Set(), titleController = new AbortController(); let titleWork;
+  const titleController = new AbortController(); let titleWork, titleActive;
+  const jobTitle = (job) => cleanArchiveTitle(job.details?.title) || cleanArchiveTitle(job.book?.title) || cleanArchiveTitle(job.title);
+  const needsTitle = (job) => !['ready', 'cancelled'].includes(job.state) && !jobTitle(job);
+  const titleDue = (job) => needsTitle(job) && (!job.titleRetryAt || job.titleRetryAt <= now());
   function persist(job) { db.prepare('INSERT INTO jobs VALUES(?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(job.id, JSON.stringify(job)); }
   db.exec('BEGIN');
   try {
@@ -126,10 +130,12 @@ export async function openArchive(dir, { library, demo = false, request = public
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   const publicJob = (job) => ({ id: job.id, state: job.state, bytes: job.bytes, total: job.total, error: job.error, book: job.book,
-    title: cleanArchiveTitle(job.details?.title) || job.book?.title || job.title || '',
-    titlePending: Boolean(lookupTitle && !['ready', 'cancelled'].includes(job.state) && !titleChecked.has(job.id) && !job.title && !job.details?.title?.trim() && !job.book?.title),
+    title: jobTitle(job),
+    titlePending: Boolean(lookupTitle && (titleDue(job) || titleActive === job.id && needsTitle(job))),
+    titleError: needsTitle(job) ? job.titleError || null : null, titleRetryAt: needsTitle(job) ? job.titleRetryAt || null : null,
     source: job.source, notice: job.notice, reference: job.md5, details: job.details, batchId: job.batchId,
-    nextAttempt: job.nextAttempt || null, attempts: job.attempts || 0, completedAt: job.completedAt ?? null, ...(job.source === 'slow' ? { bookUrl: job.bookUrl } : {}) });
+    nextAttempt: job.nextAttempt || null, attempts: job.attempts || 0, completedAt: job.completedAt ?? null,
+    bookUrl: job.bookUrl || current.baseUrl + '/md5/' + job.md5 });
   const owned = (job, visitor) => !visitor || (job.owner || '') === (visitor.id || '');
   const findJob = (id, visitor) => { const job = jobs.get(id); if (!job || !owned(job, visitor)) throw new RequestError(404, 'Import not found.'); return job; };
   const latest = (visitor) => { const all = [...jobs.values()].filter((job) => owned(job, visitor)); const job = all.find((item) => pending.has(item.state)) || all.find((item) => ['needs_action', 'retry_wait'].includes(item.state)) || all.at(-1); return job ? publicJob(job) : null; };
@@ -139,18 +145,27 @@ export async function openArchive(dir, { library, demo = false, request = public
     titleWork = (async () => {
       for (const job of jobs.values()) {
         if (closed) break;
-        if (['ready', 'cancelled'].includes(job.state) || job.title || job.details?.title?.trim() || titleChecked.has(job.id)) continue;
+        if (!titleDue(job)) continue;
+        titleActive = job.id;
         try {
           const config = effective(visitorForOwner(job.owner || ''));
           const title = cleanArchiveTitle(await lookupTitle({ baseUrl: config.baseUrl, md5: job.md5,
-            signal: AbortSignal.any([titleController.signal, AbortSignal.timeout(4000)]) }));
-          if (!closed && job.state !== 'cancelled' && jobs.get(job.id) === job && title) { job.title = title; persist(job); }
-        } catch { /* A missing/blocked catalogue must never block the download. */ }
-        finally { titleChecked.add(job.id); }
+            ...(config.apiKey ? { apiKey: config.apiKey } : {}), signal: AbortSignal.any([titleController.signal, AbortSignal.timeout(30000)]) }));
+          if (!closed && jobs.get(job.id) === job && needsTitle(job) && title) { job.title = title; job.titleError = null; job.titleRetryAt = null; persist(job); }
+        } catch (error) {
+          job.titleError = ['blocked', 'timeout', 'unavailable'].includes(error.code) ? error.code : /timeout|abort/iu.test(error.name || '') ? 'timeout' : 'unavailable';
+        } finally {
+          if (!closed && jobs.get(job.id) === job && needsTitle(job)) {
+            job.titleAttempts = (job.titleAttempts || 0) + 1; job.titleError ||= 'unavailable';
+            job.titleRetryAt = now() + Math.min(6 * 3_600_000, (job.titleError === 'blocked' ? 15 * 60000 : 60000) * 2 ** Math.min(8, job.titleAttempts - 1));
+            persist(job);
+          }
+          titleActive = null;
+        }
       }
     })().finally(() => {
       titleWork = null;
-      if (!closed && [...jobs.values()].some((job) => !['ready', 'cancelled'].includes(job.state) && !job.title && !job.details?.title?.trim() && !titleChecked.has(job.id))) queueMicrotask(() => void resolveTitles());
+      if (!closed && [...jobs.values()].some(titleDue)) queueMicrotask(() => void resolveTitles());
     });
     return titleWork;
   }
@@ -190,7 +205,7 @@ export async function openArchive(dir, { library, demo = false, request = public
     job.state = 'importing';
     job.outputBook ||= randomUUID(); persist(job);
     const book = await library.importBook(job.outputBook, { path: temporary, size: job.bytes,
-      originalname: filename(headers, job.md5, format) }, job.details, { id: job.owner || '' });
+      originalname: filename(headers, job.md5, format, job.title) }, job.details, { id: job.owner || '' });
     job.book = book; job.state = 'ready'; job.error = null; job.nextAttempt = null; job.completedAt = now(); persist(job);
     try { onImport(book, job.details); } catch { /* Library refresh can start analysis again. */ }
   }
@@ -199,6 +214,7 @@ export async function openArchive(dir, { library, demo = false, request = public
     const temporary = join(library.uploads, `aa-${job.id}.part`);
     try {
       job.state = 'downloading'; job.bytes = 0; job.total = null; job.error = null;
+      job.title ||= archiveDownloadTitle(url);
       persist(job);
       const download = await request(url, { signal: signal(job, job.source === 'slow' ? 6 * 3_600_000 : 600_000) });
       if (download.statusCode !== 200 || /text\/html/iu.test(download.headers['content-type'] || '')) {
@@ -209,7 +225,7 @@ export async function openArchive(dir, { library, demo = false, request = public
       const length = Number(download.headers['content-length']);
       if (Number.isFinite(length) && length > maxUpload) { download.destroy(); throw new RequestError(413, `Books must be ${maxUpload / 1024 ** 2} MiB or smaller.`); }
       job.total = Number.isFinite(length) && length > 0 ? length : null;
-      if (!job.title) { job.title = archiveFilenameTitle(download.headers); if (job.title) persist(job); }
+      if (!job.title) { job.title = archiveDownloadTitle(url, download.headers); if (job.title) persist(job); }
       const meter = new Transform({ transform(chunk, _encoding, callback) {
         job.bytes += chunk.length;
         if (job.bytes > maxUpload) return callback(new RequestError(413, `Books must be ${maxUpload / 1024 ** 2} MiB or smaller.`));
@@ -244,6 +260,7 @@ export async function openArchive(dir, { library, demo = false, request = public
       let data;
       try { data = JSON.parse(Buffer.concat(chunks).toString()); }
       catch { throw new RequestError(502, 'Anna’s Archive returned an unreadable response. Try another mirror in Book sources.'); }
+      if (!job.title) { job.title = archiveRecordTitle(data, md5) || archiveDownloadTitle(data.download_url); if (job.title) persist(job); }
       if (![200, 204].includes(response.statusCode) || !data.download_url) {
         const error = membershipError(response.statusCode, data);
         if (error.status === 429 && config.slowFallback && body.downloadMode !== 'fast') return slow(job, config, 'Fast-download allowance reached. Continue with a free slow download below.');
@@ -333,7 +350,7 @@ export async function openArchive(dir, { library, demo = false, request = public
       job.details.autoAudiobook = Boolean(options); if (options) job.details.audiobookDelayMinutes = options.audiobookDelayMinutes;
     }
   }
-  const timer = !demo && autoStart ? setInterval(() => { void pump(); }, 60_000) : null;
+  const timer = !demo && autoStart ? setInterval(() => { void pump(); void resolveTitles(); }, 60_000) : null;
   timer?.unref();
   if (autoStart && !demo) { void pump(); void resolveTitles(); }
   return {
@@ -369,6 +386,17 @@ export async function openArchive(dir, { library, demo = false, request = public
       const job = findJob(id, visitor); if (!job) throw new RequestError(404, 'Import not found.');
       if (!['error', 'retry_wait', 'needs_action'].includes(job.state)) throw new RequestError(409, 'This import is already queued or complete.');
       job.state = 'queued'; job.nextAttempt = null; job.error = null; persist(job); if (autoStart) void pump(); return publicJob(job);
+    },
+    setTitle(id, body, visitor) {
+      const job = findJob(id, visitor), title = cleanArchiveTitle(body?.title);
+      if (job.state === 'ready') throw new RequestError(409, 'This book is already imported. Edit its book details instead.');
+      if (!title || typeof body.title !== 'string' || body.title.length > 250) throw new RequestError(422, 'Enter a book title of up to 250 characters.');
+      job.details.title = title; job.titleError = null; job.titleRetryAt = null; persist(job); return publicJob(job);
+    },
+    retryTitle(id, visitor) {
+      const job = findJob(id, visitor);
+      if (needsTitle(job) && titleActive !== id) { job.titleRetryAt = null; job.titleError = null; persist(job); if (autoStart) void resolveTitles(); }
+      return publicJob(job);
     },
     cancel(id, visitor) {
       const job = findJob(id, visitor); if (!job) throw new RequestError(404, 'Import not found.');
