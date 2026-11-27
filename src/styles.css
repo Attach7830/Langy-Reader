@@ -886,8 +886,20 @@ input:not([type="checkbox"], [type="radio"], [type="file"]), select {
 .process-guidance { margin:12px 24px; }
 .process-book-title { font-size:.88rem; }
 .reader-screen { position: relative; }
-.reader-screen > .process-queue-toggle { position: absolute; left: max(8px, env(safe-area-inset-left)); bottom: min(calc(var(--bottom-dock-height, 61px) + 8px), calc(100% - 52px)); }
+.reader-screen > .process-queue-toggle {
+  --process-queue-inset: max(8px, env(safe-area-inset-left));
+  position: absolute;
+  left: var(--process-queue-inset);
+  bottom: min(calc(var(--bottom-dock-height, 61px) + 8px), calc(100% - 52px));
+  transition: transform .18s ease, opacity .18s ease, visibility .18s;
+}
 .reader-screen.docks-hidden > .process-queue-toggle { bottom: max(8px, env(safe-area-inset-bottom)); }
+html[data-immersion="true"] .reader-screen > .process-queue-toggle {
+  transform: translateX(calc(-100% - var(--process-queue-inset) - 20px));
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
 @media (max-width:760px), (pointer:coarse) { body > .process-queue-toggle { display:none; } }
 
 .phrase-help {

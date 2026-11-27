@@ -632,13 +632,17 @@ try {
     await page.locator('#audio-toggle').click(); await page.locator('#narration-play').click();
     await page.locator('#narration-close').click();
   });
-  await check('immersion mode shows the audio clock and completion in both player layouts', async () => {
+  await check('immersion mode hides the Process queue and shows progress in both audio layouts', async () => {
     const clock = page.locator('#narration-time'), completion = page.locator('#narration-completion'), player = page.locator('#narration-player');
+    const queueButton = page.locator('#reader-screen > #open-process-queue');
     const toggleImmersion = async () => {
       await page.locator('#reader-more > summary').click();
       await page.locator('#immersion-toggle').click();
     };
+    await queueButton.waitFor({ state: 'visible' });
     await toggleImmersion();
+    await queueButton.waitFor({ state: 'hidden' });
+    assert.ok(await queueButton.evaluate((button) => button.getBoundingClientRect().right <= 0), 'the queue button is off the left edge');
     await page.locator('#audio-toggle').click();
     const seek = page.locator('#narration-seek:enabled');
     await seek.waitFor();
@@ -655,6 +659,8 @@ try {
     }
     await page.locator('#narration-close').click();
     await toggleImmersion();
+    await queueButton.waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.querySelector('#open-process-queue').getBoundingClientRect().left >= 0);
   });
   await check('double tapping a word starts at its timestamp, including with audio disabled, and never pauses it', async () => {
     const pattern = '**/api/books/' + book.id + '/chapters/*';
