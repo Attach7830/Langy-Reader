@@ -29,7 +29,7 @@ export function accountPolicyFields(value = {}, { current = false } = {}) {
   field('sessionHours', 'Session sign-in duration (hours)', 'number', value.sessionHours ?? 24, { min: '1', max: '168', step: '1' });
   field('maxSessions', 'Maximum browser sessions', 'number', value.maxSessions ?? 30, { min: '1', max: '100', step: '1' });
   field('allowDevices', 'Allow OPDS / KOReader device sign-ins', 'checkbox', value.allowDevices !== false);
-  return { root, setReader, read() {
+  return { root, safeMode, setReader, read() {
     if (!Object.values(controls).every((input) => input.reportValidity())) throw new Error('Check the account permissions and limits.');
     const result = Object.fromEntries(Object.entries(controls).map(([key, input]) => [key, input.type === 'checkbox' ? input.checked
       : key === 'expiresAt' ? input.value ? new Date(input.value).getTime() : null
