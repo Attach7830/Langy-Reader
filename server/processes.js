@@ -36,7 +36,7 @@ export function openProcesses(dir, { library, archive, webImports, discovery, le
       if (!pending.has(row.state) && status !== 'failed') return;
       if (activity?.total > 0 && !Number.isFinite(progress)) progress = activity.complete / activity.total * 100;
       jobs.push({ id: `${kind}:${row.id || book}`, kind, label, state: status, phase: activity?.phase || row.state, bookId: owned?.id,
-        title: owned?.title || row.details?.title || row.title || '', created, progress: Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : null,
+        title: owned?.title || row.title || row.details?.title || '', ...(kind === 'archive' ? { titlePending: Boolean(row.titlePending) } : {}), created, progress: Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : null,
         ...(activity ? { startedAt: activity.startedAt, updatedAt: activity.updatedAt, activity: {
           phase: activity.phase, complete: activity.complete, total: activity.total, unit: activity.unit, detail: activity.detail,
         } } : {}), ...(counter ? { counter } : {}),

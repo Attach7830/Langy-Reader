@@ -631,6 +631,41 @@ try {
     await page.locator('#clear-ai-cache').click(); await page.locator('#ai-cache-status').filter({ hasText: 'Saved AI answers cleared.' }).waitFor();
     await page.locator('#settings-back').click();
   });
+  await check('shared or per-language output defaults persist to the account and control summaries and deeper explanations', async () => {
+    await page.goto(base + '/#settings/language');
+    const mode = page.locator('#language-defaults-mode'), choice = page.locator('#language-default-language');
+    assert.equal(await mode.inputValue(), 'shared');
+    assert.equal(await page.locator('#language-defaults-panel').isVisible(), false);
+    await mode.selectOption('per-language');
+    await choice.selectOption('pt'); await page.locator('#language-translation-default').fill('Spanish'); await page.locator('#language-summary-default').fill('Portuguese');
+    await choice.selectOption('zh'); await page.locator('#language-translation-default').fill('English'); await page.locator('#language-summary-default').fill('Spanish');
+    await choice.selectOption('pt'); assert.equal(await page.locator('#language-summary-default').inputValue(), 'Portuguese');
+    await page.locator('#settings-form button[type=submit]').click();
+    await page.waitForFunction(() => !Object.keys(JSON.parse(localStorage.getItem('langy-account-settings-v1') || '{}').pending || {}).length);
+    await page.reload(); await page.goto(base + '/#settings/language');
+    assert.equal(await mode.inputValue(), 'per-language'); await choice.selectOption('zh'); assert.equal(await page.locator('#language-summary-default').inputValue(), 'es');
+    const saved = (await (await context.request.get(base + '/api/settings/reader')).json()).preferences;
+    assert.equal(saved.languageDefaults.pt.translationLanguage, 'es'); assert.equal(saved.languageDefaults.pt.summaryLanguage, 'pt'); assert.equal(saved.languageDefaults.zh.summaryLanguage, 'es');
+    assert.equal(saved.summaryLanguage || 'en', 'en'); assert.equal(saved.uiLanguage || 'en', 'en');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({ path: output + '/language-defaults-mobile.png' });
+    const requests = [];
+    await page.route('**/api/ai/summary', async (route) => {
+      const body = route.request().postDataJSON(); requests.push(body);
+      await route.fulfill({ json: { text: body.mode === 'deeper' ? 'Una explicación del pasaje actual.' : 'Un resumen de esta página.', suggestions: [] } });
+    });
+    try {
+      await open(); await page.locator('#summarize').click(); await page.locator('#summary-body').filter({ hasText: 'Un resumen de esta página.' }).waitFor();
+      assert.equal(requests.at(-1).language, 'es'); assert.equal(await page.locator('#summary-body').getAttribute('lang'), 'es');
+      await page.locator('#summary-actions').getByRole('button', { name: 'Go deeper', exact: true }).click();
+      await page.locator('#summary-detail-body').filter({ hasText: 'Una explicación del pasaje actual.' }).waitFor(); assert.equal(requests.at(-1).language, 'es');
+      await page.locator('#close-summary').click();
+    } finally { await page.unroute('**/api/ai/summary'); }
+    await page.goto(base + '/#settings/language'); await mode.selectOption('shared'); await page.locator('#settings-form button[type=submit]').click();
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('langy-settings-v1')).languageDefaultsMode === 'shared');
+    await page.goto(base + '/#settings/language'); await mode.selectOption('per-language'); await choice.selectOption('pt'); assert.equal(await page.locator('#language-summary-default').inputValue(), 'pt');
+    await page.locator('#settings-back').click(); await page.goto(base + '/#library');
+  });
   await check('L1 Folder persists, disables comprehension help without AI requests and restores it without changing preferences', async () => {
     await page.goto(base + '/#library'); await page.locator('#mobile-add-category').click();
     await page.locator('#category-dialog').waitFor({ state: 'visible' });

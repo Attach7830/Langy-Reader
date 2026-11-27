@@ -11,6 +11,7 @@ import { credentialRemoval } from './credential-removal.js';
 import { coverCache } from './cover-cache.js';
 import { fontSettings } from './ui-fonts.js';
 import { coverSearchSettings } from './ui-cover-settings.js';
+import { languageDefaultsEditor } from './ui-language-defaults.js';
 
 export function settingsPage({ preferences, apply, navigate, back }) {
   const narration = narrationSettings();
@@ -26,7 +27,8 @@ export function settingsPage({ preferences, apply, navigate, back }) {
   });
   const form = $('#settings-form');
   const fields = form.elements;
-  const readingLanguages = readingLanguagesPicker({ host: $('#reading-language-list'), input: $('#reading-language-choice'), add: $('#reading-language-add'), error: (text) => message('#settings-error', text) });
+  const languageDefaults = languageDefaultsEditor();
+  const readingLanguages = readingLanguagesPicker({ host: $('#reading-language-list'), input: $('#reading-language-choice'), add: $('#reading-language-add'), error: (text) => message('#settings-error', text), changed: (values) => languageDefaults.languages(values) });
   const aiTab = $('[data-settings-tab="ai"]');
   const themeButtons = Object.entries(themes).map(([value, theme]) => {
     const label = element('label', 'theme-option');
@@ -143,6 +145,7 @@ export function settingsPage({ preferences, apply, navigate, back }) {
     aiConfig = null;
     const current = preferences();
     readingLanguages.set(current.readingLanguages);
+    languageDefaults.set(current);
     for (const key of ['mode', 'summaryLanguage', 'translationLanguage', 'theme', 'background', 'font', 'size', 'line', 'width', 'uiLanguage', 'nativeLanguage']) {
       fields[key].value = current[key];
     }
@@ -240,8 +243,8 @@ export function settingsPage({ preferences, apply, navigate, back }) {
     const summaryLanguage = parseLanguage(fields.summaryLanguage.value);
     const translationLanguage = parseLanguage(fields.translationLanguage.value);
     const nativeLanguage = fields.nativeLanguage.value.trim() ? parseLanguage(fields.nativeLanguage.value) : '';
-    let preferredLanguages;
-    try { preferredLanguages = readingLanguages.value(); } catch (error) { section('language'); return message('#settings-error', error.message); }
+    let preferredLanguages, outputDefaults;
+    try { preferredLanguages = readingLanguages.value(); outputDefaults = languageDefaults.value(); } catch (error) { section('language'); return message('#settings-error', error.message); }
     if (!summaryLanguage || !translationLanguage || fields.nativeLanguage.value.trim() && !nativeLanguage) {
       section('language');
       return message('#settings-error', 'Choose a summary and translation language or enter valid language codes.');
@@ -250,6 +253,7 @@ export function settingsPage({ preferences, apply, navigate, back }) {
     const updated = {
       mode: fields.mode.value, summaryLanguage, translationLanguage, nativeLanguage, uiLanguage: fields.uiLanguage.value, theme: fields.theme.value,
       readingLanguages: preferredLanguages,
+      ...outputDefaults,
       synonymContextHelp: fields.synonymContextHelp.checked,
       showPinyin: fields.showPinyin.checked,
       cacheAI: fields.cacheAI.checked,

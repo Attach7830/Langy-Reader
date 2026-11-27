@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { maxUpload, normalizeLanguage, RequestError } from './books.js';
 import { publicDownload, downloadURL } from './public-download.js';
 import { importNarrationOptions } from './import-narration.js';
+import { archiveFilenameTitle, cleanArchiveTitle } from './archive-title.js';
 import { consumeProcesses, PROCESS_YIELD, watchProcessPriority } from './process-scheduler.js';
 
 const mirrors = ['https://annas-archive.gl', 'https://annas-archive.pk', 'https://annas-archive.gd'];
@@ -47,7 +48,7 @@ function filename(headers, md5, format) {
 }
 
 export async function openArchive(dir, { library, demo = false, request = publicDownload, onImport = () => {}, now = Date.now, autoStart = true,
-  canUseShared = () => true, visitorForOwner = (id) => id ? { id } : undefined, activeOwner = () => true, scheduler }) {
+  canUseShared = () => true, visitorForOwner = (id) => id ? { id } : undefined, activeOwner = () => true, scheduler, lookupTitle }) {
   const path = join(dir, 'archive-settings.json');
   const profilesPath = join(dir, 'archive-users.json'); let profiles = {};
   let current = { baseUrl: mirrors[0], apiKey: '', slowFallback: true, retryUnavailable: true };
@@ -114,6 +115,7 @@ export async function openArchive(dir, { library, demo = false, request = public
   const jobs = new Map(demo ? [] : db.prepare('SELECT id,json FROM jobs ORDER BY rowid').all().map((row) => [row.id, JSON.parse(row.json)]));
   let running = false, closed = false;
   const controllers = new Map(), continuations = new Set();
+  const titleChecked = new Set(), titleController = new AbortController(); let titleWork;
   function persist(job) { db.prepare('INSERT INTO jobs VALUES(?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(job.id, JSON.stringify(job)); }
   db.exec('BEGIN');
   try {
@@ -124,12 +126,34 @@ export async function openArchive(dir, { library, demo = false, request = public
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   const publicJob = (job) => ({ id: job.id, state: job.state, bytes: job.bytes, total: job.total, error: job.error, book: job.book,
+    title: cleanArchiveTitle(job.details?.title) || job.book?.title || job.title || '',
+    titlePending: Boolean(lookupTitle && !['ready', 'cancelled'].includes(job.state) && !titleChecked.has(job.id) && !job.title && !job.details?.title?.trim() && !job.book?.title),
     source: job.source, notice: job.notice, reference: job.md5, details: job.details, batchId: job.batchId,
     nextAttempt: job.nextAttempt || null, attempts: job.attempts || 0, completedAt: job.completedAt ?? null, ...(job.source === 'slow' ? { bookUrl: job.bookUrl } : {}) });
   const owned = (job, visitor) => !visitor || (job.owner || '') === (visitor.id || '');
   const findJob = (id, visitor) => { const job = jobs.get(id); if (!job || !owned(job, visitor)) throw new RequestError(404, 'Import not found.'); return job; };
   const latest = (visitor) => { const all = [...jobs.values()].filter((job) => owned(job, visitor)); const job = all.find((item) => pending.has(item.state)) || all.find((item) => ['needs_action', 'retry_wait'].includes(item.state)) || all.at(-1); return job ? publicJob(job) : null; };
   const signal = (job, timeout) => AbortSignal.any([controllers.get(job.id)?.signal || new AbortController().signal, AbortSignal.timeout(timeout)]);
+  function resolveTitles() {
+    if (!lookupTitle || closed || demo || titleWork) return titleWork;
+    titleWork = (async () => {
+      for (const job of jobs.values()) {
+        if (closed) break;
+        if (['ready', 'cancelled'].includes(job.state) || job.title || job.details?.title?.trim() || titleChecked.has(job.id)) continue;
+        try {
+          const config = effective(visitorForOwner(job.owner || ''));
+          const title = cleanArchiveTitle(await lookupTitle({ baseUrl: config.baseUrl, md5: job.md5,
+            signal: AbortSignal.any([titleController.signal, AbortSignal.timeout(4000)]) }));
+          if (!closed && job.state !== 'cancelled' && jobs.get(job.id) === job && title) { job.title = title; persist(job); }
+        } catch { /* A missing/blocked catalogue must never block the download. */ }
+        finally { titleChecked.add(job.id); }
+      }
+    })().finally(() => {
+      titleWork = null;
+      if (!closed && [...jobs.values()].some((job) => !['ready', 'cancelled'].includes(job.state) && !job.title && !job.details?.title?.trim() && !titleChecked.has(job.id))) queueMicrotask(() => void resolveTitles());
+    });
+    return titleWork;
+  }
   const yieldRequests = new Set();
   const watchPriority = (job) => watchProcessPriority(scheduler, () => { yieldRequests.add(job.id); controllers.get(job.id)?.abort(); },
     () => ['queued', 'downloading'].includes(job.state));
@@ -185,6 +209,7 @@ export async function openArchive(dir, { library, demo = false, request = public
       const length = Number(download.headers['content-length']);
       if (Number.isFinite(length) && length > maxUpload) { download.destroy(); throw new RequestError(413, `Books must be ${maxUpload / 1024 ** 2} MiB or smaller.`); }
       job.total = Number.isFinite(length) && length > 0 ? length : null;
+      if (!job.title) { job.title = archiveFilenameTitle(download.headers); if (job.title) persist(job); }
       const meter = new Transform({ transform(chunk, _encoding, callback) {
         job.bytes += chunk.length;
         if (job.bytes > maxUpload) return callback(new RequestError(413, `Books must be ${maxUpload / 1024 ** 2} MiB or smaller.`));
@@ -252,6 +277,7 @@ export async function openArchive(dir, { library, demo = false, request = public
     db.exec('BEGIN');
     try { for (const job of batch) persist(job); db.exec('COMMIT'); } catch (error) { db.exec('ROLLBACK'); throw error; }
     for (const job of batch) jobs.set(job.id, job);
+    if (autoStart) void resolveTitles();
     for (const job of [...jobs.values()]) if (jobs.size > 150 && ['ready', 'error', 'cancelled'].includes(job.state)) { jobs.delete(job.id); db.prepare('DELETE FROM jobs WHERE id=?').run(job.id); }
     if (autoStart) void pump();
   }
@@ -309,7 +335,7 @@ export async function openArchive(dir, { library, demo = false, request = public
   }
   const timer = !demo && autoStart ? setInterval(() => { void pump(); }, 60_000) : null;
   timer?.unref();
-  if (autoStart && !demo) void pump();
+  if (autoStart && !demo) { void pump(); void resolveTitles(); }
   return {
     settings, save, removeKey: (visitor) => save(() => ({ clearKey: true, ...(personal(visitor) && !canUseShared(visitor) ? { useShared: false } : {}) }), visitor), queue, queueBatch, latest, list: (visitor) => [...jobs.values()].filter((job) => owned(job, visitor)).map(publicJob), pump,
     continue(id, body, visitor) { const job = resumable(id, visitor), url = downloadURL(body?.url); updateDetails(job, body?.details);
@@ -349,7 +375,8 @@ export async function openArchive(dir, { library, demo = false, request = public
       if (job.state === 'importing' || job.state === 'ready') throw new RequestError(409, 'This book is already being added or complete.');
       job.state = 'cancelled'; job.nextAttempt = null; job.error = null; persist(job); controllers.get(id)?.abort(); return publicJob(job);
     },
-    close() { closed = true; clearInterval(timer); for (const controller of controllers.values()) controller.abort(); },
+    resolveTitles,
+    close() { closed = true; clearInterval(timer); titleController.abort(); for (const controller of controllers.values()) controller.abort(); },
     job(id, visitor) {
       const job = findJob(id, visitor);
       if (!job) throw new RequestError(404, 'Import not found. The server may have restarted; check your library before retrying.');

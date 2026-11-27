@@ -1,4 +1,5 @@
 import { modes, languageName } from './settings.js';
+import { languageHelpPreferences } from '../shared/language-defaults.js';
 import { element } from './ui.js';
 import { hasHan, nodeLanguage } from '../shared/language.js';
 import { readingText } from '../shared/reading-text.js';
@@ -130,7 +131,7 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
       if (/[\uDC00-\uDFFF]/u.test(text[from])) from--;
       mandarin = { text: text.slice(from, from + 350), offset: offset - from };
     }
-    const { translationLanguage, synonymContextHelp } = preferences();
+    const { translationLanguage, synonymContextHelp } = languageHelpPreferences(preferences(), language);
     const dictionary = mode === 'synonyms';
     const useContextHelp = dictionary && synonymContextHelp === true;
     const context = dictionary && !useContextHelp ? '' : getContext(item);

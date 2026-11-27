@@ -40,7 +40,10 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
             catch(error){message('#process-error',error.message);cancel.disabled=false;}
           });card.append(cancel);
         }
-        if (job.title) { const title = element('p', 'process-book-title', job.title); title.setAttribute('data-user-content', ''); card.append(title); }
+        if (job.title || job.kind === 'archive') {
+          const title = element('p', 'process-book-title', job.title || (job.titlePending ? 'Retrieving book title…' : 'Book title unavailable'));
+          if (job.title) title.setAttribute('data-user-content', ''); card.append(title);
+        }
         const state = ({ queued: 'Queued', running: 'In progress', waiting: 'Waiting', failed: 'Needs attention', completed: 'Finished', cancelled: 'Cancelled' })[job.state] || job.state;
         const detail = job.detail || (job.nextAttempt ? `Retry at ${new Date(job.nextAttempt).toLocaleTimeString()}` : '');
         card.append(element('p', 'field-note', [state, detail].filter(Boolean).join(' · ')));

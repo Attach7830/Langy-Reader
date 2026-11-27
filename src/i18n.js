@@ -1,6 +1,8 @@
 // Interface text only. Book content, generated explanations and dictionary
 // meanings keep their independently selected languages.
 const phrases = [
+  ['Retrieving book title…', 'Buscando el título…', 'Buscando o título…', '正在获取书名…'],
+  ['Book title unavailable', 'Título no disponible', 'Título indisponível', '暂无书名'],
   ['Audio synced', 'Audio sincronizado', 'Áudio sincronizado', '音频已同步'],
   ['Audio is ready for synchronized reading.', 'El audio está listo para la lectura sincronizada.', 'O áudio está pronto para leitura sincronizada.', '音频已准备好，可同步阅读。'],
   ['Raise priority', 'Subir prioridad', 'Aumentar prioridade', '提高优先级'],
@@ -178,6 +180,14 @@ const phrases = [
   ['My reading languages', 'Mis idiomas de lectura', 'Meus idiomas de leitura', '我的阅读语言'], ['Add language', 'Añadir idioma', 'Adicionar idioma', '添加语言'],
   ['Optional', 'Opcional', 'Opcional', '可选'], ['Optional · e.g. English', 'Opcional · p. ej., español', 'Opcional · ex.: português', '可选，例如中文'],
   ['Translation language', 'Idioma de traducción', 'Idioma da tradução', '翻译语言'], ['Summary language', 'Idioma del resumen', 'Idioma do resumo', '摘要语言'],
+  ['Translation and summary defaults', 'Idiomas predeterminados de traducción y resumen', 'Idiomas padrão de tradução e resumo', '翻译和摘要的默认语言'],
+  ['Same defaults for all reading languages', 'Los mismos para todos los idiomas de lectura', 'Os mesmos para todos os idiomas de leitura', '所有阅读语言使用相同设置'],
+  ['Choose defaults for each reading language', 'Elegirlos para cada idioma de lectura', 'Escolher para cada idioma de leitura', '为每种阅读语言单独设置'],
+  ['Shared translation language', 'Idioma de traducción compartido', 'Idioma de tradução compartilhado', '共用翻译语言'],
+  ['Shared summary language', 'Idioma de resumen compartido', 'Idioma de resumo compartilhado', '共用摘要语言'],
+  ['Reading language', 'Idioma de lectura', 'Idioma de leitura', '阅读语言'],
+  ['Use shared default', 'Usar la opción compartida', 'Usar o padrão compartilhado', '使用共用设置'],
+  ['Leave a language blank to use the shared default. Word and phrase translations follow the passage’s language; summaries follow the book’s primary language. These preferences sync with your account.', 'Deja un idioma en blanco para usar la opción compartida. Las traducciones de palabras y frases siguen el idioma del pasaje; los resúmenes, el idioma principal del libro. Estas preferencias se sincronizan con tu cuenta.', 'Deixe um idioma em branco para usar o padrão compartilhado. As traduções de palavras e frases seguem o idioma do trecho; os resumos, o idioma principal do livro. Estas preferências são sincronizadas com sua conta.', '语言留空时使用共用设置。词语和短语翻译按段落语言选择设置，摘要按图书的主要语言选择设置。这些偏好会随账户同步。'],
   ['Hover behavior', 'Ayuda al pasar el cursor', 'Ajuda ao passar o cursor', '悬停帮助'], ['English translation', 'Traducción al inglés', 'Tradução para inglês', '英语翻译'],
   ['Translation', 'Traducción', 'Tradução', '翻译'], ['Definition', 'Definición', 'Definição', '释义'], ['Dictionary synonyms', 'Sinónimos de diccionario', 'Sinônimos de dicionário', '词典同义词'],
   ['Off', 'Desactivado', 'Desativado', '关闭'], ['Show pinyin above Mandarin characters', 'Mostrar pinyin sobre los caracteres chinos', 'Mostrar pinyin acima dos caracteres chineses', '在汉字上方显示拼音'],

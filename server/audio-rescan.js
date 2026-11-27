@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { textWords } from '../shared/reading-text.js';
 import { synchronizeChunk } from './audio-timing.js';
-import { confirmed, rescanWindows, mergeRescan } from './rescan-timing.js';
+import { confirmed, rescanWindows, coalesceRescanWindows, mergeRescan } from './rescan-timing.js';
 import { RequestError } from './books.js';
 import { sectionLanguages } from './language-voices.js';
 const run = promisify(execFile);
@@ -26,6 +26,17 @@ export function audioRescans({ db, folder, library, languageCall, publishUploade
   CREATE TABLE IF NOT EXISTS auto_rescans(recording TEXT PRIMARY KEY,signature TEXT NOT NULL,version INTEGER NOT NULL) STRICT;
   UPDATE audio_rescans SET state='queued' WHERE state='running';`);
   if (!db.prepare('PRAGMA table_info(audio_rescans)').all().some((column) => column.name === 'served')) db.exec('ALTER TABLE audio_rescans ADD COLUMN served INTEGER NOT NULL DEFAULT 0');
+  if (!db.prepare('PRAGMA table_info(audio_rescans)').all().some((column) => column.name === 'planningVersion')) db.exec('ALTER TABLE audio_rescans ADD COLUMN planningVersion INTEGER NOT NULL DEFAULT 1');
+  db.exec('CREATE TABLE IF NOT EXISTS audio_source_revisions(book TEXT PRIMARY KEY,version INTEGER NOT NULL) STRICT;');
+  // Source writes invalidate the cached snapshot, including writes from another
+  // connection. Repair checkpoints themselves do not touch this revision.
+  for (const table of ['analyses', 'chapters', 'audio', 'book_audio']) for (const event of ['INSERT', 'UPDATE', 'DELETE']) {
+    const row = event === 'DELETE' ? 'OLD' : 'NEW';
+    db.exec(`CREATE TRIGGER IF NOT EXISTS rescan_revision_${table}_${event.toLowerCase()} AFTER ${event} ON ${table} BEGIN
+      INSERT INTO audio_source_revisions VALUES(${row}.book,1) ON CONFLICT(book) DO UPDATE SET version=version+1; END;`);
+  }
+  const sourceRevision = db.prepare('SELECT version FROM audio_source_revisions WHERE book=?');
+  let cached;
   let turn = db.prepare('SELECT COALESCE(MAX(served),0) AS value FROM audio_rescans').get().value;
   function status(book, recording) {
     const value = db.prepare('SELECT * FROM audio_rescans WHERE book=? AND recording=?').get(book.id, recording);
@@ -66,11 +77,12 @@ export function audioRescans({ db, folder, library, languageCall, publishUploade
     const data = snapshot(book, id);
     const old = db.prepare('SELECT * FROM audio_rescans WHERE recording=?').get(id);
     if (old && pending.has(old.state)) return status(book, id);
+    if (cached?.recording === id) cached = null;
     if (old?.state === 'error' && old.signature === data.signature) {
       db.prepare("UPDATE audio_rescans SET state='queued',error=NULL WHERE id=?").run(old.id);
     } else {
       db.prepare('DELETE FROM audio_rescans WHERE recording=?').run(id);
-      db.prepare("INSERT INTO audio_rescans(id,book,recording,signature,state,windows,matchedBefore,totalWords,created) VALUES(?,?,?,?,'queued',?,?,?,?)")
+      db.prepare("INSERT INTO audio_rescans(id,book,recording,signature,state,windows,matchedBefore,totalWords,created,planningVersion) VALUES(?,?,?,?,'queued',?,?,?,?,2)")
         .run(randomUUID(), book.id, id, data.signature, JSON.stringify(rescanWindows(data.words, data.timings, data.recording.duration)),
           data.timings.filter(Boolean).length, data.words.length, Date.now());
     }
@@ -115,18 +127,37 @@ export function audioRescans({ db, folder, library, languageCall, publishUploade
   async function process(job) {
     const analysis = db.prepare('SELECT owner FROM analyses WHERE book=?').get(job.book);
     const book = library.getBook(job.book, { id: analysis?.owner });
-    const data = snapshot(book, job.recording);
-    if (data.signature !== job.signature) throw new RequestError(409, 'The recording or text changed during rescanning. Start a new rescan.');
+    const revision = () => sourceRevision.get(job.book)?.version || 0;
+    const changed = () => new RequestError(409, 'The recording or text changed during rescanning. Start a new rescan.');
+    if (!cached || cached.id !== job.id || cached.revision !== revision() || cached.signature !== job.signature) {
+      const before = revision(), data = snapshot(book, job.recording);
+      if (data.signature !== job.signature || before !== revision()) throw changed();
+      const timings = data.timings;
+      for (const match of db.prepare('SELECT word,start,end FROM rescan_matches WHERE job=? ORDER BY word').all(job.id)) timings[match.word] = { start: match.start, end: match.end, review: false };
+      let windows = JSON.parse(job.windows);
+      if (job.planningVersion !== 2) {
+        // Preserve completed work and failed attempts from older versions. Only
+        // batch the remaining plan; never send the completed prefix again.
+        windows = [...windows.slice(0, job.cursor), ...coalesceRescanWindows(windows.slice(job.cursor))];
+        db.prepare('UPDATE audio_rescans SET windows=?,planningVersion=2 WHERE id=?').run(JSON.stringify(windows), job.id);
+      }
+      cached = { id: job.id, recording: job.recording, signature: job.signature, revision: before, data, timings, windows };
+    }
+    const context = cached, { data, timings, windows } = context;
     const valid = () => db.prepare("SELECT id FROM audio_rescans WHERE id=? AND state='running'").get(job.id);
     db.prepare("UPDATE audio_rescans SET state='running',served=? WHERE id=?").run(++turn, job.id);
-    const timings = data.timings;
-    for (const match of db.prepare('SELECT word,start,end FROM rescan_matches WHERE job=? ORDER BY word').all(job.id)) timings[match.word] = { start: match.start, end: match.end, review: false };
-    const windows = JSON.parse(job.windows), window = windows[job.cursor];
+    const window = windows[job.cursor];
     if (!window) {
       finish(job, book, data, timings);
       if (db.prepare('SELECT recording FROM auto_rescans WHERE recording=?').get(job.recording))
         db.prepare('UPDATE auto_rescans SET signature=? WHERE recording=?').run(snapshot(book, job.recording).signature, job.recording);
+      cached = null;
       return;
+    }
+    const missing = [];
+    for (let index = window.from; index < window.to; index++) if (!timings[index]) missing.push(index);
+    if (!missing.length) {
+      db.prepare("UPDATE audio_rescans SET cursor=cursor+1,state='queued' WHERE id=?").run(job.id); return;
     }
     const temporary = join(folder, `rescan-${job.id}`);
     await mkdir(temporary, { recursive: true });
@@ -137,23 +168,28 @@ export function audioRescans({ db, folder, library, languageCall, publishUploade
       const result = await languageCall('/rescan', { audio: (await readFile(path)).toString('base64'),
         words: data.words.slice(window.contextFrom, window.contextTo).map((word) => word.word),
         language: new Set(sectionLanguages(data.sections, book.language)).size > 1 ? 'mul' : sectionLanguages(data.sections, book.language)[0] });
-      if (!valid()) return;
-      if (snapshot(book, job.recording).signature !== job.signature) throw new RequestError(409, 'The recording or text changed during rescanning. Start a new rescan.');
+      if (!valid()) { if (cached === context) cached = null; return; }
+      if (revision() !== context.revision) {
+        const fresh = snapshot(book, job.recording);
+        if (fresh.signature !== job.signature) throw changed();
+        context.revision = revision();
+      }
       const merged = mergeRescan(timings, window, result.timings, data.recording.duration, (index, start, end) => {
         if (data.recording.kind === 'uploaded') return true;
         const segment = data.parts.get(data.words[index].key)?.segment;
         return segment && start >= segment.start && end <= segment.end;
-      });
+      }, true);
       db.exec('BEGIN IMMEDIATE');
       try {
-        for (let index = window.from; index < window.to; index++) {
-          if (timings[index] || !merged.timings[index]) continue;
+        const insert = db.prepare('INSERT OR IGNORE INTO rescan_matches VALUES(?,?,?,?)');
+        for (const index of missing) {
+          if (!merged.timings[index]) continue;
           const stamp = merged.timings[index];
-          db.prepare('INSERT OR IGNORE INTO rescan_matches VALUES(?,?,?,?)').run(job.id, index, stamp.start, stamp.end);
+          insert.run(job.id, index, stamp.start, stamp.end);
         }
         db.prepare("UPDATE audio_rescans SET cursor=cursor+1,added=added+?,state='queued' WHERE id=?").run(merged.added, job.id);
         db.exec('COMMIT');
-      } catch (error) { db.exec('ROLLBACK'); throw error; }
+      } catch (error) { cached = null; db.exec('ROLLBACK'); throw error; }
     } finally { await rm(temporary, { recursive: true, force: true }); }
   }
   function automatic(book, id) {
@@ -164,8 +200,8 @@ export function audioRescans({ db, folder, library, languageCall, publishUploade
   }
   return { status, queue, busy, process, automatic,
     next: () => db.prepare("SELECT * FROM audio_rescans WHERE state='queued' ORDER BY served,created,id LIMIT 1").get(),
-    fail(job, error) { db.prepare("UPDATE audio_rescans SET state='error',error=? WHERE id=? AND state!='cancelled'").run(error, job.id); },
-    cancel(book, recording) { db.prepare("UPDATE audio_rescans SET state='cancelled',error=NULL WHERE book=? AND recording=? AND state IN ('queued','running')").run(book.id, recording); return status(book, recording); },
+    fail(job, error) { if (cached?.id === job.id) cached = null; db.prepare("UPDATE audio_rescans SET state='error',error=? WHERE id=? AND state!='cancelled'").run(error, job.id); },
+    cancel(book, recording) { if (cached?.recording === recording) cached = null; db.prepare("UPDATE audio_rescans SET state='cancelled',error=NULL WHERE book=? AND recording=? AND state IN ('queued','running')").run(book.id, recording); return status(book, recording); },
     files: (book) => db.prepare('SELECT id FROM audio_rescans WHERE book=?').all(book).map(({ id }) => join(folder, `rescan-${id}`)),
   };
 }

@@ -4,6 +4,7 @@ export const defaults = {
   touchSize: null,
   audioEnabled: false, audioToolbarHidden: false, podcastMode: false, audioHighlight: true, audioRate: 1, audioRecordings: {},
   readingLanguages: ['es', 'en', 'pt', 'zh'],
+  languageDefaultsMode: 'shared', languageDefaults: {},
   uiLanguage: 'en', nativeLanguage: '', cacheAI: true, cacheCovers: true,
   progressSyncEnabled: true, syncDeviceName: 'Langy browser',
   keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's', playback: 'p', audioToolbar: 'a', pinyin: 'y', returnLocation: 'b', rewindAudio: '[', forwardAudio: ']', bookmarks: 'm' },
@@ -16,18 +17,22 @@ export const defaults = {
 export const accountFields = Object.keys(defaults).filter((key) => !['progressSyncEnabled', 'syncDeviceName'].includes(key));
 export const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-const maps = new Set(['keys', 'audioRecordings']);
+const maps = new Set(['keys', 'audioRecordings', 'languageDefaults']);
 export const accountPreferences = (value) => Object.fromEntries(accountFields.filter((key) => Object.hasOwn(value, key)).map((key) => [key, value[key]]));
 export function mergePreferences(base, changes) {
   const result = { ...base, ...changes };
   for (const key of maps) if (Object.hasOwn(changes, key)) result[key] = { ...base[key], ...changes[key] };
+  if (changes.languageDefaults) for (const [language, values] of Object.entries(changes.languageDefaults)) {
+    result.languageDefaults[language] = values === null ? null : { ...base.languageDefaults?.[language], ...values };
+  }
   return result;
 }
 export function preferenceChanges(before, after) {
   const changes = {};
   for (const key of accountFields) {
     if (!Object.hasOwn(after, key) || same(before[key], after[key])) continue;
-    changes[key] = maps.has(key) ? Object.fromEntries(Object.entries(after[key] || {}).filter(([name, value]) => !same(before[key]?.[name], value))) : after[key];
+    changes[key] = maps.has(key) ? Object.fromEntries(Object.entries(after[key] || {}).filter(([name, value]) => !same(before[key]?.[name], value))
+      .map(([name, value]) => [name, key === 'languageDefaults' && value !== null ? Object.fromEntries(Object.entries(value).filter(([field, setting]) => !same(before[key]?.[name]?.[field], setting))) : value])) : after[key];
   }
   return changes;
 }
@@ -37,7 +42,7 @@ export function preferenceChanges(before, after) {
 export function validatePreferences(value) {
   if (!isObject(value) || Object.keys(value).some((key) => !accountFields.includes(key))) throw new Error('Unknown reader preference.');
   const enums = { mode: ['translation', 'definition', 'synonyms', 'off'], theme: ['paper', 'sepia', 'dark', 'dusk', 'midnight'],
-    background: ['grain', 'plain', 'linen', 'grid'], font: ['spectral', 'georgia', 'sans', 'mono', 'chinese'], width: ['narrow', 'balanced', 'wide'], uiLanguage: ['en', 'es', 'pt', 'zh'], libraryLayout: ['auto','1','2','3','4','list'], libraryFormat: ['', 'epub', 'pdf'] };
+    background: ['grain', 'plain', 'linen', 'grid'], font: ['spectral', 'georgia', 'sans', 'mono', 'chinese'], width: ['narrow', 'balanced', 'wide'], uiLanguage: ['en', 'es', 'pt', 'zh'], libraryLayout: ['auto','1','2','3','4','list'], libraryFormat: ['', 'epub', 'pdf'], languageDefaultsMode: ['shared', 'per-language'] };
   for (const [key, setting] of Object.entries(value)) {
     let valid = true;
     if (enums[key]) valid = enums[key].includes(setting) || key === 'font' && typeof setting === 'string' && /^custom-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(setting);
@@ -49,6 +54,12 @@ export function validatePreferences(value) {
     else if (key === 'audioRate') valid = Number.isFinite(setting) && setting >= .5 && setting <= 2;
     else if (key === 'readingLanguages') {
       try { valid = Array.isArray(setting) && setting.length >= 1 && setting.length <= 20 && setting.every((code) => typeof code === 'string' && code.length <= 35 && Intl.getCanonicalLocales(code).length === 1); } catch { valid = false; }
+    }
+    else if (key === 'languageDefaults') {
+      try { valid = isObject(setting) && Object.keys(setting).length <= 100 && Object.entries(setting).every(([language, values]) =>
+        language.length <= 35 && Intl.getCanonicalLocales(language).length === 1 && (values === null || isObject(values) && Object.entries(values).every(([field, target]) =>
+          ['translationLanguage', 'summaryLanguage'].includes(field) && (target === null || typeof target === 'string' && target.length <= 35 && Intl.getCanonicalLocales(target).length === 1)))); }
+      catch { valid = false; }
     }
     else if (key === 'nativeLanguage' && setting === '') valid = true;
     else if (key.endsWith('Language')) {
