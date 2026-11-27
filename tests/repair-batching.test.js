@@ -75,3 +75,30 @@ test('a paused legacy repair batches its remaining plan and resumes saved matche
   const result = f.scanner.status(f.book,'recording'); assert.equal(result.state,'ready'); assert.equal(result.added,200);
   assert.ok(result.windows < legacy.length); assert.equal(result.completed,result.windows);
 });
+
+test('a source edit during snapshot validation cannot be mistaken for a validated revision', async (t) => {
+  const f = await fixture(t); f.scanner.queue(f.book, 'recording');
+  let editDuringRead = false;
+  const prepare = f.db.prepare.bind(f.db);
+  f.db.prepare = (sql) => {
+    const statement = prepare(sql);
+    if (sql.startsWith('SELECT * FROM audio WHERE')) {
+      const get = statement.get.bind(statement);
+      statement.get = (...args) => {
+        const row = get(...args);
+        if (editDuringRead) {
+          editDuringRead = false;
+          f.other.prepare("UPDATE chapters SET digest='changed-during-validation' WHERE book='book'").run();
+        }
+        return row;
+      };
+    }
+    return statement;
+  };
+  f.beforeReply(async () => {
+    f.other.prepare("UPDATE analyses SET owner=owner WHERE book='book'").run();
+    editDuringRead = true;
+  });
+  await assert.rejects(f.scanner.process(f.scanner.next()), /recording or text changed/iu);
+  assert.equal(f.db.prepare('SELECT count(*) AS n FROM rescan_matches').get().n, 0);
+});

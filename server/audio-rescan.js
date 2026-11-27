@@ -170,9 +170,10 @@ export function audioRescans({ db, folder, library, languageCall, publishUploade
         language: new Set(sectionLanguages(data.sections, book.language)).size > 1 ? 'mul' : sectionLanguages(data.sections, book.language)[0] });
       if (!valid()) { if (cached === context) cached = null; return; }
       if (revision() !== context.revision) {
+        const before = revision();
         const fresh = snapshot(book, job.recording);
-        if (fresh.signature !== job.signature) throw changed();
-        context.revision = revision();
+        if (fresh.signature !== job.signature || before !== revision()) throw changed();
+        context.revision = before;
       }
       const merged = mergeRescan(timings, window, result.timings, data.recording.duration, (index, start, end) => {
         if (data.recording.kind === 'uploaded') return true;
