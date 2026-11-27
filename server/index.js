@@ -343,9 +343,11 @@ app.get('/api/processes', (req, res) => res.json(processes.list(req.visitor)));
 app.post('/api/processes/:id/priority', (req, res) => {
   const job = processes.list(req.visitor).jobs.find((item) => item.id === req.params.id);
   if (!job) throw new RequestError(404, 'Process not found.');
-  if (!job.canPrioritize) throw new RequestError(403, 'Only the owner can raise the priority of a queued task.');
+  if (!job.canPrioritize) throw new RequestError(403, 'Only the owner can change the priority of an active or queued task.');
   if (job.kind === 'audiobookshelf' && !usesOwnerAudiobookshelf(req)) throw new RequestError(403, 'This Audiobookshelf connection belongs to the instance owner.');
-  res.status(202).json(scheduler.raise(job.id));
+  const action = req.body?.action ?? 'raise';
+  if (!['raise','top','lowest'].includes(action)) throw new RequestError(422, 'Choose raise, top, or lowest priority.');
+  res.status(202).json(scheduler[action](job.id));
 });
 app.delete('/api/processes/:id', async (req,res) => {
   const job=processes.list(req.visitor).jobs.find((item) => item.id === req.params.id);

@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import { publicDownload, downloadURL } from './public-download.js';
 import { chapterByteLimit, chapterFileLimit } from './chapter-audio.js';
 import { RequestError } from './books.js';
+import { PROCESS_YIELD } from './process-scheduler.js';
 
 export function ivooxEpisode(value) {
   let url; try { url = new URL(String(value).trim()); } catch { /* Validate below. */ }
@@ -95,17 +96,18 @@ export async function openIvoox({ db, folder, library, recordings, request = pub
   ) STRICT;
   UPDATE ivoox_imports SET state='error',error='Import interrupted by a restart. Try importing again.' WHERE state IN ('queued','downloading','importing');`);
   for (const job of db.prepare('SELECT id FROM ivoox_imports').all()) await rm(join(folder, `ivoox-${job.id}`), { recursive: true, force: true });
-  const active = new Map();
+  const active = new Map(), checkpoints = new Map();
   const publicJob = (job) => job ? { id: job.id, state: job.state, bytes: job.bytes, completed: job.completed,
     total: JSON.parse(job.episodes).length, recording: job.recording, error: job.error } : null;
   const latest = (book) => publicJob(db.prepare('SELECT * FROM ivoox_imports WHERE book=? ORDER BY created DESC,rowid DESC LIMIT 1').get(book.id));
   async function execute(job, episodes) {
-    const stage = join(folder, `ivoox-${job.id}`), files = [], control = active.get(job.id);
+    const stage = join(folder, `ivoox-${job.id}`), saved = checkpoints.get(job.id), files = saved?.files || [], control = active.get(job.id);
     const signal = AbortSignal.any([control.signal, AbortSignal.timeout(3600000)]);
-    let bytes = 0;
+    let bytes = saved?.bytes || 0, yielded = false;
     try {
       await mkdir(stage, { recursive: true });
       for (const [index, episode] of episodes.entries()) {
+        if (index < files.length) continue;
         const info = await episodeDownload(episode, request, signal);
         const audio = await request(info.url, { signal });
         if (audio.statusCode !== 200 || /(?:text\/|json|xml)/iu.test(String(audio.headers['content-type'] || ''))) {
@@ -124,6 +126,12 @@ export async function openIvoox({ db, folder, library, recordings, request = pub
         const extension = ({ 'audio/mp4': 'm4a', 'audio/x-m4a': 'm4a', 'audio/ogg': 'ogg', 'audio/wav': 'wav', 'audio/flac': 'flac', 'audio/aac': 'aac' })[type] || 'mp3';
         files.push({ path, size, originalname: `${info.title.replace(/[\p{Cc}/\\]/gu, '_')}.${extension}` });
         db.prepare('UPDATE ivoox_imports SET completed=?,bytes=? WHERE id=?').run(index + 1, bytes, job.id);
+        signal.throwIfAborted();
+        if (scheduler?.shouldYield()) {
+          checkpoints.set(job.id, { files, bytes }); yielded = true;
+          db.prepare("UPDATE ivoox_imports SET state='queued' WHERE id=?").run(job.id);
+          return PROCESS_YIELD;
+        }
       }
       signal.throwIfAborted();
       const book = library.getBook(job.book);
@@ -136,7 +144,7 @@ export async function openIvoox({ db, folder, library, recordings, request = pub
     } catch (error) {
       db.prepare("UPDATE ivoox_imports SET state=?,error=? WHERE id=?").run(control.signal.aborted ? 'cancelled' : 'error',
         control.signal.aborted ? null : error instanceof RequestError ? error.message : 'iVoox import failed. Check the links and try again.', job.id);
-    } finally { active.delete(job.id); await rm(stage, { recursive: true, force: true }); }
+    } finally { if (!yielded) { active.delete(job.id); checkpoints.delete(job.id); await rm(stage, { recursive: true, force: true }); } }
   }
   function queue(book, body = {}) {
     const links = typeof body.links === 'string' ? body.links.split(/\r?\n/u).map((link) => link.trim()).filter(Boolean) : [];
@@ -152,14 +160,16 @@ export async function openIvoox({ db, folder, library, recordings, request = pub
     active.set(id, new AbortController());
     const task = async () => {
       db.prepare("UPDATE ivoox_imports SET state='downloading' WHERE id=?").run(id);
-      await execute({ id, book: book.id, name: typeof body.name === 'string' ? body.name.trim().slice(0, 120) : '' }, episodes);
+      return await execute({ id, book: book.id, name: typeof body.name === 'string' ? body.name.trim().slice(0, 120) : '' }, episodes);
     };
-    void (scheduler ? scheduler.run(`ivoox:${id}`, task, { created, valid: () => db.prepare("SELECT id FROM ivoox_imports WHERE id=? AND state='queued'").get(id) }) : task()).finally(() => active.delete(id));
+    void (scheduler ? scheduler.run(`ivoox:${id}`, task, { created, valid: () => db.prepare("SELECT id FROM ivoox_imports WHERE id=? AND state='queued'").get(id) }) : task()).finally(async () => {
+      active.delete(id); checkpoints.delete(id); await rm(join(folder, `ivoox-${id}`), { recursive: true, force: true });
+    });
     return latest(book);
   }
   return { latest, queue,
     cancel(book) { for (const row of db.prepare("SELECT id FROM ivoox_imports WHERE book=? AND state IN ('queued','downloading','importing')").all(book.id)) {
       db.prepare("UPDATE ivoox_imports SET state='cancelled',error=NULL WHERE id=?").run(row.id); active.get(row.id)?.abort();
-    } scheduler?.wake(); },
+    } scheduler?.wake(true); },
   };
 }

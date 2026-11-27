@@ -28,8 +28,8 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
     $('#clear-finished-processes').hidden = !entries.some((job) => !active(job)) && !local.downloads.some((job) => !active(job));
     const next = JSON.stringify(entries);
     if (next !== signature) {
-      signature = next; entries.sort((a, b) => Number(!active(a)) - Number(!active(b)) || Number(b.state === 'running') - Number(a.state === 'running')
-        || (a.queuePosition ?? Infinity) - (b.queuePosition ?? Infinity) || b.created - a.created);
+      signature = next; entries.sort((a, b) => Number(!active(a)) - Number(!active(b))
+        || (a.queuePosition ?? Infinity) - (b.queuePosition ?? Infinity) || Number(b.state === 'running') - Number(a.state === 'running') || b.created - a.created);
       list.replaceChildren(...entries.map((job) => {
         const card = element('article', 'download-card process-card'); card.dataset.process = job.id;
         card.append(element('h3', '', job.label));
@@ -44,8 +44,14 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
         const state = ({ queued: 'Queued', running: 'In progress', waiting: 'Waiting', failed: 'Needs attention', completed: 'Finished', cancelled: 'Cancelled' })[job.state] || job.state;
         const detail = job.detail || (job.nextAttempt ? `Retry at ${new Date(job.nextAttempt).toLocaleTimeString()}` : '');
         card.append(element('p', 'field-note', [state, detail].filter(Boolean).join(' · ')));
+        if (job.pauseRequested) card.append(element('p', 'field-note', 'Switching after the current step'));
+        else if (job.paused && job.state === 'queued') card.append(element('p', 'field-note', 'Paused for higher-priority work'));
         if (job.queuePosition) card.append(element('p', 'field-note', `${translateUI('Queue position')}: ${job.queuePosition}`));
-        if (job.priority > 0) card.append(element('span', 'book-read-badge', translateUI('Priority raised')));
+        const priorityBadges = element('div', 'button-row');
+        if (active(job) && job.topPriority) priorityBadges.append(element('span', 'book-read-badge', translateUI('Anna’s Archive priority')));
+        if (job.priority > 0) priorityBadges.append(element('span', 'book-read-badge', translateUI('Priority raised')));
+        if (job.priority < 0) priorityBadges.append(element('span', 'book-read-badge', translateUI('Priority lowered')));
+        if (priorityBadges.childElementCount) card.append(priorityBadges);
         if (active(job)) {
           const progress = processProgress(job), bar = document.createElement('progress'); bar.max = 100;
           if (progress.percent != null) bar.value = progress.percent;
@@ -58,13 +64,20 @@ export function processQueue({ now = Date.now, changePreferences = saveSettings 
         }
         const actions = element('div', 'download-actions');
         if (job.canPrioritize) {
-          const raise = element('button', 'button secondary small', 'Raise priority'); raise.type = 'button';
-          raise.title = 'Run sooner after the current background task finishes';
-          raise.addEventListener('click', async () => {
-            raise.disabled = true;
-            try { await api(`/api/processes/${encodeURIComponent(job.id)}/priority`, { method: 'POST' }); await refresh(); }
-            catch (error) { message('#process-error', error.message); raise.disabled = false; }
-          }); actions.append(raise);
+          const controls = [];
+          for (const [action, label, title] of [
+            ['raise', 'Raise priority', 'Run ahead of the current task'],
+            ['top', 'Top priority', 'Move ahead of all other tasks'],
+            ['lowest', 'Lowest priority', 'Move behind all other tasks'],
+          ]) {
+            const control = element('button', 'button secondary small', label); control.type = 'button'; control.title = title;
+            control.addEventListener('click', async () => {
+              for (const button of controls) button.disabled = true;
+              try { await api(`/api/processes/${encodeURIComponent(job.id)}/priority`, { method: 'POST', body: { action } }); await refresh(); }
+              catch (error) { message('#process-error', error.message); }
+              finally { for (const button of controls) button.disabled = false; }
+            }); controls.push(control); actions.append(control);
+          }
         }
         for (const [label, path] of [
           ...(job.retryOcr ? [['Retry OCR', `/api/books/${encodeURIComponent(job.bookId)}/ocr/jobs/${encodeURIComponent(job.retryOcr)}/retry`]] : []),

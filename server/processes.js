@@ -97,14 +97,16 @@ export function openProcesses(dir, { library, archive, webImports, discovery, le
     const nested = new Set(schedule?.active?.children || []);
     const visible = jobs.filter((job) => !nested.has(job.id) && (job.state !== 'failed' || latest.get(groups.get(job.id))?.id === job.id));
     for (const job of visible) {
-      const waiting = queued.get(job.id), owned = job.bookId ? books.get(job.bookId) : null;
-      if (waiting) {
-        job.state = 'queued'; job.queuePosition = waiting.position; job.priority = waiting.priority;
+      const waiting = queued.get(job.id), running = schedule?.active?.id === job.id ? schedule.active : null;
+      const scheduled = running || waiting, owned = job.bookId ? books.get(job.bookId) : null;
+      if (scheduled && ['queued','running','waiting'].includes(job.state)) {
+        job.state = running ? 'running' : 'queued'; job.queuePosition = scheduled.position; job.priority = scheduled.priority; job.topPriority = scheduled.topPriority;
+        job.paused = Boolean(waiting?.paused); job.pauseRequested = Boolean(running?.pauseRequested);
         job.canPrioritize = owned?.canEdit !== false && !job.decision;
       } else job.canPrioritize = false;
       if (schedule?.active?.id === job.id && ['queued','running','waiting'].includes(job.state)) { job.state = 'running'; job.startedAt = schedule.active.startedAt; }
     }
-    visible.sort((a, b) => Number(b.state === 'running') - Number(a.state === 'running') || (a.queuePosition ?? Infinity) - (b.queuePosition ?? Infinity) || b.created - a.created);
+    visible.sort((a, b) => (a.queuePosition ?? Infinity) - (b.queuePosition ?? Infinity) || Number(b.state === 'running') - Number(a.state === 'running') || b.created - a.created);
     return { accountId: account(visitor).id, libraryRevision: createHash('sha256').update(JSON.stringify([...books.values()].map((book) => [book.id,book.updatedAt,book.contentRevision]))).digest('hex'), jobs: visible.slice(0, 200), unavailable, sequential: Boolean(scheduler), serverBusy: Boolean(schedule?.active) };
   }
   return { list, close() { for (const db of databases.values()) db.close(); } };

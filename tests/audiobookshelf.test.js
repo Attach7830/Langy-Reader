@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { RequestError } from '../server/books.js';
 import { openAudiobookshelf } from '../server/audiobookshelf.js';
+import { openProcessScheduler } from '../server/process-scheduler.js';
 
 async function fixture(t, options = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'langy-abs-')); t.after(() => rm(dir, { recursive: true, force: true }));
@@ -12,7 +14,7 @@ async function fixture(t, options = {}) {
   const book = { id: 'book', title: 'A Book', author: 'An Author', language: 'es', format: 'epub', categoryId: 'spanish' }, calls = [], imported = [];
   const remoteLibraries = [{ id: 'lib', mediaType: 'book', folders: [{ id: 'folder', path: '/books' }, { id: 'spanish-folder', path: '/books/es' }] },
     { id: 'other-lib', mediaType: 'book', folders: [{ id: 'other-folder', path: '/books/zh' }] }];
-  let progress = null, state = 'uploaded', clock = 1000000, catalogFails = false, uploadFails = false, catalogLag = false, catalogHook;
+  let progress = null, state = 'uploaded', clock = 1000000, catalogFails = false, uploadFails = false, catalogLag = false, catalogHook, uploadHook;
   const ready = [], localBooks = new Map([[book.id, book]]), remoteBooks = new Map(), removed = [], uploads = [];
   const recordings = new Map([['recording', { id: 'recording', state: 'ready', duration: 100, markers: [{ time: 0, title: 'One' }] }]]);
   const item = { id: 'remote-item', libraryId: 'lib', folderId: 'spanish-folder', mediaType: 'book', media: { duration: 100, metadata: { title: 'A Book' }, tracks: [{ index: 1, title: 'part.mp3', contentUrl: '/abs/s/item/remote-item/part.mp3', duration: 100 }] } };
@@ -38,6 +40,7 @@ async function fixture(t, options = {}) {
       return progress ? Response.json(progress) : new Response('Not found', { status: 404 });
     }
     if (url.pathname === '/abs/api/upload') {
+      const hook = uploadHook; uploadHook = null; await hook?.(opts);
       const data = opts.body, metadata = JSON.parse(await data.get('metadata').text());
       assert.ok([...localBooks.values()].some((entry) => entry.title === metadata.title));
       assert.match(data.get('title'), /^Langy-[\w-]+ - /u);
@@ -54,7 +57,7 @@ async function fixture(t, options = {}) {
   };
   let service = await openAudiobookshelf(dir, { library, learning, autoStart: false, request, now: () => clock, ...options }); t.after(() => service.close());
   return { dir, get service() { return service; }, book, calls, imported, removed, uploads, item, remoteLibraries, remoteBooks, ready, recordings,
-    clock(value) { clock = value; }, alignment(value) { state = value; }, duringCatalog(callback) { catalogHook = callback; }, failCatalog(value) { catalogFails = value; }, failUpload(value) { uploadFails = value; }, lagCatalog(value) { catalogLag = value; },
+    clock(value) { clock = value; }, alignment(value) { state = value; }, duringCatalog(callback) { catalogHook = callback; }, duringUpload(callback) { uploadHook = callback; }, failCatalog(value) { catalogFails = value; }, failUpload(value) { uploadFails = value; }, lagCatalog(value) { catalogLag = value; },
     addReady(id = 'recording', target = book) { localBooks.set(target.id, target); if (!recordings.has(id)) recordings.set(id, { ...recordings.get('recording'), id }); ready.push({ book: target.id, recording: id }); },
     setProgress(value) { progress = value; },
     async restart() { service.close(); service = await openAudiobookshelf(dir, { library, learning, autoStart: false, request, now: () => clock, ...options }); },
@@ -70,6 +73,42 @@ test('Audiobookshelf uses the configured remote host/subpath, stores credentials
   assert.ok(f.calls.some((call) => call.path === '/abs/api/upload'));
   assert.equal(JSON.stringify(f.service.status(f.book)).includes('synthetic-test-token'), false);
 });
+
+test('priority waits for the upload receipt then resumes linking after restart without uploading twice', async (t) => {
+  const options = {}, f = await fixture(t, options), scheduler = openProcessScheduler(f.dir);
+  options.scheduler = scheduler; await f.restart(); await f.connectMapped();
+  t.after(() => scheduler.close());
+  const gate = () => { let release; const promise = new Promise((resolve) => { release = resolve; }); return { promise, release }; };
+  const started = gate(), holdUpload = gate(), holdPromoted = gate();
+  let signal, promotedStarted = false, work, promoted, resumed;
+  const waitFor = async (check) => { for (let i = 0; i < 300; i++) { if (check()) return; await delay(10); } throw new Error('Audiobookshelf priority queue did not advance'); };
+  f.duringUpload(async (request) => { signal = request.signal; started.release(); await holdUpload.promise; });
+  const job = f.service.queue(f.book, 'export', { recording: 'recording' });
+  try {
+    work = f.service.pump(); await started.promise;
+    promoted = scheduler.run('ocr:urgent', async () => { promotedStarted = true; await holdPromoted.promise; });
+    scheduler.top('ocr:urgent'); await delay(20);
+    assert.equal(signal.aborted, false, 'an upload with an uncertain outcome must not be interrupted');
+    assert.equal(promotedStarted, false);
+    holdUpload.release(); await waitFor(() => promotedStarted);
+    const paused = f.service.status(f.book).jobs.find((item) => item.id === job.id);
+    assert.equal(paused.state, 'linking'); assert.equal(paused.exportedAt, 1000000);
+    assert.equal(scheduler.snapshot().queued.find((item) => item.id === `audiobookshelf:${job.id}`).paused, true);
+    assert.equal(f.uploads.length, 1);
+    await f.restart();
+    assert.equal(f.service.status(f.book).jobs.find((item) => item.id === job.id).exportedAt, 1000000);
+    resumed = f.service.pump(); holdPromoted.release();
+    await Promise.all([work, resumed, promoted]);
+    const finished = f.service.status(f.book).jobs.find((item) => item.id === job.id);
+    assert.equal(finished.state, 'exported'); assert.equal(finished.linked, true);
+    assert.equal((await f.service.remote(f.book, 'recording')).item, f.uploads[0].id);
+    assert.equal(f.calls.filter((call) => call.path === '/abs/api/upload').length, 1);
+  } finally {
+    holdUpload.release(); holdPromoted.release();
+    await Promise.allSettled([work, promoted, resumed].filter(Boolean));
+  }
+});
+
 test('ABS imports audio in track order, automatically aligns it and links only the exact recording for progress', async (t) => {
   const f = await fixture(t); await f.connect();
   const queued = f.service.queue(f.book, 'import', { item: 'remote-item' }); await f.service.decide(f.book, queued.id, true); await f.service.pump(); assert.deepEqual(f.imported, ['DOWNLOADED AUDIO']);

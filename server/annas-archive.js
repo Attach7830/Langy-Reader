@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { maxUpload, normalizeLanguage, RequestError } from './books.js';
 import { publicDownload, downloadURL } from './public-download.js';
 import { importNarrationOptions } from './import-narration.js';
-import { consumeProcesses } from './process-scheduler.js';
+import { consumeProcesses, PROCESS_YIELD, watchProcessPriority } from './process-scheduler.js';
 
 const mirrors = ['https://annas-archive.gl', 'https://annas-archive.pk', 'https://annas-archive.gd'];
 const pending = new Set(['queued', 'downloading', 'importing']);
@@ -113,7 +113,7 @@ export async function openArchive(dir, { library, demo = false, request = public
   db.exec('PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,json TEXT NOT NULL) STRICT');
   const jobs = new Map(demo ? [] : db.prepare('SELECT id,json FROM jobs ORDER BY rowid').all().map((row) => [row.id, JSON.parse(row.json)]));
   let running = false, closed = false;
-  const controllers = new Map();
+  const controllers = new Map(), continuations = new Set();
   function persist(job) { db.prepare('INSERT INTO jobs VALUES(?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(job.id, JSON.stringify(job)); }
   db.exec('BEGIN');
   try {
@@ -130,8 +130,15 @@ export async function openArchive(dir, { library, demo = false, request = public
   const findJob = (id, visitor) => { const job = jobs.get(id); if (!job || !owned(job, visitor)) throw new RequestError(404, 'Import not found.'); return job; };
   const latest = (visitor) => { const all = [...jobs.values()].filter((job) => owned(job, visitor)); const job = all.find((item) => pending.has(item.state)) || all.find((item) => ['needs_action', 'retry_wait'].includes(item.state)) || all.at(-1); return job ? publicJob(job) : null; };
   const signal = (job, timeout) => AbortSignal.any([controllers.get(job.id)?.signal || new AbortController().signal, AbortSignal.timeout(timeout)]);
+  const yieldRequests = new Set();
+  const watchPriority = (job) => watchProcessPriority(scheduler, () => { yieldRequests.add(job.id); controllers.get(job.id)?.abort(); },
+    () => ['queued', 'downloading'].includes(job.state));
   function fail(job, error) {
     if (job.state === 'cancelled') return;
+    if (yieldRequests.has(job.id)) {
+      job.state = 'queued'; job.bytes = 0; job.error = null; job.nextAttempt = null; persist(job);
+      return PROCESS_YIELD;
+    }
     job.error = error instanceof RequestError ? error.message : 'Anna’s Archive could not be reached. The import can be retried.';
     const retryable = !(error instanceof RequestError) || error.status >= 500 || error.status === 429;
     job.nextAttempt = current.retryUnavailable && job.queueUnavailable !== false && retryable && job.mode !== 'slow' ? now() + archiveRetryDelay : null;
@@ -183,11 +190,15 @@ export async function openArchive(dir, { library, demo = false, request = public
         if (job.bytes > maxUpload) return callback(new RequestError(413, `Books must be ${maxUpload / 1024 ** 2} MiB or smaller.`));
         callback(null, chunk);
       } });
-      await pipeline(download, meter, createWriteStream(temporary, { flags: 'wx', mode: 0o600 }));
+      await pipeline(download, meter, createWriteStream(temporary, { flags: 'wx', mode: 0o600 }), { signal: controllers.get(job.id)?.signal });
+      controllers.get(job.id)?.signal.throwIfAborted();
+      // Validation and publication are atomic. A priority change cannot turn
+      // an already imported book into a retry or duplicate import.
+      job.state = 'importing';
       await importFile(job, temporary, download.headers);
     } catch (error) {
       await rm(temporary, { force: true });
-      fail(job, error);
+      return fail(job, error);
     } finally { await rm(temporary, { force: true }); }
   }
 
@@ -213,10 +224,10 @@ export async function openArchive(dir, { library, demo = false, request = public
         if (error.status === 429 && config.slowFallback && body.downloadMode !== 'fast') return slow(job, config, 'Fast-download allowance reached. Continue with a free slow download below.');
         throw error;
       }
-      await downloadFile(job, data.download_url);
+      return await downloadFile(job, data.download_url);
     } catch (error) {
       // Do not expose upstream URLs, signed links, keys, or raw transport errors.
-      fail(job, error);
+      return fail(job, error);
     }
   }
 
@@ -260,21 +271,22 @@ export async function openArchive(dir, { library, demo = false, request = public
   }
   async function pump() {
     if (running || controllers.size || closed || demo) return;
-    if (![...jobs.values()].some((job) => job.state === 'queued' || current.retryUnavailable && job.queueUnavailable !== false
-      && ['retry_wait','needs_action'].includes(job.state) && job.nextAttempt && job.nextAttempt <= now())) return;
+    if (![...jobs.values()].some((job) => !continuations.has(job.id) && (job.state === 'queued' || current.retryUnavailable && job.queueUnavailable !== false
+      && ['retry_wait','needs_action'].includes(job.state) && job.nextAttempt && job.nextAttempt <= now()))) return;
     running = true;
     try {
-      await consumeProcesses(scheduler, () => closed ? [] : [...jobs.values()].filter((job) => job.state === 'queued'
-        || current.retryUnavailable && job.queueUnavailable !== false && ['retry_wait', 'needs_action'].includes(job.state) && job.nextAttempt && job.nextAttempt <= now())
+      await consumeProcesses(scheduler, () => closed ? [] : [...jobs.values()].filter((job) => !continuations.has(job.id) && (job.state === 'queued'
+        || current.retryUnavailable && job.queueUnavailable !== false && ['retry_wait', 'needs_action'].includes(job.state) && job.nextAttempt && job.nextAttempt <= now()))
         .map((job) => ({ id: `archive:${job.id}`, created: job.created, data: job })), async (job) => {
         controllers.set(job.id, new AbortController()); job.state = 'queued'; job.source = 'fast'; job.error = null; job.nextAttempt = null; job.attempts++; persist(job);
+        const stopPriority = watchPriority(job);
         try {
           const connection = effective(visitorForOwner(job.owner || ''));
           if (job.mode === 'slow' || !connection.apiKey && connection.slowFallback && job.mode !== 'fast') slow(job, connection);
           else if (!connection.apiKey) throw new RequestError(403, 'Membership key unavailable. Save your own key or ask the administrator for shared access.');
-          else await run(job, connection, job.md5, { downloadMode: job.mode });
-        } catch (error) { fail(job, error); }
-        finally { controllers.delete(job.id); }
+          else return await run(job, connection, job.md5, { downloadMode: job.mode });
+        } catch (error) { return fail(job, error); }
+        finally { stopPriority(); yieldRequests.delete(job.id); controllers.delete(job.id); }
       });
     } finally { running = false; }
   }
@@ -302,10 +314,16 @@ export async function openArchive(dir, { library, demo = false, request = public
     settings, save, removeKey: (visitor) => save(() => ({ clearKey: true, ...(personal(visitor) && !canUseShared(visitor) ? { useShared: false } : {}) }), visitor), queue, queueBatch, latest, list: (visitor) => [...jobs.values()].filter((job) => owned(job, visitor)).map(publicJob), pump,
     continue(id, body, visitor) { const job = resumable(id, visitor), url = downloadURL(body?.url); updateDetails(job, body?.details);
       job.nextAttempt = null; persist(job);
-      running = true; controllers.set(id, new AbortController());
-      const task = () => downloadFile(job, url);
+      // A paused direct download remains owned by this callback and its URL.
+      // A generic pump may already be waiting for the shared scheduler slot.
+      running = true; continuations.add(id); controllers.set(id, new AbortController());
+      const task = async () => {
+        controllers.set(id, new AbortController()); const stopPriority = watchPriority(job);
+        try { return await downloadFile(job, url); }
+        finally { stopPriority(); yieldRequests.delete(id); }
+      };
       void (scheduler ? scheduler.run(`archive:${id}`, task, { created: job.created, valid: () => !closed && job.state !== 'cancelled' }) : task())
-        .finally(() => { controllers.delete(id); running = false; if (autoStart) void pump(); }); return publicJob(job); },
+        .finally(() => { continuations.delete(id); controllers.delete(id); running = false; if (autoStart) void pump(); }); return publicJob(job); },
     async accept(id, file, details, visitor) {
       const temporary = file?.path;
       try {

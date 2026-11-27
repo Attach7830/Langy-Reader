@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ivooxEpisode, ivooxPage, openIvoox } from '../server/ivoox.js';
+import { openProcessScheduler } from '../server/process-scheduler.js';
 const url = 'https://www.ivoox.com/11-como-agua-para-chocolate-audios-mp3_rf_79273667_1.html';
 const page = (id, extra = '') => `<script>window.__NUXT__=(function(a,b,c,d){return {data:[{audio:{id:a,title:b,downloadUrl:c,audioPaid:d,isSample:false,hidden:false,${extra}program:{id:2}},relatedAudios:[]}]}}(${id},"Capítulo ${id}","\\u002Flisten_mn_${id}_1.mp3",false));</script>`;
 const stream = (body, type = 'text/html', length) => Object.assign(Readable.from([Buffer.from(body)]), { statusCode: 200, headers: { 'content-type': type, ...(length ? { 'content-length': length } : {}) } });
@@ -50,4 +51,65 @@ test('iVoox imports episodes in input order, limits downloads, reports errors, a
   assert.match((await complete()).error, /audio file/u);
   assert.throws(() => importer.queue(book, { links: url + '\n' + url }), /duplicate/u);
   assert.ok(requests.length >= 6);
+});
+
+const gate = () => { let release; const promise = new Promise((resolve) => { release = resolve; }); return { promise, release }; };
+async function until(check) { for (let n = 0; n < 300; n++) { if (await check()) return; await delay(10); } throw new Error('iVoox priority queue did not advance'); }
+async function priorityFixture(t) {
+  const folder = await mkdtemp(join(tmpdir(), 'langy-ivoox-priority-')), db = new DatabaseSync(join(folder, 'test.sqlite'));
+  db.exec("PRAGMA foreign_keys=ON; CREATE TABLE analyses(book TEXT PRIMARY KEY); INSERT INTO analyses VALUES('book')");
+  const scheduler = openProcessScheduler(folder), firstStarted = gate(), holdFirst = gate(), holdPromoted = gate(), requests = [], imported = [];
+  const book = { id: 'book', title: 'Libro' };
+  const importer = await openIvoox({ db, folder, scheduler, library: { getBook: () => book },
+    recordings: { async acceptChapters(_book, files) { imported.push(await Promise.all(files.map((file) => readFile(file.path, 'utf8')))); return { id: 'recording' }; } },
+    request: async (value) => {
+      const address = new URL(value); requests.push(address.href);
+      const id = /(?:_rf_|listen_mn_)(\d+)/u.exec(address.pathname)[1];
+      if (address.pathname.endsWith('.html')) return stream(page(id));
+      return Object.assign(Readable.from((async function* () {
+        if (id === '79273667') { firstStarted.release(); await holdFirst.promise; }
+        yield Buffer.from(`audio-${id}`);
+      })()), { statusCode: 200, headers: { 'content-type': 'audio/mpeg' } });
+    } });
+  t.after(async () => {
+    holdFirst.release(); holdPromoted.release(); importer.cancel(book);
+    await until(() => !scheduler.snapshot().active && !scheduler.snapshot().queued.length);
+    await until(async () => !(await readdir(folder)).some((name) => name.startsWith('ivoox-')));
+    await scheduler.close(); db.close(); await rm(folder, { recursive: true, force: true });
+  });
+  const job = importer.queue(book, { links: url + '\nhttps://www.ivoox.com/next_rf_123_1.html' });
+  await firstStarted.promise;
+  let promotedStarted = false;
+  const promoted = scheduler.run('ocr:urgent', async () => { promotedStarted = true; await holdPromoted.promise; });
+  scheduler.top('ocr:urgent'); holdFirst.release(); await until(() => promotedStarted);
+  return { folder, scheduler, importer, book, job, requests, imported, promoted, holdPromoted };
+}
+
+test('iVoox resumes after a completed episode without redownloading or losing its byte count', async (t) => {
+  const f = await priorityFixture(t);
+  try {
+    const paused = f.importer.latest(f.book);
+    assert.equal(paused.state, 'queued'); assert.equal(paused.completed, 1); assert.equal(paused.bytes, Buffer.byteLength('audio-79273667'));
+    assert.equal(f.scheduler.snapshot().queued.find((job) => job.id === `ivoox:${f.job.id}`).paused, true);
+    assert.equal(await readFile(join(f.folder, `ivoox-${f.job.id}`, '0'), 'utf8'), 'audio-79273667');
+    assert.equal(f.requests.length, 2);
+  } finally { f.holdPromoted.release(); }
+  await f.promoted; await until(() => f.importer.latest(f.book).state === 'ready');
+  assert.deepEqual(f.imported, [['audio-79273667', 'audio-123']]);
+  assert.equal(f.importer.latest(f.book).bytes, Buffer.byteLength('audio-79273667audio-123'));
+  assert.equal(f.requests.length, 4);
+  assert.equal(new Set(f.requests).size, 4);
+  await until(async () => !(await readdir(f.folder)).includes(`ivoox-${f.job.id}`));
+});
+
+test('cancelling a paused iVoox import cleans saved episode files while other work is active', async (t) => {
+  const f = await priorityFixture(t);
+  try {
+    f.importer.cancel(f.book);
+    assert.equal(f.importer.latest(f.book).state, 'cancelled');
+    await until(async () => !(await readdir(f.folder)).includes(`ivoox-${f.job.id}`));
+    assert.deepEqual(f.imported, []); assert.equal(f.requests.length, 2);
+  } finally { f.holdPromoted.release(); }
+  await f.promoted;
+  assert.equal(f.importer.latest(f.book).state, 'cancelled');
 });
