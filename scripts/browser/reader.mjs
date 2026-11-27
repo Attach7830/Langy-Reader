@@ -632,6 +632,30 @@ try {
     await page.locator('#audio-toggle').click(); await page.locator('#narration-play').click();
     await page.locator('#narration-close').click();
   });
+  await check('immersion mode shows the audio clock and completion in both player layouts', async () => {
+    const clock = page.locator('#narration-time'), completion = page.locator('#narration-completion'), player = page.locator('#narration-player');
+    const toggleImmersion = async () => {
+      await page.locator('#reader-more > summary').click();
+      await page.locator('#immersion-toggle').click();
+    };
+    await toggleImmersion();
+    await page.locator('#audio-toggle').click();
+    const seek = page.locator('#narration-seek:enabled');
+    await seek.waitFor();
+    await seek.evaluate((slider) => { slider.value = '30'; slider.dispatchEvent(new Event('input')); });
+    await completion.filter({ hasText: '25% complete' }).waitFor();
+    for (let index = 0; index < 2; index++) {
+      const box = await player.boundingBox();
+      for (const counter of [clock, completion]) {
+        const bounds = await counter.boundingBox();
+        assert.ok(bounds && bounds.x >= box.x && bounds.x + bounds.width <= box.x + box.width);
+      }
+      assert.equal(await page.locator('#page-label').isVisible(), false);
+      await page.locator('#podcast-toggle').click();
+    }
+    await page.locator('#narration-close').click();
+    await toggleImmersion();
+  });
   await check('double tapping a word starts at its timestamp, including with audio disabled, and never pauses it', async () => {
     const pattern = '**/api/books/' + book.id + '/chapters/*';
     const aligned = (route) => route.fulfill({ json: { key: decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-1)), tokens: [], audio: { timings: [{ word: 'viajera', from: 0, to: 7, start: 10, end: 10.5 }] } } });

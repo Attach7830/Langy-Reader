@@ -14,6 +14,7 @@ import { processQueue } from '../src/process-queue.js';
 import { saveSettings } from '../src/settings.js';
 import { folderAudiobookshelf } from '../src/folder-audiobookshelf.js';
 import { pdfOCR } from '../src/pdf-ocr.js';
+import { reviewPdfText } from '../src/pdf-review.js';
 
 async function until(check) { for (let i = 0; i < 100; i++) { if (check()) return; await delay(10); } throw new Error('Reader tool did not update'); }
 async function browser(t) {
@@ -55,6 +56,64 @@ test('rapid successive edits open the requested book and an older refresh cannot
   assert.equal(document.querySelector('#book-submit').disabled, true, 'the older save must not unlock the newer submit');
   releaseSecond(); await until(() => !document.querySelector('#book-dialog').open);
   assert.equal(books[0].series, 'First series'); assert.equal(books[1].series, 'Second series');
+});
+
+test('PDF text cleanup handles Unicode and each page keeps its undo and redo history', async (t) => {
+  const dom = await browser(t);
+  const original = '端午Pīnyīn①２٣Ⅳ\n故事cafe\u0301ñ。', noLatin = '端午①２٣Ⅳ\n故事。', cleaned = '端午\n故事。';
+  let saved;
+  globalThis.fetch = async (path, options) => {
+    if (options.method === 'PUT') { saved = JSON.parse(options.body); return Response.json({ revision: 'updated' }); }
+    const page = Number(path.split('=').at(-1)), text = page === 1 ? original : '下一頁。';
+    return Response.json({ state: 'ready', revision: 'review', total: 2, excluded: [], page: { number: page, original: text, text, boxes: [] } });
+  };
+  reviewPdfText({ saved() {} }).open({ id: 'pdf', language: 'zh' });
+  const form = document.querySelector('#pdf-review-form'), text = form.elements.text;
+  const undo = document.querySelector('#pdf-review-undo'), redo = document.querySelector('#pdf-review-redo');
+  const shortcut = (shiftKey = false) => text.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: shiftKey ? 'Z' : 'z', ctrlKey: true, shiftKey, bubbles: true, cancelable: true }));
+  function input(value, inputType = 'insertText') {
+    text.dispatchEvent(new dom.window.InputEvent('beforeinput', { inputType, bubbles: true, cancelable: true }));
+    text.value = value;
+    text.dispatchEvent(new dom.window.InputEvent('input', { inputType, bubbles: true }));
+  }
+  await until(() => !text.disabled);
+  assert.equal(undo.disabled, true);
+  text.setSelectionRange(original.length, original.length);
+  document.querySelector('#pdf-review-remove-latin').click();
+  assert.equal(text.value, noLatin);
+  assert.equal(text.selectionStart, noLatin.length);
+  document.querySelector('#pdf-review-remove-numerals').click();
+  assert.equal(text.value, cleaned);
+  shortcut();
+  assert.equal(text.value, noLatin);
+  assert.equal(redo.disabled, false);
+
+  document.querySelector('#pdf-review-next').click();
+  await until(() => !text.disabled && form.elements.page.value === '2');
+  assert.equal(undo.disabled, true);
+  input('第二頁。');
+  document.querySelector('#pdf-review-previous').click();
+  await until(() => !text.disabled && form.elements.page.value === '1');
+  shortcut(true);
+  assert.equal(text.value, cleaned);
+  text.dispatchEvent(new dom.window.CompositionEvent('compositionstart'));
+  input(cleaned + 'r', 'insertCompositionText');
+  input(cleaned + '人', 'insertCompositionText');
+  text.dispatchEvent(new dom.window.CompositionEvent('compositionend'));
+  shortcut();
+  assert.equal(text.value, cleaned, 'one undo reverses the whole IME composition');
+  redo.click();
+  assert.equal(text.value, cleaned + '人');
+  document.querySelector('#pdf-review-original').click();
+  assert.equal(text.value, original);
+  text.dispatchEvent(new dom.window.InputEvent('beforeinput', { inputType: 'historyUndo', bubbles: true, cancelable: true }));
+  assert.equal(text.value, cleaned + '人');
+  undo.click();
+  input(cleaned + '們');
+  assert.equal(redo.disabled, true, 'new typing clears the redo history');
+  form.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await until(() => !document.querySelector('#pdf-review-dialog').open);
+  assert.deepEqual(saved.edits.sort((a, b) => a.page - b.page), [{ page: 1, text: cleaned + '們' }, { page: 2, text: '第二頁。' }]);
 });
 
 test('Analysis & audio reveals ready controls while an unrelated iVoox request remains pending; empty Uncategorized is hidden', async (t) => {

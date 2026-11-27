@@ -47,8 +47,9 @@ async function fixture(t, { words = [], timings = [], visible = () => true, roun
     changePreferences(values) { Object.assign(prefs, values); player.apply(); } });
   function metadata() { audio.currentTime = 0; audio.onloadedmetadata?.(); }
   player.apply(); await player.refresh(); if (!delayMetadata) metadata();
-  const clock = document.querySelector('#narration-time'), seek = document.querySelector('#narration-seek'), rate = document.querySelector('#narration-rate');
-  return { dom, player, audio, root, clock, seek, prefs, positions, navigations, reveals, metadata,
+  const clock = document.querySelector('#narration-time'), completion = document.querySelector('#narration-completion');
+  const seek = document.querySelector('#narration-seek'), rate = document.querySelector('#narration-rate');
+  return { dom, player, audio, root, clock, completion, seek, prefs, positions, navigations, reveals, metadata,
     rendered(value) { rendered = value; },
     page(value) { key = value; },
     speed(value) { rate.value = String(value); rate.dispatchEvent(new dom.window.Event('change')); },
@@ -137,12 +138,14 @@ test('a delayed audio reveal is discarded when a manual turn starts', async (t) 
 test('audio times update immediately with player or settings speed while media position and seeking stay in recording seconds', async (t) => {
   const f = await fixture(t);
   f.tick(900); assert.equal(f.clock.textContent, '15:00 / 1:00:00');
+  assert.equal(f.completion.textContent, '25% complete');
   f.speed(2);
   assert.equal(f.clock.textContent, '7:30 / 30:00'); assert.match(f.clock.title, /22:30 remaining at 2×/);
   assert.match(f.clock.title, /Recording position: 15:00 \/ 1:00:00/);
   assert.match(f.clock.getAttribute('aria-label'), /Listening time at 2×/);
   assert.equal(f.audio.currentTime, 900); assert.equal(f.seek.max, '3600'); assert.equal(f.seek.value, '900');
-  assert.match(f.seek.getAttribute('aria-valuetext'), /7:30 of 30:00 at 2×/);
+  assert.match(f.seek.getAttribute('aria-valuetext'), /7:30 of 30:00 at 2× · 25% complete/u);
+  assert.equal(f.completion.textContent, '25% complete');
   const marker = () => document.querySelectorAll('.narration-marker')[1];
   assert.equal(marker().title, 'Second chapter · 15:00 at 2×'); assert.equal(marker().style.left, '50%');
   assert.deepEqual(f.positions.at(-1), { duration: 3600, position: 900, playbackRate: 2 });
@@ -156,6 +159,7 @@ test('audio times update immediately with player or settings speed while media p
   assert.equal(f.navigations.length, 0, 'changing speed must not move to a different book page');
   f.seek.value = '1800'; f.seek.dispatchEvent(new f.dom.window.Event('input'));
   assert.equal(f.audio.currentTime, 1800); assert.equal(f.clock.textContent, '20:00 / 40:00');
+  assert.equal(f.completion.textContent, '50% complete');
   await until(() => f.navigations.some((target) => target.key === 'epub:1'));
   assert.equal(document.querySelector('#narration-chapter').value, '1');
 });
@@ -170,8 +174,9 @@ test('speed-adjusted chapter markers and chapter buttons keep their original see
   await until(() => f.navigations.some((target) => target.key === 'epub:0'));
   document.querySelector('#narration-next-chapter').click(); assert.equal(f.audio.currentTime, 1800);
   f.tick(3600); assert.equal(f.clock.textContent, '30:00 / 30:00'); assert.match(f.clock.title, /^0:00 remaining/);
+  assert.equal(f.completion.textContent, '100% complete');
   assert.equal(document.querySelector('#narration-forward').disabled, true);
-  f.player.stop(); assert.equal(f.clock.textContent, '0:00 / 0:00'); assert.equal(f.seek.disabled, true);
+  f.player.stop(); assert.equal(f.clock.textContent, '0:00 / 0:00'); assert.equal(f.completion.hidden, true); assert.equal(f.seek.disabled, true);
 });
 
 test('audio seek shortcuts share the toolbar seek path while hidden and scrolling over speed adjusts by 0.05×', async (t) => {

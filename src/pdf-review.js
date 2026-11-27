@@ -1,7 +1,10 @@
 import { $, api, message } from './ui.js';
 import { pdfBoxes, textInPdfBoxes } from './pdf-boxes.js';
+import { pdfTextHistory } from './pdf-text-history.js';
 
 const readable = (value) => typeof value === 'string' && /[\p{L}\p{N}]/u.test(value);
+const latinLetters = /(?=\p{Letter})\p{Script=Latin}\p{Mark}*/gu;
+const numerals = /\p{Number}\p{Mark}*/gu;
 
 function parsePageRanges(value, total) {
   const pages = new Set();
@@ -31,7 +34,15 @@ export function reviewPdfText({ saved }) {
   const previous = $('#pdf-review-previous'), next = $('#pdf-review-next'), save = $('#pdf-review-save');
   const preview = $('#pdf-review-preview'), original = $('#pdf-review-original'), copy = $('#pdf-review-copy');
   const extract = $('#pdf-review-extract-boxes'), forceOCR = $('#pdf-review-box-ocr');
+  const undo = $('#pdf-review-undo'), redo = $('#pdf-review-redo');
+  const removeLatin = $('#pdf-review-remove-latin'), removeNumerals = $('#pdf-review-remove-numerals');
   let editor, poll;
+  const history = pdfTextHistory(text, (value) => {
+    const { number, text: savedText } = editor.page;
+    if (value === savedText) editor.edits.delete(number);
+    else editor.edits.set(number, value);
+    updateTextTools();
+  });
   const selectionBoxes = pdfBoxes({ preview, changed(boxes) {
     const { number, boxes: saved = [] } = editor.page;
     if (JSON.stringify(boxes) === JSON.stringify(saved)) editor.boxes.delete(number);
@@ -46,11 +57,19 @@ export function reviewPdfText({ saved }) {
     return selection.toString().trim();
   }
 
+  function updateTextTools() {
+    undo.disabled = text.disabled || !history.canUndo;
+    redo.disabled = text.disabled || !history.canRedo;
+    removeLatin.disabled = text.disabled || text.value.search(latinLetters) === -1;
+    removeNumerals.disabled = text.disabled || text.value.search(numerals) === -1;
+  }
+
   function controls() {
     const ready = Boolean(editor?.page && !editor.loading && !editor.saving && !editor.extraction);
     const previewReady = ready && editor.preview && editor.renderedPage === editor.page.number && selectionBoxes.attached;
     number.disabled = excluded.disabled = !ready;
     text.disabled = original.disabled = !ready;
+    updateTextTools();
     previous.disabled = !ready || editor.page.number === 1;
     next.disabled = !ready || editor.page.number === editor.total;
     save.disabled = !ready || editor.stale;
@@ -124,7 +143,7 @@ export function reviewPdfText({ saved }) {
       message('#pdf-review-box-status');
       number.value = String(data.page.number); number.max = String(data.total);
       $('#pdf-review-total').textContent = `of ${data.total}`;
-      text.value = session.edits.get(data.page.number) ?? data.page.text;
+      history.open(data.page.number, data.page.text);
       text.lang = session.book.language;
       message('#pdf-review-status'); controls();
       void showPreview(session, data);
@@ -133,12 +152,26 @@ export function reviewPdfText({ saved }) {
     } finally { if (editor === session) { session.loading = false; controls(); } }
   }
 
-  function edit(value) {
-    const { number, text: savedText } = editor.page;
-    if (value === savedText) editor.edits.delete(number);
-    else editor.edits.set(number, value);
-    if (text.value !== value) text.value = value;
+  function removeCharacters(pattern) {
+    const filtered = (value) => value.replace(pattern, '');
+    const { value, selectionStart, selectionEnd, selectionDirection } = text;
+    history.replace(filtered(value), {
+      start: filtered(value.slice(0, selectionStart)).length,
+      end: filtered(value.slice(0, selectionEnd)).length,
+      direction: selectionDirection,
+    });
   }
+  removeLatin.addEventListener('click', () => removeCharacters(latinLetters));
+  removeNumerals.addEventListener('click', () => removeCharacters(numerals));
+  undo.addEventListener('click', () => history.move('undo'));
+  redo.addEventListener('click', () => history.move('redo'));
+  document.addEventListener('keydown', (event) => {
+    if (!dialog.open || event.defaultPrevented || event.isComposing || history.composing || event.altKey
+      || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'z') return;
+    if (event.target !== text && event.target.closest?.('input, textarea, select, [contenteditable]')) return;
+    event.preventDefault();
+    history.move(event.shiftKey ? 'redo' : 'undo');
+  });
 
   extract.addEventListener('click', async () => {
     const session = editor;
@@ -165,7 +198,7 @@ export function reviewPdfText({ saved }) {
       const blank = texts.flatMap((value, index) => readable(value) ? [] : [index + 1]);
       const revised = texts.filter(readable).join('\n\n');
       if (!revised) throw new Error('No readable text was found in these boxes. Try a tighter selection or check the book’s OCR language.');
-      edit(revised);
+      history.replace(revised);
       message('#pdf-review-box-status', blank.length ? `Text added to the editor. No readable text in boxes ${blank.join(', ')}.` : 'Text added to the editor.');
     } catch (error) {
       if (editor !== session) return;
@@ -177,9 +210,8 @@ export function reviewPdfText({ saved }) {
   });
   document.addEventListener('selectionchange', () => { if (dialog.open) controls(); });
   copy.addEventListener('pointerdown', (event) => event.preventDefault());
-  copy.addEventListener('click', () => { const value = selectedText(); if (value && editor?.page) { edit(value); text.focus(); } });
-  text.addEventListener('input', () => edit(text.value));
-  original.addEventListener('click', () => edit(editor.page.original));
+  copy.addEventListener('click', () => { const value = selectedText(); if (value && editor?.page) { history.replace(value); text.focus(); } });
+  original.addEventListener('click', () => history.replace(editor.page.original));
   excluded.addEventListener('input', controls);
   skip.addEventListener('change', () => {
     const pages = parsePageRanges(excluded.value, editor.total);
@@ -213,12 +245,14 @@ export function reviewPdfText({ saved }) {
   dialog.addEventListener('close', () => {
     if (dialog.open) return;
     clearTimeout(poll); editor?.controller.abort(); editor?.preview?.destroy(); editor = undefined;
+    history.reset();
     selectionBoxes.set([], { reset: true });
     preview.replaceChildren();
   });
   return { open(book) {
     if (dialog.open) return;
     editor = { book, controller: new AbortController(), edits: new Map(), boxes: new Map() };
+    history.reset();
     form.reset(); controls(); message('#pdf-review-error'); message('#pdf-review-preview-status');
     $('#pdf-review-total').textContent = '';
     dialog.showModal(); void load(1);

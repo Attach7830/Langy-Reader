@@ -21,6 +21,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   const player = $('#narration-player'), audio = $('#narration-audio');
   const play = $('#narration-play'), generate = $('#narration-generate');
   const status = $('#narration-status'), seek = $('#narration-seek');
+  const clock = $('#narration-time'), completion = $('#narration-completion'), percent = $('#narration-percent');
   const chapters = $('#narration-chapter'), markers = $('#narration-markers');
   const rewind = $('#narration-rewind'), forward = $('#narration-forward');
   const previousChapter = $('#narration-previous-chapter'), nextChapter = $('#narration-next-chapter');
@@ -62,12 +63,17 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     const time = audio.currentTime || 0;
     const speed = playbackSpeed(), duration = recording?.duration || 0;
     const elapsed = timeLabel(time / speed), total = timeLabel(duration / speed), remaining = timeLabel((duration - time) / speed);
+    const hasDuration = ready() && Number.isFinite(duration) && duration > 0;
+    const position = loaded && !waitingForMetadata ? (audio.ended ? duration : time) : 0;
+    const complete = hasDuration ? Math.floor(Math.max(0, Math.min(100, 100 * position / duration))) : 0;
+    const percentLabel = `${complete}%`;
     seek.max = String(recording?.duration || 1);
     seek.value = String(time);
-    const clock = $('#narration-time');
     clock.textContent = `${elapsed} / ${total}`;
     clock.setAttribute('aria-label', `Listening time at ${speed}×: ${elapsed} of ${total}; ${remaining} remaining.`);
     clock.title = `${remaining} remaining at ${speed}×. Recording position: ${timeLabel(time)} / ${timeLabel(duration)}.`;
+    completion.hidden = !hasDuration;
+    if (percent.textContent !== percentLabel) percent.textContent = percentLabel;
     if (markerRate !== speed) renderMarkers();
     const index = chapterIndex();
     rewind.disabled = !loaded || time <= 0;
@@ -76,7 +82,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     nextChapter.disabled = !loaded || index >= recording.markers.length - 1;
     if (index >= 0) chapters.value = String(index);
     const title = index >= 0 ? recording.markers[index].title : segmentAt(time)?.title;
-    seek.setAttribute('aria-valuetext', `${elapsed} of ${total} at ${speed}×${title ? ` · ${title}` : ''}`);
+    seek.setAttribute('aria-valuetext', `${elapsed} of ${total} at ${speed}×${hasDuration ? ` · ${percentLabel} complete` : ''}${title ? ` · ${title}` : ''}`);
     if (ready() && title) status.textContent = title
       + (recording.quality ? ` · ${recording.quality.textPercent}% of text matched` : '')
       + (recording.approximateSections ? ' · Some page timing is approximate.' : '');

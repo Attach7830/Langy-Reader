@@ -307,7 +307,10 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
           <input id="narration-seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="Book audio position" disabled>
           <div id="narration-markers" class="narration-markers"></div>
         </div>
-        <span id="narration-time" role="timer" aria-live="off" aria-label="Listening time">0:00 / 0:00</span>
+        <div class="narration-readout">
+          <span id="narration-time" role="timer" aria-live="off" aria-label="Listening time">0:00 / 0:00</span>
+          <span id="narration-completion" hidden><span id="narration-percent"></span> <span>complete</span></span>
+        </div>
         <label class="podcast-speed" data-podcast-control hidden>Speed
           <select id="narration-rate" aria-label="Podcast playback speed">
             <option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option>
@@ -909,8 +912,14 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
             </div>
           </div>
           <div class="form-stack">
+            <div class="pdf-text-actions" role="group" aria-label="Text editing tools">
+              <button class="button quiet small" id="pdf-review-undo" type="button" aria-keyshortcuts="Control+Z Meta+Z" disabled>Undo</button>
+              <button class="button quiet small" id="pdf-review-redo" type="button" aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z" disabled>Redo</button>
+              <button class="button quiet small" id="pdf-review-original" type="button">Use extracted text</button>
+              <button class="button secondary small" id="pdf-review-remove-latin" type="button" disabled>Remove Latin characters</button>
+              <button class="button secondary small" id="pdf-review-remove-numerals" type="button" disabled>Remove numerals</button>
+            </div>
             <label class="field">Text for audio and vocabulary <textarea name="text" rows="14" dir="auto" spellcheck="false"></textarea></label>
-            <button class="button quiet small" id="pdf-review-original" type="button">Use extracted text</button>
           </div>
         </div>
         <p id="pdf-review-error" class="form-error" role="alert" hidden></p>
