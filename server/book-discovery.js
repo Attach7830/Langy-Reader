@@ -5,6 +5,8 @@ import { baseLanguage } from '../shared/language.js';
 import { normalizeLanguage, RequestError } from './books.js';
 import { waitForOpenLibrary } from './open-library-rate.js';
 import { consumeProcesses, PROCESS_YIELD } from './process-scheduler.js';
+import { openWebSearch, searchJson } from './web-search.js';
+export { searchLink as discoveryLink } from './web-search.js';
 
 const clean = (value, limit) => typeof value === 'string' ? value.replace(/[\x00-\x1f]/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, limit) : '';
 const titleKey = (value) => clean(value, 500).normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -25,30 +27,9 @@ async function abortable(task, signal) {
   finally { signal.removeEventListener('abort', abort); }
 }
 
-export function discoveryLink(value) {
-  try {
-    const url = new URL(value);
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password
-      || /^(?:localhost|0\.|10\.|127\.|169\.254\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|\[)/iu.test(url.hostname)
-      || !url.hostname.includes('.') || /\.(?:local|internal)$/iu.test(url.hostname)) return null;
-    url.hash = ''; return url.href;
-  } catch { return null; }
-}
-
-async function jsonResponse(response) {
-  if (!response.ok) throw new RequestError(502, `Search returned HTTP ${response.status}.`);
-  const chunks = []; let size = 0;
-  for await (const chunk of response.body) {
-    size += chunk.length;
-    if (size > 2 * 1024 ** 2) throw new RequestError(502, 'Search returned too much data. Try a narrower request.');
-    chunks.push(chunk);
-  }
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
-  catch { throw new RequestError(502, 'Search returned an unreadable response.'); }
-}
-
-export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl = process.env.READER_SEARCH_URL ?? 'http://search:8080',
+export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl,
   fetcher = (...args) => fetch(...args), catalogueDelay = 1100, timeoutMs = 240000, withAI = (_visitor, task) => task(), visitorForOwner = (id, expires) => id ? { id, expires } : undefined, scheduler } = {}) {
+  const webSearch = openWebSearch({ searchUrl, fetcher });
   const db = new DatabaseSync(join(dir, 'discovery.sqlite'));
   db.exec(`PRAGMA journal_mode=WAL;
     CREATE TABLE IF NOT EXISTS discoveries (
@@ -123,22 +104,12 @@ export function openBookDiscovery(dir, { library, ai, demo = false, searchUrl = 
       url.searchParams.set('fields', 'key,title,author_name,first_publish_year,language,subject');
       const response = await fetcher(url, { headers: { Accept: 'application/json', 'User-Agent': 'Langy-Reader/0.1 (https://github.com/Attach7830/Langy-Reader)' },
         redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) });
-      const data = await jsonResponse(response), docs = Array.isArray(data.docs) ? data.docs : [];
+      const data = await searchJson(response), docs = Array.isArray(data.docs) ? data.docs : [];
       catalogueCache.set(query, { expires: Date.now() + 86400000, docs });
       if (catalogueCache.size > 100) catalogueCache.delete(catalogueCache.keys().next().value);
       return docs;
     });
     catalogueLane = pending.catch(() => {}); return pending;
-  }
-  async function webSearch(query, signal) {
-    if (!searchUrl) throw new RequestError(503, 'Web search is not configured.');
-    const url = new URL('search', searchUrl.replace(/\/+$/u, '') + '/');
-    url.searchParams.set('q', query); url.searchParams.set('format', 'json'); url.searchParams.set('categories', 'general');
-    const data = await jsonResponse(await fetcher(url, { headers: { Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(18000)]) }));
-    return (Array.isArray(data.results) ? data.results : []).slice(0, 6).flatMap((item) => {
-      const url = discoveryLink(item.url), title = clean(item.title, 180), snippet = clean(item.content, 500);
-      return url && title ? [{ url, title, snippet }] : [];
-    });
   }
   async function generate(row, signal) {
     const saved = checkpoints.get(row.id) || {};

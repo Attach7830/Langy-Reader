@@ -60,6 +60,8 @@ test('holding page arrows repeats navigation while pinyin, summary and playback 
   settings.keys.pinyin = 'j'; key('y'); assert.equal(getSettings().showPinyin, false); key('j'); assert.equal(getSettings().showPinyin, true);
   key('['); key(']'); assert.equal(actions.at(-2), 'rewindAudio'); assert.equal(actions.at(-1), 'forwardAudio');
   key(']', true); assert.equal(actions.at(-1), 'forwardAudio');
+  key('k'); assert.equal(actions.at(-1), 'bookmarkSelection');
+  key('e'); assert.equal(actions.at(-1), 'explainSelection');
 });
 
 test('an empty extra-language field permits native book form submission, including after abandoning another language', async (t) => {

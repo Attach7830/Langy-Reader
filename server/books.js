@@ -9,6 +9,7 @@ import { downloadCover } from './cover-images.js';
 import { baseLanguage } from '../shared/language.js';
 import { archivePath, bookText, epubMetadataValues, filenameTitle, inferBookLanguage, parseEpubContainer, parseEpubPackage } from '../shared/book-metadata.js';
 import { validCoverStyle } from '../shared/book-covers.js';
+import { bookmarkTargetKey, isPdfTextBookmark } from '../shared/bookmark-targets.js';
 
 export const maxUpload = 120 * 1024 * 1024;
 
@@ -315,14 +316,15 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
     },
     saveBookmark(id, body, visitor) {
       const book = getBook(id, visitor), target = body.target;
-      const valid = book.format === 'pdf' ? Number.isSafeInteger(target) && target >= 1 && target <= 1000000
+      const valid = book.format === 'pdf' ? isPdfTextBookmark(target) || (Number.isSafeInteger(target) && target >= 1 && target <= 1_000_000)
         : typeof target === 'string' && target.length <= 8192 && /^epubcfi\([^<>\x00-\x1f]+\)$/u.test(target);
       if (!valid || typeof body.label !== 'string' || body.label.length > 200 || typeof (body.note ?? '') !== 'string' || (body.note || '').length > 2000) throw new RequestError(422, 'Choose a reading position, a label of up to 200 characters and an optional note of up to 2,000 characters.');
-      const owner = editable(visitor), serialized = JSON.stringify(target);
+      const owner = editable(visitor), serialized = bookmarkTargetKey(target);
       const existing = db.prepare('SELECT id FROM bookmarks WHERE book=? AND owner=? AND target=?').get(id, owner, serialized);
       if (!existing && db.prepare('SELECT count(*) AS n FROM bookmarks WHERE book=? AND owner=?').get(id, owner).n >= 1000) throw new RequestError(422, 'This book already has 1,000 bookmarks. Remove one to add another.');
-      db.prepare(`INSERT INTO bookmarks VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(book,owner,target) DO UPDATE SET label=excluded.label,note=excluded.note`)
-        .run(randomUUID(), id, owner, serialized, body.label.trim() || 'Bookmark', (body.note || '').trim(), Date.now(), visitor?.expires ?? null);
+      db.prepare(`INSERT INTO bookmarks VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(book,owner,target) DO UPDATE SET
+        label=excluded.label,note=CASE WHEN ? THEN bookmarks.note ELSE excluded.note END`)
+        .run(randomUUID(), id, owner, serialized, body.label.trim() || 'Bookmark', (body.note || '').trim(), Date.now(), visitor?.expires ?? null, Number(body.note === undefined));
       return { bookmarks: this.bookmarks(id, visitor) };
     },
     removeBookmark(id, bookmark, visitor) {

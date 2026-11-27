@@ -1,4 +1,4 @@
-import { accountPreferences, defaults, isObject, mergePreferences, preferenceChanges } from '../shared/reader-preferences.js';
+import { accountPreferences, defaults, isObject, mergePreferences, preferenceChanges, shortcutDefaults } from '../shared/reader-preferences.js';
 
 const cacheKey = 'langy-account-settings-v1';
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -37,7 +37,8 @@ export function accountSettings({ request, preferences, apply, busy = () => fals
     if (busy()) { deferred = true; return; }
     deferred = false;
     const local = preferences();
-    apply(mergePreferences({ ...defaults, progressSyncEnabled: local.progressSyncEnabled, syncDeviceName: local.syncDeviceName }, mergePreferences(snapshot.preferences, pending)));
+    const saved = mergePreferences(snapshot.preferences, pending);
+    apply(mergePreferences({ ...defaults, progressSyncEnabled: local.progressSyncEnabled, syncDeviceName: local.syncDeviceName }, { ...saved, keys: shortcutDefaults(saved.keys) }));
   }
   function receive(remote) {
     if (closed) return;

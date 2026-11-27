@@ -68,6 +68,15 @@ export function trackText(root, language, pdf = false) {
 
   return {
     root, text: content.text, words, rangeFor, visible, match,
+    offsetForRange(range) {
+      for (const run of content.runs) {
+        if (!range.intersectsNode(run.node)) continue;
+        const start = run.node === range.startContainer ? Math.max(run.offset, range.startOffset) : run.offset;
+        const end = run.node === range.endContainer ? range.endOffset : Infinity;
+        if (start < Math.min(end, run.offset + run.end - run.start)) return run.start + start - run.offset;
+      }
+      return null;
+    },
     annotate(tokens) {
       annotations.clear();
       for (const [index, word] of match(tokens)) annotations.set(word, tokens[index]);

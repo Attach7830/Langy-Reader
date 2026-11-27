@@ -171,6 +171,12 @@ export async function openPdf({ host, url, position, language, hooks, signal }) 
         return adjacentSection(entries, pageNumber, direction);
       },
       readingRoots() { return [shell.querySelector('.textLayer')].filter(Boolean); },
+      bookmarkTarget(range) {
+        const root = shell.querySelector('.textLayer');
+        if (!root?.contains(range.startContainer)) return;
+        const from = trackText(root, language, true).offsetForRange(range);
+        return from == null ? pageNumber : { text: true, key: `pdf:${pageNumber}`, from };
+      },
       audioUnit() {
         const root = shell.querySelector('.textLayer');
         return root?.childElementCount ? { key: `pdf:${pageNumber}`, root, track: () => trackText(root, language, true) } : null;

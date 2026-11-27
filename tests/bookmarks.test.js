@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { JSDOM } from 'jsdom';
@@ -13,11 +13,29 @@ test('bookmarks and notes persist, deduplicate a source position and never chang
   let library = await openLibrary(dir); const before = await readFile(library.filePath(library.getBook('sample')));
   library.saveBookmark('sample', { target: cfi, label: 'A useful passage', note: 'Read this again.' });
   library.saveBookmark('sample', { target: cfi, label: 'Renamed', note: 'A revised note.' });
+  library.saveBookmark('sample', { target: cfi, label: 'Renamed' });
   library = await openLibrary(dir); const entries = library.bookmarks('sample');
   assert.equal(entries.length, 1); assert.equal(entries[0].target, cfi); assert.equal(entries[0].label, 'Renamed'); assert.equal(entries[0].note, 'A revised note.');
   assert.deepEqual(await readFile(library.filePath(library.getBook('sample'))), before);
   assert.throws(() => library.saveBookmark('sample', { target: 'https://other.example', label: 'Invalid' }), { status: 422 });
   library.removeBookmark('sample', entries[0].id); assert.equal(library.bookmarks('sample').length, 0);
+});
+
+test('PDF text bookmarks keep separate positions on the same page and reuse canonical destinations', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'langy-pdf-bookmarks-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const library = await openLibrary(dir), bytes = Buffer.from('%PDF-1.4\n%%EOF\n');
+  const path = join(library.uploads, 'book.pdf'); await writeFile(path, bytes);
+  const book = await library.importBook('book', { path, size: bytes.length, originalname: 'book.pdf' }, { title: 'PDF', language: 'en' });
+  const first = { text: true, key: 'pdf:1', from: 3 }, second = { ...first, from: 30 };
+  library.saveBookmark(book.id, { target: 1, label: 'Page 1' });
+  library.saveBookmark(book.id, { target: first, label: 'First selection', note: 'A note' });
+  library.saveBookmark(book.id, { target: second, label: 'Second selection' });
+  library.saveBookmark(book.id, { target: { from: 3, key: 'pdf:1', text: true }, label: 'First selection' });
+  const entries = library.bookmarks(book.id);
+  assert.equal(entries.length, 3);
+  assert.deepEqual(entries.find((entry) => entry.note === 'A note')?.target, first);
+  assert.deepEqual(entries.find((entry) => entry.label === 'Second selection')?.target, second);
+  assert.throws(() => library.saveBookmark(book.id, { target: { ...first, from: -1 }, label: 'Invalid' }), { status: 422 });
 });
 
 test('demo bookmarks on the shared sample remain private to their visitor and expire', async (t) => {

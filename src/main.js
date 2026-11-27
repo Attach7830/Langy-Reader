@@ -117,7 +117,10 @@ const words = wordHelp({
   seekWord: (node, offset) => audio.seekWord(node, offset),
   onWord: readingTime.activity,
 });
-const phrases = phraseHelp({ book: () => activeBook, preferences: () => settings, request: api, onSelection: () => words.clear() });
+const phrases = phraseHelp({ book: () => activeBook, preferences: () => settings, request: api,
+  roots: () => renderer?.readingRoots() || [], onSelection: words.clear,
+  onBookmark: (range, text) => bookmarks.openSelection(renderer?.bookmarkTarget?.(range) ?? activePosition?.target, text),
+});
 const audio = narration({
   preferences: () => temporaryAudioVisible ? { ...settings, audioToolbarHidden: false } : settings, renderer: () => renderer, book: () => activeBook,
   readingPosition: () => activePosition?.target,
@@ -785,6 +788,8 @@ function keydown(event) {
   else if (action === 'rewindAudio') audio.skipBy(-10);
   else if (action === 'forwardAudio') audio.skipBy(10);
   else if (action === 'bookmarks') void bookmarks.open();
+  else if (action === 'bookmarkSelection') phrases.bookmark();
+  else if (action === 'explainSelection') void phrases.explain();
   else if (action === 'audioToolbar') toggleAudioToolbar();
   else if (action === 'pinyin' && !activeBook?.l1Folder) { applySettings({ ...settings, showPinyin: !settings.showPinyin }); toast(settings.showPinyin ? 'Pinyin shown' : 'Pinyin hidden'); }
   else if (action === 'returnLocation') void returnHistory.back();

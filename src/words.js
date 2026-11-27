@@ -276,7 +276,7 @@ export function wordHelp({ preferences, request, lemmaAt = () => null, seekWord 
     root.addEventListener('pointerdown', (event) => { if (event.pointerType !== 'touch') clear(); }, options);
     root.addEventListener('pointerup', (event) => { if (event.pointerType === 'touch') inspect(event, true); }, options);
     root.addEventListener('click', (event) => {
-      if (event.pointerType === 'touch' || event.sourceCapabilities?.firesTouchEvents) return;
+      if (event.pointerType === 'touch' || event.sourceCapabilities?.firesTouchEvents || root.ownerDocument.getSelection()?.isCollapsed === false) return;
       const item = wordAt(root, event, segmenter);
       if (item) seekWord(item.node, item.index);
     }, options);

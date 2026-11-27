@@ -18,12 +18,6 @@ function locale(code) {
   catch { return ''; }
 }
 
-function shortGloss(gloss) {
-  if (typeof gloss !== 'string') return '';
-  const text = gloss.replace(/\s+/gu, ' ').trim();
-  return text.length > 160 ? `${text.slice(0, 157).replace(/\s+\S*$/u, '')}…` : text;
-}
-
 console.log('Downloading the Wiktionary index source…');
 const response = await fetch(dataset, { signal: AbortSignal.timeout(180_000) });
 if (!response.ok || !response.body) throw new Error(`Could not download Wiktionary (HTTP ${response.status})`);
@@ -59,7 +53,8 @@ try {
         }
       }
       if (sense.form_of?.length || sense.tags?.includes('form-of') || entry.tags?.includes('form-of')) continue;
-      const label = shortGloss(sense.glosses?.at(-1));
+      const gloss = sense.glosses?.at(-1);
+      const label = typeof gloss === 'string' ? gloss.replace(/\s+/gu, ' ').trim() : '';
       const linked = (entry.synonyms ?? []).filter((synonym) => synonym.sense_index
         ? synonym.sense_index === sense.sense_index : senses.length === 1 && !synonym.sense);
       const terms = [...(sense.synonyms ?? []), ...linked].map((synonym) => synonym.word).filter(isTerm);
@@ -85,7 +80,7 @@ try {
   await writeFile(join(licenses, 'README'), [
     'Spanish Wiktionary contributors — https://es.wiktionary.org/',
     `Extracted by Wiktextract and distributed by Kaikki — ${dataset}`,
-    'Langy’s Wiktionary index contains selected and shortened glosses, synonyms, and forms.',
+    'Langy’s Wiktionary index contains selected glosses, synonyms, and forms.',
     'CC BY-SA 4.0 — https://creativecommons.org/licenses/by-sa/4.0/',
     '',
   ].join('\n'));

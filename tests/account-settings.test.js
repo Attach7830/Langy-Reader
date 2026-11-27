@@ -145,3 +145,12 @@ test('server preferences still load if the browser refuses localStorage access',
   const client = accountSettings({ request: async () => db.get(), preferences: () => settings, apply: (value) => { settings = value; } });
   t.after(() => client.close()); await client.start(); assert.equal(settings.showPinyin, true);
 });
+
+test('existing account hotkeys take precedence over the new selection defaults', async (t) => {
+  const { db } = await store(t); db.patch({ revision: 0, changes: { keys: { next: 'e', previous: 'k' } } });
+  const reader = browser(t, db); await reader.client.start();
+  assert.equal(reader.settings().keys.next, 'e'); assert.equal(reader.settings().keys.previous, 'k');
+  assert.equal(reader.settings().keys.explainSelection, ''); assert.equal(reader.settings().keys.bookmarkSelection, '');
+  reader.change({ keys: { explainSelection: 'd', bookmarkSelection: 'j' } }); await reader.client.flush();
+  assert.deepEqual(db.get().preferences.keys, { next: 'e', previous: 'k', explainSelection: 'd', bookmarkSelection: 'j' });
+});

@@ -214,7 +214,7 @@ test('completed OCR refreshes library metadata once even when its status dialog 
   window.removeEventListener('langy-library-changed', changed);
 });
 
-test('selecting a phrase offers one explicit contextual AI action and closes or aborts safely', async (t) => {
+test('text selection offers icon-only bookmark and explain actions and aborts stale explanations', async (t) => {
   const dom = await browser(t), root = document.createElement('article'); root.innerHTML = '<p>La viajera tenía muchas ganas de leer esta historia.</p>'; document.body.append(root);
   dom.window.Range.prototype.getBoundingClientRect = () => ({ left: 30, top: 100, bottom: 125 });
   const calls = []; let selected = 0, pending;
@@ -224,6 +224,10 @@ test('selecting a phrase offers one explicit contextual AI action and closes or 
   const range = document.createRange(); range.setStart(root.firstChild.firstChild, 17); range.setEnd(root.firstChild.firstChild, 28); const selection = document.getSelection(); selection.removeAllRanges(); selection.addRange(range); document.dispatchEvent(new dom.window.Event('selectionchange'));
   await until(() => !document.querySelector('#phrase-help').hidden);
   assert.equal(calls.length, 0, 'selection itself must not spend tokens'); assert.equal(selected, 1);
+  const actions = [...document.querySelectorAll('#phrase-help button:not([hidden])')];
+  assert.deepEqual(actions.map((button) => button.getAttribute('aria-label')), ['Bookmark selection', 'Explain phrase']);
+  assert.ok(actions.every((button) => button.querySelector('[data-lucide]') && button.textContent.trim() === ''));
+  assert.equal(document.querySelector('.phrase-response').hidden, true);
   document.querySelector('[data-explain-phrase]').click(); await until(() => document.querySelector('[data-phrase-answer]').textContent.includes('Significa'));
   assert.equal(calls[0].path, '/api/ai/phrase'); assert.equal(calls[0].body.translationLanguage, 'pt'); assert.ok(calls[0].body.context.includes(calls[0].body.phrase));
   root.setAttribute('lang', 'pt'); ui.clear(); document.dispatchEvent(new dom.window.Event('selectionchange')); await until(() => !document.querySelector('#phrase-help').hidden);

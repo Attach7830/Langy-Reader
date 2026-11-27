@@ -14,10 +14,10 @@ const englishPage = 'The girl returned to the house as evening fell. Her brother
 const englishExplanation = 'His attempt to conceal the letter creates tension because his actions conflict with his reassuring words. The reader has a reason to doubt his claim, although the contents of the message remain unknown.\n\nHer decision to wait shows caution and leaves the conflict unresolved.';
 const source = (request) => JSON.parse(request.messages[1].content.match(/Source data \(JSON\): ([^\n]+)/u)[1]);
 
-async function fixture(t, respond, provider = 'ollama') {
+async function fixture(t, respond, provider = 'ollama', options) {
   const dir = await mkdtemp(join(tmpdir(), 'langy-summary-')), previous = globalThis.fetch, requests = [];
   t.after(async () => { globalThis.fetch = previous; await rm(dir, { recursive: true, force: true }); });
-  const ai = await openAISettings(dir, false);
+  const ai = await openAISettings(dir, false, options);
   await ai.save({ provider, baseUrl: 'http://local-ai.test:11434', model: 'qwen3:8b' });
   globalThis.fetch = async (url, options) => {
     const request = JSON.parse(options.body); requests.push({ ...request, url: String(url), signal: options.signal });
@@ -149,4 +149,26 @@ test('phrase help sends the exact selection and passage, requests the chosen lan
   assert.equal(source(request).selectedPhrase, body.phrase); assert.equal(source(request).passage, body.context);
   for (const invalid of [{ ...body, phrase: '' }, { ...body, phrase: 'x'.repeat(701) }, { ...body, context: 'unrelated' }, { ...body, context: 'x'.repeat(4001) }]) await assert.rejects(f.ai.phrase(invalid, f.signal), /Select a phrase/u);
   assert.equal(f.requests.length, 1);
+});
+
+test('optional web context searches only the selected phrase and returns links for valid cited results', async (t) => {
+  const queries = []; let unavailable = false, relevant = true;
+  const f = await fixture(t, () => relevant ? 'It means to lose your train of thought [1]. [9]' : 'An explanation without a useful source.', 'ollama', {
+    webSearch: async (query) => {
+      queries.push(query); if (unavailable) throw new Error('Search unavailable');
+      return [{ url: 'https://example.org/entry', title: 'Dictionary', snippet: 'An idiom about forgetting what you were going to say.' },
+        { url: 'https://example.org/unrelated', title: 'Other page', snippet: 'A result about something else.' }];
+    },
+  });
+  const body = { phrase: 'irse el santo al cielo', context: 'En esta página se dice irse el santo al cielo.', language: 'es', translationLanguage: 'en' };
+  await f.ai.phrase(body, f.signal); assert.deepEqual(queries, []);
+  const result = await f.ai.phraseWithWeb(body, f.signal);
+  assert.deepEqual(queries, [body.phrase]);
+  assert.equal(result.text, 'It means to lose your train of thought [1].');
+  assert.deepEqual(result.sources, [{ id: 1, title: 'Dictionary', url: 'https://example.org/entry' }]);
+  assert.equal(source(f.requests[1]).passage, body.context);
+  assert.equal(source(f.requests[1]).searchExcerpts[0].title, 'Dictionary');
+  relevant = false; assert.deepEqual(await f.ai.phraseWithWeb(body, f.signal), { webStatus: 'no-sources' });
+  unavailable = true; assert.deepEqual(await f.ai.phraseWithWeb(body, f.signal), { webStatus: 'unavailable' });
+  assert.equal(f.requests.length, 3);
 });

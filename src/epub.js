@@ -472,6 +472,13 @@ export async function openEpub({ host, url, position, language, settings, hooks,
         return book.spine.spineItems.map(({ index }) => ({ index, label: labels.get(index) || `Section ${index + 1}` }));
       },
       readingRoots() { return rendition.getContents().map((contents) => contents.content).filter(Boolean); },
+      bookmarkTarget(range) {
+        const contents = rendition.getContents().find((content) => content.document === range.startContainer.ownerDocument);
+        if (!contents) return;
+        const start = range.cloneRange();
+        start.collapse(true);
+        return contents.cfiFromRange(start);
+      },
       vocabularyPages() {
         if (reflowing) return [];
         return rendition.getContents().filter((contents) => contents.content).map((contents) => ({

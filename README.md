@@ -122,6 +122,8 @@ Open **Settings → Language → My reading languages** to save the languages yo
 
 Open **Bookmarks** in the reader toolbar, or press **M** (customizable), to save the current EPUB/PDF position with a label and optional note. Saved bookmarks follow your library across browsers; opening one uses the same page/audio navigation and allows returning with the previous-location control. Repeatedly saving the same source position updates its note instead of adding duplicates. Demo bookmarks are private to each visitor.
 
+Select text and choose the bookmark icon or press **K** to save that passage. Type a note if you want one, then press **Enter** to save. **Shift+Enter** adds a line break in a note.
+
 While reading, **[** rewinds audio ten seconds and **]** skips forward ten seconds, including with the toolbar hidden. Both shortcuts are customizable in Settings. Scroll over the playback speed control to change speed in **0.05×** steps between 0.5× and 2×; ordinary page scrolling is unchanged.
 
 **Import book** and **Book details** include six selectable default covers: Terracotta, Forest, Ocean, Night sky, Parchment and Plum geometry. Previews show your title and author. The choice is saved with the book across browsers. **Original / automatic** restores the embedded image when available, or the existing generated cover; choosing a design never alters the EPUB/PDF or deletes the original cover.
@@ -153,6 +155,8 @@ In the category editor, optionally choose a **Folder language**. Saving assigns 
 | A | Show or hide the audio toolbar without pausing narration |
 | Y | Show or hide inline pinyin |
 | B | Return to the location before following an internal book link |
+| K, while text is selected | Bookmark the selected passage |
+| E, while text is selected | Explain the selected passage |
 | Down / Up, while a word popup is open | Cycle the active entry’s meanings |
 
 Change assigned keys in **Settings → Hotkeys**. Space always controls playback while narration is enabled; when narration is off, its assigned action applies. **A** toggles the audio toolbar while playback and page following continue. Existing custom key assignments are preserved when new shortcuts are introduced; a conflicting new shortcut starts unassigned. Navigation and summary buttons also work on touchscreens. Hold Left or Right to continue turning pages at keyboard-repeat speed; only one page change runs at a time, with at most two pending turns. Toggle shortcuts ignore held-key repeats.
@@ -544,7 +548,7 @@ Use **Raise priority** to move a task ahead of the running task while preserving
 
 Android book-pack downloads have their own single-device queue with the same three priority controls. Switching safely stops the current transfer and returns it to the queue; it restarts when its turn returns. A completed offline pack remains available until a complete replacement is saved. Device queue order survives closing the app, and device transfers can run while the server processes a book.
 
-Pinch EPUB text with a desktop trackpad to change the desktop font size; phone/tablet size remains separate. Plain arrow keys turn pages; **Ctrl+Left / Ctrl+Right** jump between sections. Select a phrase and choose **Explain phrase** for its meaning in context, in your translation language. Completed explanations follow your **Save and reuse AI answers** preference.
+Pinch EPUB text with a desktop trackpad to change the desktop font size; phone/tablet size remains separate. Plain arrow keys turn pages; **Ctrl+Left / Ctrl+Right** jump between sections. Select a phrase and choose the explain icon or press **E** for its meaning in context, in your translation language. Long explanations scroll inside the popup. **Search the web** appears in the explanation and queries the configured search service using up to 220 characters of the selection. The model uses the surrounding passage and relevant search excerpts, with links to the cited sources. If the search finds no helpful sources, the first explanation remains visible. Explanations from the passage alone follow your **Save and reuse AI answers** preference.
 
 Mandarin pinyin passages are saved with each book in the persistent data directory and reused across sessions and devices. Exact surrounding text and pronunciation-data revisions identify reusable results. The cache fills as you read; changed text or updated pronunciation data gets fresh readings. Offline packs also save locally generated pinyin on the device. Pinyin is dictionary based and uses no LLM tokens.
 
