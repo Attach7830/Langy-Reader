@@ -5,7 +5,16 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function acknowledged(pending, sent) {
   const remaining = { ...pending };
   for (const [key, value] of Object.entries(sent)) {
-    if (['keys', 'audioRecordings'].includes(key)) {
+    if (key === 'languageDefaults') {
+      const map = structuredClone(remaining[key] || {});
+      for (const [language, fields] of Object.entries(value)) {
+        if (same(map[language], fields)) { delete map[language]; continue; }
+        if (!isObject(map[language]) || !isObject(fields)) continue;
+        for (const [field, target] of Object.entries(fields)) if (same(map[language][field], target)) delete map[language][field];
+        if (!Object.keys(map[language]).length) delete map[language];
+      }
+      if (Object.keys(map).length) remaining[key] = map; else delete remaining[key];
+    } else if (['keys', 'audioRecordings'].includes(key)) {
       const map = { ...remaining[key] };
       for (const [name, setting] of Object.entries(value)) if (same(map[name], setting)) delete map[name];
       if (Object.keys(map).length) remaining[key] = map; else delete remaining[key];

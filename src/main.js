@@ -1,5 +1,6 @@
 import { proficiencyPage } from './proficiency.js';
 import { startup } from './startup.js';
+import { languageHelpPreferences } from '../shared/language-defaults.js';
 import '@fontsource/dm-sans/latin-400.css';
 import '@fontsource/dm-sans/latin-600.css';
 import '@fontsource/dm-sans/latin-700.css';
@@ -101,9 +102,9 @@ const pageGestures = pageNavigation({ host: $('.reading-main'),
 const pinyin = pinyinOverlay({ host: viewer, preferences: () => settings, renderer: () => renderer, book: () => activeBook, request: api });
 const pinyinButton = pinyinToolbar({ button: $('#pinyin-toggle'), preferences: () => settings, book: () => activeBook,
   change: (showPinyin) => { applySettings({ ...settings, showPinyin }); toast(showPinyin ? 'Pinyin shown' : 'Pinyin hidden'); } });
-const bookTools = readingBookTools({ book: () => activeBook, renderer: () => renderer, preferences: () => settings, request: api,
+const bookTools = readingBookTools({ book: () => activeBook, renderer: () => renderer, preferences: outputPreferences, request: api,
   async go(target) { const moved = await returnHistory.follow(target); if (moved) await audio.seekSource(target.key, target.from); return moved; } });
-const questions = pageQuestions({ book: () => activeBook, renderer: () => renderer, preferences: () => settings, request: api });
+const questions = pageQuestions({ book: () => activeBook, renderer: () => renderer, preferences: outputPreferences, request: api });
 const readingTime = readingTimeTracker({ book: () => activeBook, renderer: () => renderer, request: api,
   eligible: () => !document.hidden && document.hasFocus() && !readerScreen.hidden && !document.querySelector('dialog[open]') });
 const vocabulary = readingVocabulary({ book: () => activeBook, renderer: () => renderer, request: api, onDisplay: readingTime.evidence });
@@ -221,7 +222,7 @@ function applyAppearance() {
   updateAppearance(settings);
   pinyinButton.refresh();
   $('#word-mode-label').textContent = settings.mode === 'translation'
-    ? `${languageName(settings.translationLanguage)} translation` : modes[settings.mode];
+    ? `${languageName(outputPreferences().translationLanguage)} translation` : modes[settings.mode];
   if (settings.mode === 'off') $('#word-mode-label').textContent = 'Word help off';
   $('.word-settings').setAttribute('aria-label', `Word help: ${$('#word-mode-label').textContent}`);
   $('#summarize').title = settings.keys.summary ? `Summarize page (${keyLabel(settings.keys.summary)})` : 'Summarize page';
@@ -233,7 +234,7 @@ function applyAppearance() {
 
 function applySettings(updated, aiChanged, notify = true) {
   if (JSON.stringify(settings) === JSON.stringify(updated) && !aiChanged) return;
-  const relayout = ['size', 'touchSize', 'font', 'line', 'width', 'summaryLanguage', 'showPinyin'].some((key) => settings[key] !== updated[key]);
+  const relayout = ['size', 'touchSize', 'font', 'line', 'width', 'summaryLanguage', 'showPinyin', 'languageDefaultsMode', 'languageDefaults'].some((key) => JSON.stringify(settings[key]) !== JSON.stringify(updated[key]));
   const syncChanged = settings.progressSyncEnabled !== updated.progressSyncEnabled;
   const libraryChanged = settings.nativeLanguage !== updated.nativeLanguage || settings.quietLibrary !== updated.quietLibrary || settings.showSharedBooks !== updated.showSharedBooks
     || settings.libraryLayout !== updated.libraryLayout || settings.coversOnly !== updated.coversOnly || settings.cacheCovers !== updated.cacheCovers;
@@ -268,7 +269,9 @@ function applySettings(updated, aiChanged, notify = true) {
 function comprehensionPreferences() {
   return activeBook?.l1Folder ? { ...settings, mode: 'off', showPinyin: false } : settings;
 }
+function outputPreferences() { return languageHelpPreferences(comprehensionPreferences(), activeBook?.language); }
 function updateComprehension() {
+  applyAppearance();
   const l1 = Boolean(activeBook?.l1Folder);
   $('#summarize').hidden = l1; $('.word-settings').hidden = l1; $('#character-guide-tools').hidden = l1;
   const tools = $('#book-tools-button'), label = l1 ? 'Search book' : 'Search book and character guide';
@@ -381,7 +384,7 @@ function closeSummary() {
 
 function summaryState(state, text) {
   summaryBody.dataset.state = state;
-  summaryBody.lang = settings.summaryLanguage;
+  summaryBody.lang = outputPreferences().summaryLanguage;
   summaryBody.textContent = text;
   summaryButton.disabled = state === 'loading';
   summaryButton.hidden = state === 'complete';
@@ -398,7 +401,7 @@ function resetSummary() {
   summaryDetail.hidden = true;
   summaryDetailBody.textContent = '';
   summaryPanel.scrollTop = 0;
-  $('#summary-location').textContent = [activePosition?.label, languageName(settings.summaryLanguage)].filter(Boolean).join(' · ');
+  $('#summary-location').textContent = [activePosition?.label, languageName(outputPreferences().summaryLanguage)].filter(Boolean).join(' · ');
   summaryState('idle', 'Generate a summary of the current page.');
 }
 
@@ -481,7 +484,7 @@ function summarize() {
 async function generateSummary() {
   if (!renderer || summaryPanel.hidden || summaryController || activeBook?.l1Folder) return;
   words.clear(); phrases.clear();
-  $('#summary-location').textContent = [activePosition?.label, languageName(settings.summaryLanguage)].filter(Boolean).join(' · ');
+  $('#summary-location').textContent = [activePosition?.label, languageName(outputPreferences().summaryLanguage)].filter(Boolean).join(' · ');
   const page = renderer.summaryPage();
   if (!page) {
     summaryState('loading', 'Preparing this page…');
@@ -495,7 +498,7 @@ async function generateSummary() {
     return;
   }
   const { id, title, author, language } = activeBook;
-  const outputLanguage = settings.summaryLanguage;
+  const outputLanguage = outputPreferences().summaryLanguage;
   const key = JSON.stringify([id, activePosition?.target, outputLanguage, title, author, text]);
   if (settings.cacheAI !== false && summaries.has(key)) return showSummaryResult(summaries.get(key));
   const controller = new AbortController();

@@ -218,7 +218,7 @@ test('selecting a phrase offers one explicit contextual AI action and closes or 
   const dom = await browser(t), root = document.createElement('article'); root.innerHTML = '<p>La viajera tenía muchas ganas de leer esta historia.</p>'; document.body.append(root);
   dom.window.Range.prototype.getBoundingClientRect = () => ({ left: 30, top: 100, bottom: 125 });
   const calls = []; let selected = 0, pending;
-  const ui = phraseHelp({ book: () => ({ id: 'book', language: 'es' }), preferences: () => ({ translationLanguage: 'pt' }), onSelection() { selected++; },
+  const ui = phraseHelp({ book: () => ({ id: 'book', language: 'es', languages: ['es', 'pt'] }), preferences: () => ({ translationLanguage: 'en', languageDefaultsMode: 'per-language', languageDefaults: { es: { translationLanguage: 'pt' }, pt: { translationLanguage: 'es' } } }), onSelection() { selected++; },
     async request(path, options) { calls.push({ path, ...options }); return pending ? await pending : { text: 'Significa estar com muita vontade de ler.' }; } });
   const unbind = ui.bind(root); t.after(unbind);
   const range = document.createRange(); range.setStart(root.firstChild.firstChild, 17); range.setEnd(root.firstChild.firstChild, 28); const selection = document.getSelection(); selection.removeAllRanges(); selection.addRange(range); document.dispatchEvent(new dom.window.Event('selectionchange'));
@@ -226,6 +226,9 @@ test('selecting a phrase offers one explicit contextual AI action and closes or 
   assert.equal(calls.length, 0, 'selection itself must not spend tokens'); assert.equal(selected, 1);
   document.querySelector('[data-explain-phrase]').click(); await until(() => document.querySelector('[data-phrase-answer]').textContent.includes('Significa'));
   assert.equal(calls[0].path, '/api/ai/phrase'); assert.equal(calls[0].body.translationLanguage, 'pt'); assert.ok(calls[0].body.context.includes(calls[0].body.phrase));
+  root.setAttribute('lang', 'pt'); ui.clear(); document.dispatchEvent(new dom.window.Event('selectionchange')); await until(() => !document.querySelector('#phrase-help').hidden);
+  document.querySelector('[data-explain-phrase]').click(); await until(() => calls.length === 2);
+  assert.equal(calls[1].body.language, 'pt'); assert.equal(calls[1].body.translationLanguage, 'es', 'the phrase language chooses its override even when the primary book language differs');
   let resolve; pending = new Promise((done) => { resolve = done; }); document.querySelector('[data-explain-phrase]').click(); await delay(0);
   ui.clear(); assert.equal(calls.at(-1).signal.aborted, true); resolve({ text: 'Late answer' }); await delay(0); assert.equal(document.querySelector('#phrase-help').hidden, true); assert.equal(document.querySelector('[data-phrase-answer]').textContent, '');
 });

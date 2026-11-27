@@ -1,4 +1,5 @@
 import { nodeLanguage, bookLanguages } from '../shared/language.js';
+import { languageHelpPreferences } from '../shared/language-defaults.js';
 
 export function phraseHelp({ book, preferences, request, onSelection = () => {} }) {
   const panel = document.querySelector('#phrase-help'), quote = panel.querySelector('blockquote'), answer = panel.querySelector('[data-phrase-answer]');
@@ -40,7 +41,7 @@ export function phraseHelp({ book, preferences, request, onSelection = () => {} 
     explain.disabled = true; answer.textContent = 'Explaining phrase…';
     try {
       const result = await request('/api/ai/phrase', { method: 'POST', signal: controller.signal,
-        body: { phrase: value.phrase, context: value.context, language: value.language, translationLanguage: preferences().translationLanguage || 'en' } });
+        body: { phrase: value.phrase, context: value.context, language: value.language, translationLanguage: languageHelpPreferences(preferences(), value.language).translationLanguage || 'en' } });
       if (visit === epoch && book()?.id === value.book) answer.textContent = result.text;
     } catch (error) { if (visit === epoch && error.name !== 'AbortError') answer.textContent = error.message; }
     finally { if (visit === epoch) explain.disabled = false; }

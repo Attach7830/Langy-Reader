@@ -59,6 +59,16 @@ test('only changed preferences are sent and stale revisions cannot erase another
   await a.client.resume(); assert.equal(a.settings().theme, 'dark');
 });
 
+test('per-language defaults sync across browsers and preserve concurrent fields through offline changes', async (t) => {
+  const { db } = await store(t), first = browser(t, db); await first.client.start();
+  const second = browser(t, db); await second.client.start();
+  first.change({ languageDefaultsMode: 'per-language', languageDefaults: { pt: { translationLanguage: 'en', summaryLanguage: 'pt' } } }); await first.client.flush();
+  second.offline(true); second.change({ languageDefaults: { es: { summaryLanguage: 'es' }, pt: { translationLanguage: 'es' } } }); await second.client.flush();
+  second.offline(false); await second.client.resume(); await first.client.resume();
+  assert.deepEqual(first.settings().languageDefaults.pt, { translationLanguage: 'es', summaryLanguage: 'pt' });
+  assert.equal(first.settings().languageDefaults.es.summaryLanguage, 'es'); assert.equal(second.settings().languageDefaultsMode, 'per-language');
+});
+
 test('a conflict between fetch and save rebases pending fields on the current account snapshot', async (t) => {
   const { db } = await store(t); let conflict = false;
   const b = browser(t, db, { request: async (_path, options = {}) => {

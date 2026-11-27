@@ -16,8 +16,8 @@ function fixture(t, options = {}) {
   const root = document.querySelector('#book'), bubble = document.querySelector('#word-help'), node = root.firstChild; let requests = 0;
   document.caretPositionFromPoint = () => ({ offsetNode: node, offset: 0 });
   dom.window.Range.prototype.getClientRects = () => [{ left: 0, top: 0, right: 50, bottom: 25, width: 50, height: 25 }];
-  const help = wordHelp({ preferences: () => ({ ...defaults, translationLanguage: options.translation || 'en' }), languages: () => ['zh'],
-    async request(path) { requests++; if (path === '/api/mandarin/word') return entry; return options.extra; } });
+  const help = wordHelp({ preferences: () => ({ ...defaults, translationLanguage: options.translation || 'en', ...options.preferences }), languages: () => ['zh'],
+    async request(path, parameters) { requests++; if (path === '/api/mandarin/word') return entry; options.onTranslation?.(parameters.body); return options.extra; } });
   help.bind(root, 'zh', () => root.textContent);
   t.after(() => { help.clear(); dom.window.close(); for (const [name, value] of original) { if (value) Object.defineProperty(globalThis, name, value); else delete globalThis[name]; } });
   return { dom, root, bubble, help, requests: () => requests, show() { const event = new dom.window.MouseEvent('pointerup', { clientX: 10, clientY: 10, bubbles: true }); Object.defineProperty(event, 'pointerType', { value: 'touch' }); root.dispatchEvent(event); },
@@ -50,10 +50,12 @@ test('Mandarin shows one card, cycles whole word then characters with arrows, an
 
 test('a late translated gloss preserves the selected card and appears only on the whole-word card', async (t) => {
   let finish; const extra = new Promise((resolve) => { finish = resolve; });
-  const f = fixture(t, { translation: 'es', extra }); f.show(); await until(() => f.bubble.querySelector('.mandarin-card'));
+  let translated;
+  const f = fixture(t, { extra, preferences: { languageDefaultsMode: 'per-language', languageDefaults: { zh: { translationLanguage: 'es' } } }, onTranslation(body) { translated = body; } }); f.show(); await until(() => f.bubble.querySelector('.mandarin-card'));
   const before = f.bubble.querySelector('.mandarin-card');
   f.down(); assert.equal(f.bubble.querySelector('[data-word]').textContent, '卷');
   finish({ text: 'cabello rizado' }); await until(() => f.bubble.querySelector('.mandarin-card') !== before && f.requests() === 2);
+  assert.equal(translated.translationLanguage, 'es', 'Mandarin uses its own translation default while the shared default remains English');
   await delay(10);
   assert.equal(f.bubble.querySelector('[data-word]').textContent, '卷');
   assert.equal(f.bubble.querySelector('.mandarin-definition').textContent, 'to roll up');

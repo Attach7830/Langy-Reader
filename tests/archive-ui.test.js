@@ -19,7 +19,7 @@ async function fixture(t, { queued = false } = {}) {
     for (const [name, value] of previous) { if (value) Object.defineProperty(globalThis, name, value); else delete globalThis[name]; } });
   const md5 = '0123456789abcdef0123456789abcdef', calls = []; let job, books = [];
   globalThis.fetch = async (path, options) => {
-    if (path === '/api/library') return Response.json({ books, categories: [], maxUpload: 120 * 1024 ** 2, storage: { available: false }, vocabulary: { byLanguage: [] }, archive: { available: true, hasKey: true, job } });
+    if (path === '/api/library') return Response.json({ books, categories: [], maxUpload: 120 * 1024 ** 2, storage: { available: false }, vocabulary: { byLanguage: [] }, archive: { available: true, hasKey: true, job, jobs: job ? [job] : [] } });
     calls.push({ path, ...options });
     if (path === '/api/imports/anna/batch') return Response.json({ batchId: 'batch', jobs: JSON.parse(options.body).books.map((_, index) => ({ id: 'bulk-' + index, state: 'queued' })) });
     if (path === '/api/imports/anna') {
@@ -49,8 +49,8 @@ test('quota fallback keeps the dialog and metadata, can be reopened, and uploads
   const f = await fixture(t);
   assert.equal(document.querySelector('#book-dialog').open, true); assert.equal(f.form.elements.archiveReference.readOnly, true);
   assert.match(document.querySelector('#archive-slow-page').href, /\/md5\/012345/u);
-  assert.equal(document.querySelector('#resume-slow-import').hidden, false);
-  document.querySelector('#book-dialog').close(); document.querySelector('#resume-slow-import').click();
+  assert.equal(document.querySelector('#resume-slow-import'), null);
+  document.querySelector('#book-dialog').close(); document.querySelector('#archive-download-list button').click();
   assert.equal(f.form.elements.title.value, 'Chosen title'); assert.equal(f.form.elements.coverStyle.value, 'forest');
   const input = document.querySelector('#book-file'), file = new f.dom.window.File(['EPUB'], 'downloaded.epub');
   Object.defineProperty(input, 'files', { configurable: true, value: [file] }); input.dispatchEvent(new f.dom.window.Event('change'));
@@ -64,7 +64,8 @@ test('a single live download closes the import dialog immediately and allows ano
   const f = await fixture(t, { queued: true });
   assert.equal(document.querySelector('#book-dialog').open, false);
   const request = f.calls.find((call) => call.path === '/api/imports/anna'); assert.equal(JSON.parse(request.body).queueUnavailable, true);
-  assert.match(document.querySelector('#archive-import-status').textContent, /Downloading book/u);
+  assert.equal(document.querySelector('#archive-import-status'), null);
+  assert.match(document.querySelector('#archive-download-list').textContent, /Downloading book/u);
   document.querySelector('#import-book').click(); assert.equal(document.querySelector('#book-dialog').open, true);
   assert.equal(document.querySelector('#book-submit').disabled, false); assert.equal(f.form.elements.archiveQueueUnavailable.checked, true);
 });

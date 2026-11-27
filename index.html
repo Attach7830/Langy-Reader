@@ -111,8 +111,6 @@
       </div>
       <p class="field-note" id="offline-status" role="status" hidden></p>
       <div id="books" class="book-grid"></div>
-      <p class="field-note" id="archive-import-status" role="status" hidden></p>
-      <button class="button secondary small" id="resume-slow-import" type="button" hidden>Continue slow download</button>
       <details id="archive-downloads" hidden><summary>Book downloads</summary><div id="archive-download-list" class="form-stack"></div></details>
       <div id="empty-library" class="empty-state" hidden>
         <i data-lucide="book-open"></i><h2 id="empty-title"></h2><p id="empty-detail"></p>
@@ -470,13 +468,22 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
         <button class="button quiet small" type="button" id="clear-ai-cache">Clear saved AI answers</button>
         <p class="field-note" id="ai-cache-status" role="status" hidden></p>
         <p class="field-note">Default pinyin hotkey: Y, customizable under Hotkeys. Reading preferences are saved on this browser across sessions. Hover pronunciation remains available when inline pinyin is off.</p>
+        <label class="field">Translation and summary defaults<select id="language-defaults-mode"><option value="shared">Same defaults for all reading languages</option><option value="per-language">Choose defaults for each reading language</option></select></label>
         <div class="form-grid">
-          <label class="field">Translation language
+          <label class="field">Shared translation language
             <input name="translationLanguage" list="languages" maxlength="70" autocomplete="off" required>
           </label>
-          <label class="field">Summary language
+          <label class="field">Shared summary language
             <input name="summaryLanguage" list="languages" maxlength="70" autocomplete="off" required>
           </label>
+        </div>
+        <div id="language-defaults-panel" class="form-stack" hidden>
+          <label class="field">Reading language<select id="language-default-language"></select></label>
+          <div class="form-grid">
+            <label class="field">Translation language<input id="language-translation-default" list="languages" maxlength="70" placeholder="Use shared default" autocomplete="off"></label>
+            <label class="field">Summary language<input id="language-summary-default" list="languages" maxlength="70" placeholder="Use shared default" autocomplete="off"></label>
+          </div>
+          <p class="field-note">Leave a language blank to use the shared default. Word and phrase translations follow the passage’s language; summaries follow the book’s primary language. These preferences sync with your account.</p>
         </div>
         <p class="field-note">Definitions and synonyms use the passage’s language, guided by EPUB language tags and automatic detection. The optional AI explanation uses the surrounding passage when the dictionaries have no entry.</p>
         <p class="field-note">Dictionary data from <a href="https://es.wiktionary.org/" target="_blank" rel="noopener noreferrer">Wiktionary contributors</a> under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a>.</p>

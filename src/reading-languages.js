@@ -2,7 +2,7 @@ import { element } from './ui.js';
 import { parseLanguage } from './languages.js';
 import { defaults, languageName } from './settings.js';
 
-export function readingLanguagesPicker({ host, input, add, error }) {
+export function readingLanguagesPicker({ host, input, add, error, changed = () => {} }) {
   let selected = [];
   function render() {
     host.replaceChildren(...selected.map((code) => {
@@ -10,6 +10,7 @@ export function readingLanguagesPicker({ host, input, add, error }) {
       chip.setAttribute('aria-label', `Remove ${languageName(code)}`);
       chip.addEventListener('click', () => { selected = selected.filter((item) => item !== code); render(); }); return chip;
     }));
+    changed([...selected]);
   }
   function addLanguage() {
     if (!input.value.trim()) return;

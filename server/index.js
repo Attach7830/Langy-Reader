@@ -16,6 +16,7 @@ import { openFonts, fontUploadLimit } from './fonts.js';
 import { openAIProfiles } from './ai-profiles.js';
 import { openAISettings } from './ai.js';
 import { openProcesses } from './processes.js';
+import { lookupArchiveTitle } from './archive-title.js';
 import { openProcessScheduler } from './process-scheduler.js';
 import { openAICache } from './ai-cache.js';
 import { openThesaurus } from './thesaurus.js';
@@ -99,7 +100,7 @@ const storageFor = (visitor) => demo ? library.storage(visitor) : accountStorage
 const covers = await openCoverSearch(dir,{demo});
 const freeFonts = fontDownloads({fonts:userFonts,uploads:library.uploads});
 const vocabularyMeaning = vocabularyMeanings({ vocabulary: learning.vocabulary, ai, lookupSynonyms });
-const archive = await openArchive(dir, { library, demo, scheduler, canUseShared: accounts.canUseArchiveKey, visitorForOwner: accounts.visitorForOwner, activeOwner: (owner) => accounts.policyForOwner(owner).active, onImport: (book, details) => scheduler.outside(() => learning.scheduleAudiobook(library.getBook(book.id), details)) });
+const archive = await openArchive(dir, { library, demo, scheduler, lookupTitle: lookupArchiveTitle, canUseShared: accounts.canUseArchiveKey, visitorForOwner: accounts.visitorForOwner, activeOwner: (owner) => accounts.policyForOwner(owner).active, onImport: (book, details) => scheduler.outside(() => learning.scheduleAudiobook(library.getBook(book.id), details)) });
 const ocr = await openPDFOCR(dir, { library, demo, scheduler, onImport: (book) => scheduler.outside(() => learning.ensure(library.getBook(book.id))) });
 const audiobookshelf = await openAudiobookshelf(dir, { library, learning, demo, scheduler });
 const kavita = await openKavita(dir, { demo });

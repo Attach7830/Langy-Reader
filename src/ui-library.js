@@ -305,8 +305,6 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     $('#empty-title').textContent = filtering ? 'No matching books' : 'No books here yet';
     $('#empty-detail').textContent = filtering ? 'Try a different search or filter.' : 'Import a book or document to get started.';
     drawIcons();
-    message('#archive-import-status', importProgress(snapshot.archive?.job));
-    $('#resume-slow-import').hidden = snapshot.archive?.job?.state !== 'needs_action';
     renderDownloads(snapshot.archive?.jobs || []);
   }
 
@@ -323,8 +321,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     clearTimeout(libraryTimer);
     if (snapshot.books.some((book) => ['queued', 'running'].includes(book.learning?.state)
       || ['queued', 'running'].includes(book.learning?.counting?.state)
-      || ['queued', 'running'].includes(book.learning?.reading?.state)) || archiveWorking(snapshot.archive?.job) || snapshot.imports?.some((job)=>['queued','downloading','importing'].includes(job.state))) {
-      libraryTimer = setTimeout(() => { if (!document.querySelector('dialog[open]')) void refresh(); }, archiveWorking(snapshot.archive?.job) ? 1200 : 4500);
+      || ['queued', 'running'].includes(book.learning?.reading?.state)) || archiveWorking(snapshot.archive?.job) || snapshot.archive?.jobs?.some((job) => job.titlePending) || snapshot.imports?.some((job)=>['queued','downloading','importing'].includes(job.state))) {
+      libraryTimer = setTimeout(() => { if (!document.querySelector('dialog[open]')) void refresh(); }, archiveWorking(snapshot.archive?.job) || snapshot.archive?.jobs?.some((job) => job.titlePending) ? 1200 : 4500);
     } else if (snapshot.archive?.jobs?.some((job) => ['retry_wait', 'needs_action'].includes(job.state))) {
       libraryTimer = setTimeout(() => { if (!document.querySelector('dialog[open]')) void refresh(); }, 60_000);
     }
@@ -714,7 +712,6 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     bookForm.elements.audiobookDelayMinutes.value = job.details?.audiobookDelayMinutes ?? 10;
     bookForm.elements.audiobookDelayMinutes.disabled = !bookForm.elements.autoAudiobook.checked;
   }
-  $('#resume-slow-import').addEventListener('click', () => resumeSlow(snapshot.archive?.job));
   function renderDownloads(jobs) {
     clearTimeout(downloadExpiry);
     const time = Date.now(), completed = new Set(jobs.filter((job) => job.state === 'ready').map((job) => job.id));
@@ -731,7 +728,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     const host = $('#archive-download-list'); $('#archive-downloads').hidden = !visible.length;
     host.replaceChildren(...visible.slice().reverse().map((job) => {
       const row = element('div', 'archive-download-row');
-      row.append(element('strong', '', job.details?.title || job.book?.title || job.reference?.slice(0, 12) || 'Book download'),
+      row.append(element('strong', '', job.title || job.details?.title || job.book?.title || (job.titlePending ? 'Retrieving book title…' : 'Book title unavailable')),
         element('p', 'field-note', job.state === 'ready' ? 'Imported' : job.state === 'cancelled' ? 'Cancelled' : importProgress(job)));
       const actions = element('div', 'archive-download-actions');
       if (job.state === 'needs_action') { const button = element('button', 'button secondary small', 'Continue slow download'); button.type = 'button'; button.addEventListener('click', () => resumeSlow(job)); actions.append(button); }
@@ -897,7 +894,6 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
       if (submittedVisit === bookVisit) {
         bookPending = false;
         message('#book-import-progress');
-        message('#archive-import-status', importProgress(snapshot.archive?.job));
         $('#book-submit').disabled = false;
         $('#book-submit').textContent = editingBook ? 'Save book' : slowImport ? 'Import slow download' : 'Import book';
       }

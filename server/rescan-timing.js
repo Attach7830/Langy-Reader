@@ -27,15 +27,31 @@ export function rescanWindows(words, timings, duration) {
     }
     from = to;
   }
-  return windows;
+  return coalesceRescanWindows(windows);
 }
 
-export function mergeRescan(timings, window, candidates, duration, permitted = () => true) {
-  const result = timings.map((stamp) => stamp && { ...stamp });
-  const next = [];
+// Nearby gaps share a recognition pass, including the reliable words between
+// them as context. Keep the existing clip and source-word limits.
+export function coalesceRescanWindows(windows) {
+  const result = [];
+  for (const window of windows) {
+    const previous = result.at(-1);
+    if (previous && window.from >= previous.from && window.start >= previous.start
+      && window.start <= previous.end + 8 && Math.max(previous.end, window.end) - previous.start <= 49
+      && Math.max(previous.to, window.to) - previous.from <= 140) {
+      previous.to = Math.max(previous.to, window.to); previous.right = Math.max(previous.right, window.right);
+      previous.end = Math.max(previous.end, window.end); previous.contextTo = Math.max(previous.contextTo, window.contextTo);
+    } else result.push({ ...window });
+  }
+  return result;
+}
+
+export function mergeRescan(timings, window, candidates, duration, permitted = () => true, inPlace = false) {
+  const result = inPlace ? timings : timings.map((stamp) => stamp && { ...stamp });
+  const next = new Float64Array(Math.max(0, Math.min(result.length, window.to) - window.from));
   let boundary = window.right;
-  for (let index = result.length - 1; index >= window.from; index--) {
-    next[index] = boundary;
+  for (let index = Math.min(result.length, window.to) - 1; index >= window.from; index--) {
+    next[index - window.from] = boundary;
     if (usable(result[index], duration)) boundary = Math.min(boundary, result[index].start);
   }
   let end = window.left, added = 0;
@@ -44,9 +60,9 @@ export function mergeRescan(timings, window, candidates, duration, permitted = (
     const candidate = candidates?.[index - window.contextFrom];
     if (!candidate || candidate.estimated || candidate.review || !Number.isFinite(candidate.start) || !Number.isFinite(candidate.end)) continue;
     const start = candidate.start + window.start, finish = candidate.end + window.start;
-    if (start < Math.max(window.left, end) - .001 || finish > next[index] + .001 || finish <= start
+    if (start < Math.max(window.left, end) - .001 || finish > next[index - window.from] + .001 || finish <= start
       || candidate.start < 0 || candidate.end > window.end - window.start + .01 || !permitted(index, start, finish)) continue;
-    const a = Math.max(start, end, window.left), b = Math.min(finish, window.right, next[index], duration);
+    const a = Math.max(start, end, window.left), b = Math.min(finish, window.right, next[index - window.from], duration);
     if (b <= a) continue;
     result[index] = { start: a, end: b, review: false };
     end = result[index].end; added++;
