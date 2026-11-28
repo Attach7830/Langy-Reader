@@ -8,7 +8,7 @@ import { narration } from '../src/narration.js';
 async function until(check) { for (let n = 0; n < 100; n++) { if (check()) return; await delay(10); } throw new Error('Narration UI timed out'); }
 
 async function fixture(t, { words = [], timings = [], visible = () => true, roundSeek = (time) => time, initialKey = 'epub:0',
-  rendered = true, delayMetadata = false, source = { id: 'book', title: 'Test audiobook' }, showPdfTiming } = {}) {
+  rendered = true, delayMetadata = false, source = { id: 'book', title: 'Test audiobook' }, showAudioTiming } = {}) {
   const dom = new JSDOM(await readFile(new URL('../index.html', import.meta.url), 'utf8'), { url: 'https://langy.test' });
   const values = { window: dom.window, document: dom.window.document, Option: dom.window.Option, CustomEvent: dom.window.CustomEvent, navigator: dom.window.navigator,
     requestAnimationFrame: () => 0, cancelAnimationFrame() {} };
@@ -45,7 +45,7 @@ async function fixture(t, { words = [], timings = [], visible = () => true, roun
     for (const [name, descriptor] of originals) { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else delete globalThis[name]; }
   });
   player = narration({ preferences: () => prefs, renderer: () => rendered ? view : undefined, book: () => source,
-    editablePdf: (book) => book.format === 'pdf' && book.canEdit !== false, showPdfTiming,
+    editableTiming: (book) => ['pdf', 'epub'].includes(book.format) && book.canEdit !== false, showAudioTiming,
     async navigate(target) { navigations.push(target); key = target.key; return true; },
     changePreferences(values) { Object.assign(prefs, values); player.apply(); } });
   function metadata() { audio.currentTime = 0; audio.onloadedmetadata?.(); }
@@ -62,10 +62,10 @@ async function fixture(t, { words = [], timings = [], visible = () => true, roun
 test('the reader opens PDF sync from either audio layout for its current page and recording', async (t) => {
   const source = { id: 'book', title: 'Test PDF', format: 'pdf', canEdit: true };
   const openings = [];
-  const f = await fixture(t, { source, initialKey: 'pdf:2', showPdfTiming(book, recording, page) {
-    openings.push([book.id, recording.id, page]);
+  const f = await fixture(t, { source, initialKey: 'pdf:2', showAudioTiming(book, recording, position) {
+    openings.push([book.id, recording.id, position.key]);
   } });
-  const adjust = document.querySelector('#narration-adjust-pdf-timing');
+  const adjust = document.querySelector('#narration-adjust-timing');
   let pauses = 0;
   f.audio.pause = () => { pauses++; };
   assert.equal(adjust.hidden, false);
@@ -76,6 +76,21 @@ test('the reader opens PDF sync from either audio layout for its current page an
   assert.equal(adjust.hidden, false);
   source.canEdit = false; f.player.apply();
   assert.equal(adjust.hidden, true);
+});
+
+test('the EPUB sync editor opens at the current section, visible word and playhead', async (t) => {
+  const source = { id: 'book', title: 'Test EPUB', format: 'epub' };
+  const words = [{ word: 'beginning', from: 0, to: 9 }, { word: 'visible', from: 10, to: 17 }];
+  const openings = [];
+  const f = await fixture(t, { source, words, initialKey: 'epub:1', visible: (word) => word.from === 10,
+    showAudioTiming(book, recording, position) { openings.push([book.id, recording.id, position]); } });
+  f.audio.currentTime = 1843;
+  const adjust = document.querySelector('#narration-adjust-timing');
+  assert.equal(adjust.hidden, false);
+  assert.equal(adjust.textContent, 'Adjust EPUB audio sync');
+  assert.equal(adjust.getAttribute('aria-controls'), 'epub-timing-dialog');
+  adjust.click();
+  assert.deepEqual(openings, [['book', 'recording', { key: 'epub:1', from: 10, time: 1843 }]]);
 });
 
 test('playing from a word seeks to its chapter timestamp and starts rather than toggles playback', async (t) => {

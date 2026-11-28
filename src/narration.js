@@ -19,10 +19,10 @@ function atTime(items, time, field = 'start') {
 }
 export function narration({ preferences, renderer, book, navigate, changePreferences, safeMode = false,
   textEdition = () => false, highlight = () => true, readingPosition = () => null,
-  editablePdf = () => false, showPdfTiming }) {
+  editableTiming = () => false, showAudioTiming }) {
   const player = $('#narration-player'), audio = $('#narration-audio');
   const play = $('#narration-play'), generate = $('#narration-generate');
-  const adjustTiming = $('#narration-adjust-pdf-timing');
+  const adjustTiming = $('#narration-adjust-timing');
   const status = $('#narration-status'), seek = $('#narration-seek');
   const clock = $('#narration-time'), completion = $('#narration-completion'), percent = $('#narration-percent');
   const chapters = $('#narration-chapter'), markers = $('#narration-markers');
@@ -121,9 +121,10 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     if (safeMode && !ready()) return;
     const active = book(), current = renderer()?.audioUnit?.();
     if (!active || !current) return;
-    const recordingId = ready() ? recording.id : undefined;
-    if (unit?.key === current.key && descriptor?.root === current.root && unit.recordingId === recordingId) return;
-    const epoch = lifecycle, key = `${current.key}:${recordingId || ''}`;
+    const selected = ready() ? recording : undefined;
+    const recordingId = selected?.id, revision = selected?.alignmentRevision;
+    if (unit?.key === current.key && descriptor?.root === current.root && unit.recordingId === recordingId && unit.revision === revision) return;
+    const epoch = lifecycle, key = `${current.key}:${recordingId || ''}:${revision ?? ''}`;
     if (!cache.has(key)) {
       const query = ready() ? `?recording=${encodeURIComponent(recording.id)}` : '';
       cache.set(key, api(`/api/books/${active.id}/chapters/${encodeURIComponent(current.key)}${query}`, { signal: controller.signal })
@@ -131,9 +132,10 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
       if (cache.size > 8) cache.delete(cache.keys().next().value);
     }
     const next = await cache.get(key);
-    if (epoch !== lifecycle || book()?.id !== active.id || (ready() ? recording.id : undefined) !== recordingId) return;
+    const latestRecording = ready() ? recording : undefined;
+    if (epoch !== lifecycle || book()?.id !== active.id || latestRecording?.id !== recordingId || latestRecording?.alignmentRevision !== revision) return;
     const latest = renderer()?.audioUnit?.();
-    if (latest?.key === current.key) bindLocal(latest, { ...next, recordingId });
+    if (latest?.key === current.key) bindLocal(latest, { ...next, recordingId, revision });
   }
   function firstVisibleTime() {
     const segment = segmentFor(unit?.key);
@@ -307,8 +309,11 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
       else { drawHighlight(); void follow(); }
     } catch (error) { if (!previewAudio && error.name !== 'AbortError') status.textContent = error.message; }
   }
-  window.addEventListener('langy-audio-updated', (event) => {
-    if (book()?.id === event.detail?.book) void loadRecording();
+  window.addEventListener('langy-audio-updated', async (event) => {
+    if (book()?.id !== event.detail?.book) return;
+    const epoch = lifecycle;
+    await bookRequest;
+    if (epoch === lifecycle) void loadRecording();
   });
   window.addEventListener('online', () => { if (book()) void loadRecording(); });
   function stop(position) {
@@ -328,7 +333,12 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   }
   function apply() {
     enabled = preferences().audioEnabled; player.hidden = !enabled || Boolean(preferences().audioToolbarHidden);
-    adjustTiming.hidden = safeMode || !showPdfTiming || !editablePdf(book());
+    const active = book();
+    adjustTiming.hidden = safeMode || !showAudioTiming || !editableTiming(active);
+    if (!adjustTiming.hidden) {
+      adjustTiming.textContent = `Adjust ${active.format.toUpperCase()} audio sync`;
+      adjustTiming.setAttribute('aria-controls', `${active.format}-timing-dialog`);
+    }
     const toggle = $('#audio-toggle');
     toggle.setAttribute('aria-pressed', String(!player.hidden));
     toggle.title = player.hidden ? 'Show audio toolbar' : 'Hide audio toolbar';
@@ -359,9 +369,15 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   play.addEventListener('click', toggle);
   adjustTiming.addEventListener('click', () => {
     const active = book();
-    if (adjustTiming.hidden || !editablePdf(active)) return;
+    if (adjustTiming.hidden || !editableTiming(active)) return;
     pausePlayback();
-    showPdfTiming(active, recording, renderer()?.audioUnit?.()?.key);
+    const current = renderer()?.audioUnit?.();
+    const position = { key: current?.key };
+    if (active.format === 'epub') {
+      if (local?.root === current?.root) position.from = local?.words.find((word) => local.visible(word))?.from;
+      if (ready() && !waitingForMetadata && audio.getAttribute('src') === recording.url) position.time = audio.currentTime;
+    }
+    showAudioTiming(active, recording, position);
   });
   podcastToggle.addEventListener('click', () => changePreferences({ podcastMode: !preferences().podcastMode }));
   recordingChoice.addEventListener('change', () => {

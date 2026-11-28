@@ -16,6 +16,7 @@ import { archiveTitleActions } from './archive-title-controls.js';
 import { pdfOCR } from './pdf-ocr.js';
 import { reviewPdfText } from './pdf-review.js';
 import { adjustPdfTiming } from './pdf-timing.js';
+import { adjustEpubTiming } from './epub-timing.js';
 import { epubNarrationEditor } from './epub-narration.js';
 import { bookLanguageSuggestions } from './reading-languages.js';
 import { showReadingTime } from './ui-reading-time.js';
@@ -55,19 +56,24 @@ export function libraryScreen({ progress, onRemove, detectMetadata, safeMode = f
     toast('PDF review saved.');
     void showLearning(book);
   } });
-  const pdfTiming = adjustPdfTiming({ saved(book) {
-    audioChanged(book.id); toast('Page timing saved.');
+  function timingSaved(book) {
+    audioChanged(book.id); toast('Audio sync saved.');
     if (learningDialog.open && learningBook?.id === book.id) void learningStatus();
-  } });
+  }
+  const pdfTiming = adjustPdfTiming({ saved: timingSaved });
+  const epubTiming = adjustEpubTiming({ saved: timingSaved });
   const epubNarration = epubNarrationEditor({ saved(book) {
     toast('Audiobook text selection saved.');
     void showLearning(book);
   } });
   let learningBook, learningTimer, libraryTimer, learningVisit = 0, libraryVisit = 0, learningParts = {}, learningPending = {};
   let snapshot = { categories: [], books: [], maxUpload: 120 * 1024 ** 2, demo: false };
-  const editablePdf = (book) => !safeMode && !snapshot.demo && book?.format === 'pdf' && book.canEdit !== false;
-  function showPdfTiming(book, recording, options) {
-    if (editablePdf(book)) void pdfTiming.open(book, recording, options);
+  const editableTiming = (book) => !safeMode && !snapshot.demo && ['pdf', 'epub'].includes(book?.format) && book.canEdit !== false;
+  const editablePdf = (book) => book?.format === 'pdf' && editableTiming(book);
+  function showAudioTiming(book, recording, position) {
+    if (!editableTiming(book)) return;
+    if (book.format === 'pdf') void pdfTiming.open(book, recording, { pageKey: position?.key });
+    else epubTiming.open(book, recording, position);
   }
   let category = 'all', editingBook, editingCategory, selectedFile, slowImport, downloadExpiry;
   const completedImports = new Map();
@@ -520,7 +526,12 @@ export function libraryScreen({ progress, onRemove, detectMetadata, safeMode = f
     $('#review-pdf-text').hidden = !editablePdf(book);
     $('#edit-epub-narration').hidden = snapshot.demo || book.format !== 'epub' || book.canEdit === false;
     $('#open-reviewed-epub').hidden = true;
-    $('#adjust-pdf-timing').hidden = !editablePdf(book);
+    const timing = $('#adjust-audio-timing');
+    timing.hidden = !editableTiming(book);
+    if (!timing.hidden) {
+      timing.textContent = `Adjust ${book.format.toUpperCase()} audio sync`;
+      timing.setAttribute('aria-controls', `${book.format}-timing-dialog`);
+    }
     $('#edit-book-languages').hidden = book.canEdit === false || snapshot.demo && book.id === 'sample';
     $('#find-similar-books').disabled = true;
     $('#open-book-vocabulary').disabled = true;
@@ -548,8 +559,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, safeMode = f
     const book = learningBook;
     if (book?.format === 'epub' && book.canEdit !== false && !snapshot.demo) { learningDialog.close(); epubNarration.open(book); }
   });
-  $('#adjust-pdf-timing').addEventListener('click', () => {
-    showPdfTiming(learningBook, learningParts.result?.narration?.audio);
+  $('#adjust-audio-timing').addEventListener('click', () => {
+    showAudioTiming(learningBook, learningParts.result?.narration?.audio);
   });
 
   $('#analyze-book').addEventListener('click', async () => {
@@ -1011,5 +1022,5 @@ export function libraryScreen({ progress, onRemove, detectMetadata, safeMode = f
   bookDialog.addEventListener('close', () => { if (!bookDialog.open) sharing.cancel(); });
   categoryDialog.addEventListener('cancel', (event) => { if (categoryPending) event.preventDefault(); });
 
-  return { refresh, render, editablePdf, showPdfTiming, dispose() { disposed = true; sharing.cancel(); for (const controller of pendingCovers.values()) controller.abort(); pendingCovers.clear(); learningVisit++; unwatchApp(); surface.removeEventListener('langy-library-changed', libraryChanged); surface.removeEventListener('langy-audio-updated', libraryChanged); surface.removeEventListener('langy-open-process', openProcess); surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); ocr.dispose(); clearTimeout(downloadExpiry); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
+  return { refresh, render, editableTiming, showAudioTiming, dispose() { disposed = true; sharing.cancel(); for (const controller of pendingCovers.values()) controller.abort(); pendingCovers.clear(); learningVisit++; unwatchApp(); surface.removeEventListener('langy-library-changed', libraryChanged); surface.removeEventListener('langy-audio-updated', libraryChanged); surface.removeEventListener('langy-open-process', openProcess); surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); ocr.dispose(); clearTimeout(downloadExpiry); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
 }

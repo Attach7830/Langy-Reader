@@ -113,6 +113,8 @@ test('self-hosted users have private libraries, owner-controlled sharing and iso
     for (const [method, suffix] of [['PATCH',''], ['DELETE',''], ['POST','/cover'], ['POST','/narration'], ['POST','/learning'], ['POST','/ocr'], ['POST','/recordings']]) await f.api(`/api/books/${sharedBook.id}${suffix}`, third, { method, body: {}, status: 403 });
     await f.api(`/api/books/${sharedBook.id}/epub-narration`, third, { status: 403 });
     await f.api(`/api/books/${sharedBook.id}/epub-narration`, third, { method: 'PUT', body: {}, status: 403 });
+    await f.api(`/api/books/${sharedBook.id}/epub-timing/recording`, third, { status: 403 });
+    await f.api(`/api/books/${sharedBook.id}/epub-timing/recording`, third, { method: 'PUT', body: {}, status: 403 });
     for (const suffix of ['/NARRATION', '/RECORDINGS', '/OCR']) await f.api(`/api/books/${sharedBook.id}${suffix}`, third, { method: 'POST', body: {}, status: 404 });
     assert.equal((await fetch(f.base() + `/api/books/${sharedBook.id}/file`, { headers: third })).status, 200);
     await f.api(`/api/books/${privateBook.id}`, member, { method: 'PATCH', body: { title: privateBook.title, language: 'es', shared: false } });
@@ -277,6 +279,7 @@ test('self-hosted users have private libraries, owner-controlled sharing and iso
       ['GET', '/api/settings/ai'], ['GET', '/api/fonts/catalogue'], ['GET', '/api/book-catalogue/gutenberg'],
       ['GET', '/api/sharing/recipients'], ['GET', '/opds/books'], ['GET', book + '/ocr'],
       ['GET', book + '/offline'], ['GET', book + '/epub-narration'], ['POST', '/api/ai/phrase'], ['POST', '/api/imports/web'],
+      ['GET', book + '/epub-timing/recording'], ['PUT', book + '/epub-timing/recording'],
       ['POST', '/api/books'], ['POST', book + '/narration'], ['POST', book + '/pdf-review/ocr'],
       ['PATCH', book], ['PUT', '/api/settings/kavita'], ['DELETE', book],
     ]) {

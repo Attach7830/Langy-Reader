@@ -380,10 +380,14 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
     const pinned = recording ? completeAudio.segment(book, key, recording) : null;
     if (pinned && pinned.textHash !== row.digest) throw new RequestError(409, 'The book text changed. Generate book audio again.');
     const audio = recording ? pinned && db.prepare('SELECT * FROM audio WHERE id=? AND book=?').get(pinned.audioId, book.id) : audioRow(book, key);
+    const playback = publicAudio(audio);
+    if (book.format === 'epub' && pinned && playback.state === 'ready') {
+      playback.timings = completeAudio.epubTiming.apply(recording, pinned, playback.timings);
+    }
     return {
       key: row.key, title: row.title, text: row.text, textHash: row.digest,
       analysisState: db.prepare('SELECT state FROM analyses WHERE book=?').get(book.id)?.state,
-      tokens: JSON.parse(row.tokens || '[]'), audio: publicAudio(audio), connected: Boolean(audioConfig().baseUrl),
+      tokens: JSON.parse(row.tokens || '[]'), audio: playback, connected: Boolean(audioConfig().baseUrl),
       method: db.prepare('SELECT method FROM analyses WHERE book=?').get(book.id)?.method,
       lemmaCount: JSON.parse(row.lemmas || '[]').length,
       languages: JSON.parse(row.languages || '[]'), vocabulary: row.metrics ? JSON.parse(row.metrics) : null,
@@ -800,7 +804,7 @@ export async function openLearning(dir, library, demo, ai, { autoRepair = true, 
         return { ...row, tokens: JSON.parse(row.tokens || '[]'), languages: JSON.parse(row.languages || '[]') };
       });
     },
-    narration, queueBook: completeAudio.queue,
+    narration, queueBook: completeAudio.queue, epubTiming: completeAudio.epubTiming,
     pdfTiming(book, id) {
       if (!indexed(book)) throw new RequestError(409, 'Wait until the current PDF text has been indexed.');
       return completeAudio.pdfTiming(book, id);

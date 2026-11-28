@@ -9,6 +9,7 @@ import { RequestError } from './books.js';
 import { hasUsableTimings } from './audio-timing.js';
 import { narrationOptions, sectionLanguages } from './language-voices.js';
 import { applyPageStarts, hasAdjustablePageStarts, validatePageStarts } from './pdf-timing.js';
+import { epubAudioTiming } from './epub-timing.js';
 
 const run = promisify(execFile);
 const pending = new Set(['queued', 'generating', 'aligning']);
@@ -104,10 +105,18 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
     return publicRecording(newest(book));
   }
 
-  function segment(book, key, recording) {
-    const row = db.prepare("SELECT * FROM book_audio WHERE id=? AND book=? AND state='ready'").get(recording, book.id);
+  function readyRecording(book, id) {
+    const row = db.prepare("SELECT * FROM book_audio WHERE id=? AND book=? AND state='ready'").get(id, book.id);
     if (!row) throw new RequestError(404, 'The complete book recording was not found.');
-    return JSON.parse(row.segments).find((part) => part.key === key);
+    return row;
+  }
+  const epubTiming = epubAudioTiming(db, (book, id) => {
+    const row = readyRecording(book, id);
+    if (row.digest !== digest(sections(book))) throw new RequestError(409, 'Sync an audiobook with the current EPUB text first.');
+    return row;
+  });
+  function segment(book, key, recording) {
+    return JSON.parse(readyRecording(book, recording).segments).find((part) => part.key === key);
   }
 
   function timingRecording(book, id) {
@@ -237,7 +246,7 @@ export function bookNarration({ db, folder, library, demo, previewAudio = false,
   }
 
   return {
-    status, queue, segment, assemble, cancel, files, pdfTiming, savePdfTiming,
+    status, queue, segment, assemble, cancel, files, pdfTiming, savePdfTiming, epubTiming,
     isSynced(book) {
       const ready = db.prepare("SELECT digest FROM book_audio WHERE book=? AND state='ready' AND duration>0 AND json_array_length(segments)>0").all(book.id);
       if (!ready.length) return false;

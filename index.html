@@ -323,7 +323,7 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
         <span id="narration-status" role="status">Preparing narration…</span>
         <div class="narration-actions">
           <button class="button quiet" id="narration-generate" type="button" hidden>Generate book audio</button>
-          <button class="button quiet small" id="narration-adjust-pdf-timing" type="button" aria-controls="pdf-timing-dialog" data-full-access hidden>Adjust PDF audio sync</button>
+          <button class="button quiet small" id="narration-adjust-timing" type="button" data-full-access hidden>Adjust audio sync</button>
         </div>
         <button class="icon-button narration-close" id="narration-close" type="button" aria-label="Close audio toolbar" title="Close audio toolbar"><i data-lucide="x"></i></button>
       </div>
@@ -770,7 +770,7 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
       <p id="learning-stats"></p>
       <p id="learning-word-count" class="field-note"></p>
       <button class="button secondary small" id="review-pdf-text" type="button" hidden>Review PDF text</button>
-      <button class="button secondary small" id="adjust-pdf-timing" type="button" aria-controls="pdf-timing-dialog" hidden>Adjust PDF audio sync</button>
+      <button class="button secondary small" id="adjust-audio-timing" type="button" hidden>Adjust audio sync</button>
       <a class="button secondary small" id="open-reviewed-epub" hidden>Read simplified EPUB</a>
       <button class="button quiet small" id="edit-book-languages" type="button">Set book languages</button>
       <div id="learning-vocabulary"></div>
@@ -958,6 +958,34 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
         <p id="pdf-review-error" class="form-error" role="alert" hidden></p>
       </div>
       <footer class="modal-footer"><button class="button quiet" type="button" data-close>Close</button><button id="pdf-review-save" class="button primary" type="submit" disabled>Save reviewed text</button></footer>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="epub-timing-dialog" aria-labelledby="epub-timing-title">
+    <form id="epub-timing-form">
+      <header class="modal-header"><h2 id="epub-timing-title">Adjust EPUB audio sync</h2><button class="icon-button" type="button" data-close aria-label="Close EPUB audio timing"><i data-lucide="x"></i></button></header>
+      <div class="modal-body">
+        <div class="form-stack" id="epub-timing-controls" hidden>
+          <p class="field-note">Select a word in the section text, scrub to when it starts, then choose Save sync point.</p>
+          <label class="field">Section <select name="section" disabled></select></label>
+          <label class="field">Section text <textarea name="text" rows="5" dir="auto" readonly disabled></textarea></label>
+          <p class="field-note" id="epub-timing-word" dir="auto" data-user-content hidden></p>
+          <p class="field-note" id="epub-timing-range" hidden></p>
+          <audio id="epub-timing-audio" controls preload="metadata" aria-label="Preview the EPUB audiobook"></audio>
+          <p class="field-note" id="epub-timing-playhead" hidden></p>
+          <div class="button-row">
+            <button class="button quiet small" id="epub-timing-jump" type="button" disabled>Go to word time</button>
+            <button class="button quiet small" data-epub-nudge="-0.25" type="button" aria-label="Back a quarter second" disabled>−0.25 s</button>
+            <button class="button quiet small" data-epub-nudge="0.25" type="button" aria-label="Forward a quarter second" disabled>+0.25 s</button>
+          </div>
+          <p class="field-note" id="epub-timing-review" role="status" hidden></p>
+          <ul class="form-stack" id="epub-timing-points" aria-label="Saved sync points" hidden></ul>
+          <button class="button quiet small" id="epub-timing-reset" type="button" disabled>Restore automatic timing</button>
+        </div>
+        <p class="field-note" id="epub-timing-status" role="status" hidden></p>
+        <p class="form-error" id="epub-timing-error" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer"><button class="button quiet" type="button" data-close>Close</button><button class="button primary" id="epub-timing-save" type="submit" disabled hidden>Save sync point</button></footer>
     </form>
   </dialog>
 

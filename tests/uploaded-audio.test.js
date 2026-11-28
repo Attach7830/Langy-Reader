@@ -35,7 +35,7 @@ test('own recordings sync independently, can be selected and downloaded, reuse t
   const folder = await mkdtemp(join(tmpdir(), 'langy-own-audio-'));
   const original = globalThis.fetch;
   let db, learning, speechCalls = 0, mismatch = false;
-  const book = { id: 'book', title: 'Two chapters', language: 'es' };
+  const book = { id: 'book', title: 'Two chapters', language: 'es', format: 'epub' };
   try {
     learning = await openLearning(folder, { getBook() { return book; } }, false, {});
     db = new DatabaseSync(join(folder, 'learning.sqlite'));
@@ -83,10 +83,19 @@ test('own recordings sync independently, can be selected and downloaded, reuse t
     assert.equal(selected.audio.quality.textPercent, 100);
     assert.ok((await readFile(learning.audioFile(book, first.id))).length > 0);
     assert.deepEqual(await readFile(learning.recordings.original(book, first.id).path), await readFile(sample));
+    const edit = learning.epubTiming.get(book, first.id, 'epub:0');
+    const [from, , originalTime] = edit.section.words[2];
+    const time = originalTime + .1;
+    const points = [{ from, time }];
+    learning.epubTiming.save(book, first.id, { key: 'epub:0', revision: edit.revision, points });
+    assert.equal(learning.unit(book, 'epub:0', first.id).audio.timings.find((word) => word.from === from).start, time);
+    assert.equal(learning.unit(book, 'epub:0', second.id).audio.timings.find((word) => word.from === from).start, originalTime);
     const before = speechCalls;
     learning.recordings.queue(book, first.id);
     assert.equal((await ready(first.id)).state, 'ready');
     assert.equal(speechCalls, before, 'resync reuses the saved transcript');
+    assert.deepEqual(learning.epubTiming.get(book, first.id, 'epub:0').section.points, points);
+    assert.equal(learning.unit(book, 'epub:0', first.id).audio.timings.find((word) => word.from === from).start, time);
     db.prepare("UPDATE recordings SET state='syncing' WHERE id=?").run(second.id);
     uploadedAudio({ db, folder: join(folder, 'narration'), library: { getBook() { return book; } }, languageCall() {}, wake() {} });
     assert.equal(db.prepare('SELECT state FROM recordings WHERE id=?').get(second.id).state, 'queued');

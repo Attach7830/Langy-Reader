@@ -101,6 +101,36 @@ test('EPUB audiobook boundaries and exclusions affect generation while keeping c
   const first = unit.audio.timings.find(({ start }) => start != null);
   assert.equal(first.word, 'Keep');
   assert.equal(first.from, passages[1].indexOf('Keep'));
+  const edit = learning.epubTiming.get(book, selected.id, 'epub:1');
+  assert.deepEqual(edit.sections.map(({ key }) => key), ['epub:1', 'epub:3']);
+  const excluded = passages[1].indexOf('Ignore');
+  assert.ok(!edit.section.words.some(([from]) => from === excluded));
+  const last = edit.section.words.at(-1);
+  const points = [{ from: first.from, time: edit.section.start + .13 }, { from: last[0], time: last[2] + .12 }];
+  const setPoints = (values, revision = edit.revision) => learning.epubTiming.save(book, selected.id, { revision, key: 'epub:1', points: values });
+  assert.throws(() => setPoints([{ from: excluded, time: .5 }]), { status: 422 });
+  assert.throws(() => setPoints([{ ...points[0], time: edit.section.end }]), { status: 422 });
+  assert.throws(() => setPoints(points.map((point, index) => ({ ...point, time: points[1 - index].time }))), { status: 422 });
+  const audioBytes = await readFile(learning.audioFile(book, selected.id));
+  const otherTiming = learning.unit(book, 'epub:1', full.id).audio.timings;
+  const updated = setPoints(points);
+  assert.equal(updated.revision, edit.revision + 1);
+  assert.deepEqual(learning.epubTiming.get(book, selected.id, 'epub:1').section.points, points);
+  const synced = learning.unit(book, 'epub:1', selected.id).audio.timings;
+  const segment = selected.segments[0];
+  for (const { from, time } of points) {
+    const word = synced.find((item) => item.from === from);
+    assert.ok(Math.abs(segment.start + word.start * segment.scale - time) < .000001);
+    assert.equal(word.estimated, false);
+    assert.ok(word.end > word.start);
+  }
+  assert.notEqual(synced.find(({ word }) => word === 'sentence').start, unit.audio.timings.find(({ word }) => word === 'sentence').start);
+  assert.equal(synced.find(({ word }) => word === 'Ignore').start, null);
+  assert.deepEqual(learning.unit(book, 'epub:1', full.id).audio.timings, otherTiming);
+  assert.deepEqual(await readFile(learning.audioFile(book, selected.id)), audioBytes);
+  assert.throws(() => setPoints([]), { status: 409 });
+  assert.equal(setPoints([], updated.revision).section.points.length, 0);
+  assert.deepEqual(learning.unit(book, 'epub:1', selected.id).audio.timings, unit.audio.timings);
   assert.equal(learning.rescans.queue(book, selected.id).totalWords, 9, 'repair considers only narrated words');
   assert.equal(learning.queueBook(book).id, selected.id);
   assert.equal(learning.info(book).wordCount, analysis.wordCount);

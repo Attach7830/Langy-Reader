@@ -1,10 +1,5 @@
 import { $, $$, api, message } from './ui.js';
-
-const clock = (time) => {
-  const centiseconds = Math.round(time * 100);
-  const minutes = Math.floor(centiseconds / 6000);
-  return `${minutes}:${(centiseconds % 6000 / 100).toFixed(2).padStart(5, '0')}`;
-};
+import { audioSyncTime as clock } from './audio-sync-time.js';
 
 export function adjustPdfTiming({ saved }) {
   const dialog = $('#pdf-timing-dialog'), form = $('#pdf-timing-form'), select = form.elements.page;
