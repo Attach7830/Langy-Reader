@@ -18,6 +18,7 @@ import { wordHelp } from './words.js';
 import { earlierPageContext } from './reading-context.js';
 import { narration } from './narration.js';
 import { readingProgressSync } from './reading-sync.js';
+import { syncPositionDialog } from './sync-position-dialog.js';
 import { pinyinOverlay, pinyinToolbar } from './pinyin.js';
 import { readingVocabulary } from './reading-vocabulary.js';
 import { renderSummaryDetail } from './summary-detail.js';
@@ -70,6 +71,8 @@ let moving = false, summaryQueued = false, fallbackFullscreen = false;
 let hasReturnLocation = false, temporaryAudioVisible = false, pinchStart;
 let zoom = 1;
 let statusCheck = 0;
+let checkingOpeningPositions = false;
+let readingSyncState = { state: 'disabled' };
 let settingsReturnHash = '#library', settingsHistoryEntry = false;
 const returnHistory = locationHistory({
   location: () => activePosition && ({ target: activePosition.target, label: [activePosition.detail, activePosition.label].filter(Boolean).join(' · '), scrollTop: viewer.scrollTop, scrollLeft: viewer.scrollLeft }),
@@ -157,7 +160,10 @@ for (const type of ['input', 'change', 'click', 'wheel', 'focusin']) $('#narrati
 $('#narration-player').addEventListener('pointerdown', audioPeek.hold, { passive: true });
 document.addEventListener('pointerup', audioPeek.release, { passive: true });
 document.addEventListener('pointercancel', audioPeek.release, { passive: true });
-const absProgress = audiobookshelfProgress({ audio, request: api, reading: {
+const positionPrompt = syncPositionDialog({ dialog: $('#sync-position-dialog'),
+  available: () => Boolean(renderer && !readerScreen.hidden && !checkingOpeningPositions), onPending: updateSyncButton,
+});
+const absProgress = audiobookshelfProgress({ audio, request: api, notify: (offer) => positionPrompt.update('audiobookshelf', offer), reading: {
   hasSavedPosition: () => hadSavedPosition,
   playbackPosition() {
     const current = renderer?.syncPosition?.();
@@ -195,12 +201,24 @@ const readingSync = readingProgressSync({
 });
 
 function syncStatus({ state, pending, error }) {
+  readingSyncState = { state, error };
+  const saved = pending?.progress;
+  positionPrompt.update('reading', saved && state !== 'disabled' ? {
+    key: `${pending.document}:${pending.version}`, device: saved.device || 'Another device',
+    label: `${Math.round(saved.percentage * 100)}%`, percentage: saved.percentage, timestamp: saved.timestamp,
+    error: state === 'error' ? error : '',
+    resume: () => readingSync.resume(pending), keep: () => readingSync.keepLocal(pending),
+  } : null);
+  if (state === 'approximate') toast('Resumed near the saved position. This EPUB location could only be mapped approximately.');
+}
+
+function updateSyncButton(hasPending) {
+  const { state, error } = readingSyncState;
+  const display = hasPending ? 'conflict' : state;
   const button = $('#sync-progress');
-  const notice = $('#sync-notice');
-  const wasHidden = notice.hidden;
-  button.hidden = state === 'disabled';
-  button.disabled = state === 'syncing';
-  button.dataset.state = state;
+  button.hidden = display === 'disabled';
+  button.disabled = display === 'syncing' || checkingOpeningPositions;
+  button.dataset.state = display;
   const labels = {
     syncing: 'Syncing reading progress…', waiting: 'Saving reading progress…',
     synced: 'Reading progress synced. Check for updates',
@@ -209,18 +227,8 @@ function syncStatus({ state, pending, error }) {
     conflict: 'Choose which reading position to keep', remote: 'Another device saved a reading position',
     error: error || 'Could not resume the saved position. Click to retry',
   };
-  button.title = labels[state] || 'Sync reading progress';
+  button.title = labels[display] || 'Sync reading progress';
   button.setAttribute('aria-label', button.title);
-  notice.hidden = !pending || state === 'disabled';
-  if (!notice.hidden) {
-    const saved = pending.progress;
-    const date = new Date(saved.timestamp * 1000).toLocaleString();
-    $('#sync-notice-text').textContent = `${saved.device || 'Another device'} saved a position at ${Math.round(saved.percentage * 100)}% (${date}).`
-      + (state === 'error' ? ` ${error}` : ' Resume there or keep your current place.');
-  }
-  $('#sync-resume').disabled = $('#sync-keep').disabled = state === 'syncing';
-  if (wasHidden !== notice.hidden) syncFullscreen();
-  if (state === 'approximate') toast('Resumed near the saved position. This EPUB location could only be mapped approximately.');
 }
 
 for (const close of $$('[data-close]')) {
@@ -566,7 +574,7 @@ function syncFullscreen() {
   $('#fullscreen').setAttribute('aria-pressed', String(fullscreen));
   $('#fullscreen').setAttribute('aria-label', fullscreen ? 'Exit full screen' : 'Full screen');
   $('#fullscreen').title = fullscreen ? 'Exit full screen' : 'Full screen';
-  setDockAutoHide(Boolean(activeBook && fullscreen && settings.autoHideDocks && !hasReturnLocation && !temporaryAudioVisible && $('#sync-notice').hidden));
+  setDockAutoHide(Boolean(activeBook && fullscreen && settings.autoHideDocks && !hasReturnLocation && !temporaryAudioVisible));
 }
 
 async function toggleFullscreen() {
@@ -582,6 +590,8 @@ async function toggleFullscreen() {
 }
 
 function closeReader(playbackPosition) {
+  checkingOpeningPositions = false;
+  positionPrompt.reset();
   audioPeek.reset();
   pinchText({ phase: 'cancel' });
   absProgress.stop();
@@ -628,6 +638,7 @@ function updateFormatLink() {
 async function openBook(book, textEdition = readingPdfEpub && activeBook?.id === book.id) {
   const playbackPosition = activeBook?.id === book.id && textEdition !== readingPdfEpub ? audio.playbackPosition() : null;
   closeReader(playbackPosition);
+  checkingOpeningPositions = true;
   hadSavedPosition = Boolean(progress[book.id]?.target);
   const finishOpening = processTasks.begin('Open book', { bookId: book.id, title: book.title, cancel: () => { closeReader(); location.hash = '#library'; } });
   activeBook = book;
@@ -700,9 +711,15 @@ async function openBook(book, textEdition = readingPdfEpub && activeBook?.id ===
     if (signal.aborted) return;
     contentsButton.disabled = false;
     audio.apply();
-    void Promise.all([audio.refresh(), readingSync.start(book, opened)]).then(() => {
-      if (!signal.aborted && renderer === opened) absProgress.start();
-    });
+    void Promise.allSettled([audio.refresh(), readingSync.start(book, opened)])
+      .then(() => { if (!signal.aborted && renderer === opened) return absProgress.start(); })
+      .catch((error) => { if (!signal.aborted) reportError(error); })
+      .finally(() => {
+        if (!signal.aborted && renderer === opened) {
+          checkingOpeningPositions = false;
+          positionPrompt.refresh();
+        }
+      });
     readerMessage();
     if (!document.querySelector('dialog[open]')) viewer.focus({ preventScroll: true });
   } catch (error) {
@@ -884,9 +901,7 @@ $('#next').addEventListener('click', () => { viewer.focus({ preventScroll: true 
 $('#contents-button').addEventListener('click', contents);
 $('#reader-more').addEventListener('click', (event) => { if (event.target.closest('button')) $('#reader-more').open = false; });
 $('#bookmarks-button').addEventListener('click', () => void bookmarks.open());
-$('#sync-progress').addEventListener('click', () => void readingSync.check());
-$('#sync-resume').addEventListener('click', () => void readingSync.resume());
-$('#sync-keep').addEventListener('click', () => void readingSync.keepLocal());
+$('#sync-progress').addEventListener('click', () => { if (!positionPrompt.open()) void readingSync.check(); });
 $('#fullscreen').addEventListener('click', toggleFullscreen);
 function toggleAudioToolbar() {
   const visible = temporaryAudioVisible || settings.audioEnabled && !settings.audioToolbarHidden;

@@ -941,6 +941,83 @@ try {
       } finally { await currentPage.goto(base + '/#library'); await currentPage.locator('#books .book-card').first().waitFor(); }
     }
   });
+  await check('Audiobookshelf and device progress share one centered, dimmed resume dialog', async () => {
+    const syncContext = await browser.newContext({ viewport: { width: 320, height: 568 }, isMobile: true, hasTouch: true, serviceWorkers: 'block', extraHTTPHeaders: adminHeaders });
+    let releaseABS;
+    const openingABS = new Promise((resolve) => { releaseABS = resolve; });
+    try {
+      const syncPage = await syncContext.newPage();
+      await syncPage.addInitScript((id) => {
+        if (window.top !== window) return;
+        localStorage.setItem('langy-progress-v1', JSON.stringify({ [id]: { target: 'epubcfi(/6/2[one]!/4/2/1:0)', syncDirty: true } }));
+      }, book.id);
+      const bookPath = '/api/books/' + book.id;
+      const shared = { document: 'b'.repeat(32), version: 2,
+        progress: { percentage: .55, device: 'E-reader', timestamp: 1000 } };
+      let abs = { linked: true, recording: 'reading', automatic: true, approximate: true, currentTime: .55, updated: 1000, version: 'abs-1' };
+      const writes = [];
+      const reply = (value) => (route) => {
+        if (route.request().method() === 'PUT') writes.push(route.request().url());
+        return route.fulfill({ json: value() });
+      };
+      await syncPage.route('**' + bookPath + '/narration*', reply(() => ({ absConnected: true, recordings: [], audio: { state: 'missing' } })));
+      await syncPage.route('**' + bookPath + '/progress', reply(() => shared));
+      await syncPage.route('**' + bookPath + '/audiobookshelf/progress*', async (route) => {
+        await openingABS;
+        return reply(() => abs)(route);
+      });
+      const firstABSCheck = syncPage.waitForRequest((request) => request.url().includes(bookPath + '/audiobookshelf/progress?'));
+      await syncPage.goto(base + '/#read/' + book.id);
+      await firstABSCheck;
+      const modal = syncPage.getByRole('dialog', { name: 'Choose where to continue' });
+      assert.equal(await modal.isVisible(), false, 'wait for the initial Audiobookshelf response before prompting');
+      releaseABS();
+      await modal.getByText('Audiobookshelf and E-reader saved a position at 55%.').waitFor();
+      assert.equal(await syncPage.locator('dialog:modal').count(), 1);
+      assert.equal(await syncPage.locator('#sync-notice, #abs-sync-notice').count(), 0);
+      assert.deepEqual(await modal.locator('footer button:visible').allTextContents(), ['Keep this position', 'Resume there']);
+      assert.deepEqual(await modal.evaluate((dialog) => {
+        const box = dialog.getBoundingClientRect(), backdrop = getComputedStyle(dialog, '::backdrop');
+        return { centered: Math.abs(box.left * 2 + box.width - innerWidth) < 2 && Math.abs(box.top * 2 + box.height - innerHeight) < 2,
+          fits: dialog.scrollWidth <= dialog.clientWidth, dimmed: backdrop.backgroundColor === 'rgba(23, 23, 23, 0.7)',
+          focused: dialog.contains(document.activeElement) };
+      }), { centered: true, fits: true, dimmed: true, focused: true });
+      const before = await syncPage.evaluate((id) => JSON.parse(localStorage.getItem('langy-progress-v1'))[id].target, book.id);
+      await syncPage.keyboard.press('ArrowRight');
+      assert.equal(await syncPage.evaluate((id) => JSON.parse(localStorage.getItem('langy-progress-v1'))[id].target, book.id), before);
+      await modal.getByRole('button', { name: 'Decide later' }).click();
+      await modal.waitFor({ state: 'hidden' });
+      assert.deepEqual(writes, [], 'deferring must leave both saved positions alone');
+      await syncPage.locator('#reader-more > summary').click();
+      await syncPage.locator('#sync-progress').click();
+      await modal.waitFor();
+
+      async function updateABS(value) {
+        abs = value;
+        await Promise.all([syncPage.waitForResponse((response) => response.url().includes(bookPath + '/audiobookshelf/progress?')),
+          syncPage.locator('#narration-audio').dispatchEvent('seeked')]);
+      }
+      await updateABS({ ...abs, currentTime: .72, version: 'abs-2' });
+      await modal.getByRole('button', { name: 'Audiobookshelf (72%)', exact: true }).waitFor();
+      assert.equal(await modal.getByRole('button', { name: 'E-reader (55%)', exact: true }).isVisible(), true);
+      assert.equal(await syncPage.locator('dialog:modal').count(), 1);
+      await updateABS({ ...abs, currentTime: .55, version: 'abs-3' });
+      await modal.getByRole('button', { name: 'Resume there', exact: true }).click();
+      await modal.waitFor({ state: 'hidden' });
+      const persisted = await syncPage.evaluate((id) => ({
+        reading: JSON.parse(localStorage.getItem('langy-progress-v1'))[id],
+        abs: Object.keys(localStorage).filter((key) => key.endsWith('-' + id + '-reading'))
+          .map((key) => JSON.parse(localStorage.getItem(key))).find((value) => value.version === 'abs-3'),
+      }), book.id);
+      assert.notEqual(persisted.reading.target, before);
+      assert.equal(persisted.reading.syncVersion, 2);
+      assert.ok(persisted.abs, 'resuming the shared position acknowledges the matching Audiobookshelf version too');
+      assert.deepEqual(writes, [], 'resuming a saved position must not overwrite either remote');
+      await syncPage.goto(base + '/#library');
+      await syncPage.locator('#books .book-card').first().waitFor();
+      assert.equal(await syncPage.locator('dialog:modal').count(), 0);
+    } finally { releaseABS(); await syncContext.close(); }
+  });
   await check('desktop reader supports trackpad text size, section shortcuts, contextual phrase help and one process queue', async () => {
     await desktopPage.goto(base + '/#read/' + book.id);
     await desktopPage.waitForFunction((title) => document.querySelector('#reading-title').textContent === title, book.title);

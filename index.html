@@ -242,20 +242,13 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
         <details id="reader-more" class="reader-more"><summary class="icon-button" aria-label="More reading tools" title="More reading tools">•••</summary><div class="reader-more-menu">
         <a class="button quiet" id="reader-format-link" hidden><i data-lucide="book-open"></i><span></span></a>
         <button class="icon-button" id="jump-page" type="button" title="Jump to page" aria-label="Jump to page" aria-controls="page-jump-dialog"><i data-lucide="book-open"></i></button>
-        <button class="icon-button" id="sync-progress" type="button" title="Sync reading progress" aria-label="Sync reading progress" aria-controls="sync-notice" hidden><i data-lucide="rotate-ccw"></i></button>
+        <button class="icon-button" id="sync-progress" type="button" title="Sync reading progress" aria-label="Sync reading progress" aria-controls="sync-position-dialog" hidden><i data-lucide="rotate-ccw"></i></button>
         <button class="icon-button" id="bookmarks-button" type="button" title="Bookmarks (M)" aria-label="Bookmarks"><i data-lucide="bookmark"></i></button>
         <button class="icon-button" id="book-tools-button" type="button" title="Search book and character guide" aria-label="Search book and character guide"><i data-lucide="search"></i></button>
         <button class="icon-button" id="immersion-toggle" type="button" title="Immersion mode" aria-label="Immersion mode" aria-pressed="false"><i data-lucide="book-open"></i></button>
         <button class="icon-button" type="button" data-settings="reading" title="Reading settings" aria-label="Reading settings"><span class="type-icon">Aa</span></button>
         <button class="button quiet summary-toggle" id="summarize" type="button" aria-label="Page summary" aria-controls="summary-panel" aria-expanded="false"><i data-lucide="sparkles"></i><span>Summary</span></button>
         </div></details>
-      </div>
-      <div id="sync-notice" class="sync-notice" hidden>
-        <p id="sync-notice-text" role="status"></p>
-        <div class="sync-notice-actions">
-          <button class="button secondary" id="sync-resume" type="button">Resume there</button>
-          <button class="button quiet" id="sync-keep" type="button">Keep this position</button>
-        </div>
       </div>
     </header>
     <div id="stage" class="reader-stage">
@@ -289,7 +282,6 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
       </aside>
     </div>
     <footer class="reader-footer">
-      <div id="abs-sync-notice" class="sync-notice" hidden><p id="abs-sync-message"></p><div class="sync-notice-actions"><button id="abs-sync-resume" class="button secondary" type="button">Resume ABS position</button><button id="abs-sync-keep" class="button quiet" type="button">Keep this position</button></div></div>
       <p id="abs-sync-status" class="field-note" role="status" hidden></p>
       <div class="narration-player" id="narration-player" role="region" aria-label="Book audio player" hidden>
         <label class="recording-choice" id="recording-choice" hidden>Recording <select id="narration-recording" aria-label="Book recording"></select></label>
@@ -347,6 +339,15 @@ sudo docker compose up -d --build --no-deps reader</code></pre><p>If you use the
     <div class="reader-dock-edge bottom-edge" aria-hidden="true"></div>
   </section>
 
+  <dialog class="modal sync-position-dialog" id="sync-position-dialog" aria-labelledby="sync-position-title" aria-describedby="sync-position-message">
+    <header class="modal-header"><h2 id="sync-position-title">Choose where to continue</h2><button class="icon-button" type="button" data-close aria-label="Decide later" title="Decide later" autofocus><i data-lucide="x"></i></button></header>
+    <div class="modal-body"><p id="sync-position-message"></p><p id="sync-position-error" class="form-error" role="alert" hidden></p></div>
+    <footer class="modal-footer">
+      <button id="sync-keep" class="button quiet" type="button">Keep this position</button>
+      <button id="sync-resume" class="button primary" type="button" hidden>Resume there</button>
+      <button id="abs-sync-resume" class="button primary" type="button" hidden>Resume there</button>
+    </footer>
+  </dialog>
   <nav class="mobile-navigation" id="mobile-navigation" aria-label="App navigation"><a href="#library" aria-label="Library"><i data-lucide="library-big"></i><span>Library</span></a><button type="button" data-open-processes data-full-access aria-label="Process queue"><i data-lucide="download"></i><span>Processes</span><span id="mobile-process-count" hidden></span></button><a href="#discover" data-full-access aria-label="Discover books"><i data-lucide="sparkles"></i><span>Discover</span></a><button type="button" data-settings="reading" aria-label="Settings"><i data-lucide="settings-2"></i><span>Settings</span></button></nav>
   <dialog class="modal mobile-actions-modal" id="book-actions-dialog" aria-labelledby="book-actions-title"><header class="modal-header"><h2 id="book-actions-title" data-user-content>Book options</h2><button class="icon-button" type="button" data-close aria-label="Close book options"><i data-lucide="x"></i></button></header><div class="modal-body form-stack" id="book-actions-body"></div></dialog>
   <dialog class="modal" id="archive-title-dialog" aria-labelledby="archive-title-heading">
