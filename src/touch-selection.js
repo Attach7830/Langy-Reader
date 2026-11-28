@@ -22,8 +22,8 @@ export function touchSelection({ roots, changed }) {
       const start = handle.dataset.selectionEdge === 'start', edge = range.cloneRange();
       edge.collapse(start);
       const rect = edge.getBoundingClientRect();
-      const x = rect.left + (frame?.left || 0), y = rect.bottom + (frame?.top || 0);
-      handle.hidden = !rect.height || x < clip.left || x > clip.right || y <= clip.top || y > clip.bottom;
+      const x = rect.left + (frame?.left || 0), y = (start ? rect.top : rect.bottom) + (frame?.top || 0);
+      handle.hidden = !rect.height || x < clip.left || x > clip.right || y < clip.top || y > clip.bottom;
       handle.style.left = `${x}px`; handle.style.top = `${y}px`;
     }
   }
@@ -68,17 +68,19 @@ export function touchSelection({ roots, changed }) {
   }
 
   for (const handle of handles.children) {
+    const edge = handle.dataset.selectionEdge;
+    const start = edge === 'start';
     handle.addEventListener('pointerdown', (event) => {
       if (!selection || drag || event.button !== 0) return;
       event.preventDefault();
       const rect = handle.getBoundingClientRect();
-      drag = { id: event.pointerId, dx: event.clientX - (rect.left + rect.width / 2), dy: event.clientY - rect.top };
+      drag = { id: event.pointerId, dx: event.clientX - (rect.left + rect.width / 2), dy: event.clientY - (start ? rect.bottom : rect.top) };
       handle.setPointerCapture(event.pointerId);
       changed(true);
     });
     handle.addEventListener('pointermove', (event) => {
       if (drag?.id !== event.pointerId) return;
-      extend(event.clientX - drag.dx, event.clientY - drag.dy - 1, handle.dataset.selectionEdge);
+      extend(event.clientX - drag.dx, event.clientY - drag.dy + (start ? 1 : -1), edge);
     });
     handle.addEventListener('lostpointercapture', (event) => {
       if (drag?.id !== event.pointerId) return;

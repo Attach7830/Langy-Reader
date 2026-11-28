@@ -86,7 +86,7 @@ test('short drags, diagonal movement, mouse drags, links and long presses preser
   for (const node of f.host.querySelectorAll('a,button,input,[contenteditable]')) doubleTap(f, 495, node);
   assert.deepEqual(f.turns, []);
 });
-test('holding a word takes ownership of the drag and a subsequent swipe turns once', (t) => {
+test('holding a word tolerates drift and protects the selection until a tap dismisses it', (t) => {
   let selecting = false, finished = 0, tapCount = 0;
   const timers = new Map(), extensions = [], word = { word: 'hello' };
   let timer = 0;
@@ -104,7 +104,9 @@ test('holding a word takes ownership of the drag and a subsequent swipe turns on
   });
   f.target.addEventListener('pointerup', () => tapCount++);
   pointer('pointerdown', f.target, 440);
-  f.tick(500); [...timers.values()][0]();
+  f.tick(120); pointer('pointermove', f.target, 424, 202);
+  f.tick(240); assert.equal(timers.size, 1, 'small thumb drift must keep the hold pending');
+  [...timers.values()][0]();
   assert.equal(pointer('contextmenu', f.target, 440, 200, { button: 2 }).defaultPrevented, true);
   pointer('pointermove', f.target, 240);
   assert.equal(pointer('pointerup', f.target, 240).defaultPrevented, true);
@@ -114,11 +116,57 @@ test('holding a word takes ownership of the drag and a subsequent swipe turns on
   assert.deepEqual(f.turns, []);
 
   f.gesture(440, 240);
+  assert.equal(selecting, true, 'a drag that misses a selection handle leaves the passage selected');
+  f.gesture(110, 230, { root: f.dom.window.document.documentElement });
+  assert.equal(selecting, true, 'a retargeted margin drag also leaves the selection open');
+  assert.deepEqual(f.turns, []);
+  assert.equal(f.gesture(440, 440).defaultPrevented, true, 'dismissing with a tap consumes the whole contact');
   assert.equal(selecting, false);
+  assert.deepEqual(f.turns, []);
+  f.gesture(440, 240);
   assert.deepEqual(f.turns, [1]);
   assert.equal(timers.size, 0, 'a swipe must cancel the pending hold');
   f.gesture(440, 240, { duration: 620 });
   assert.deepEqual(f.turns, [1], 'a slow hold followed by a drag cannot turn a page');
+});
+
+test('a native selection collapsed during a drag still owns that touch', (t) => {
+  const f = fixture(t), doc = f.dom.window.document, range = doc.createRange();
+  range.selectNodeContents(f.target); doc.getSelection().addRange(range);
+  pointer('pointerdown', f.target, 430);
+  doc.getSelection().removeAllRanges();
+  pointer('pointermove', f.target, 240);
+  assert.equal(pointer('pointerup', f.target, 240).defaultPrevented, true);
+  assert.deepEqual(f.turns, []);
+  f.gesture(430, 240);
+  assert.deepEqual(f.turns, [1]);
+});
+
+test('single edge taps turn promptly, while words and repeated double taps retain their own actions', (t) => {
+  let word = null, seeks = 0;
+  const f = fixture(t, { canTap: () => true, wordAt: () => word, wordDoubleTap: () => seeks++ });
+  doubleTap(f, 470);
+  assert.deepEqual(f.turns, [1], 'a double tap on the margin turns one page');
+  f.tick(400); f.gesture(120, 120);
+  assert.deepEqual(f.turns, [1, -1], 'one tap also turns without waiting for a second');
+  word = { node: f.target.firstChild, index: 0, word: 'hello' };
+  f.tick(400); doubleTap(f, 470);
+  assert.equal(seeks, 1);
+  assert.deepEqual(f.turns, [1, -1]);
+});
+
+test('a short but deliberate horizontal flick turns a page on a phone', (t) => {
+  const f = fixture(t);
+  f.gesture(400, 362, { duration: 90 });
+  assert.deepEqual(f.turns, [1]);
+});
+
+test('a touch retargeted to HTML at the reader margin can turn a page', (t) => {
+  const f = fixture(t, { canTap: () => true }), doc = f.dom.window.document;
+  f.gesture(105, 105, { root: doc.documentElement });
+  f.gesture(95, 95, { root: doc.documentElement });
+  f.gesture(480, 480, { root: doc.querySelector('#summary') });
+  assert.deepEqual(f.turns, [-1], 'only the in-reader edge tap should turn');
 });
 
 test('a zoomed PDF can pan, then shrink when a second finger lands after the first starts moving', (t) => {

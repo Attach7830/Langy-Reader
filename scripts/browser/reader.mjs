@@ -490,33 +490,60 @@ try {
     const before = await position(); await page.locator('#next').click(); await changed(before);
     const after = await position(); await delay(700); assert.equal(await position(), after, 'a delayed layout must not restore the previous page');
   });
-  await check('an outer double tap turns once and a single tap does not turn', async () => {
-    const box = await page.locator('.reading-main').boundingBox(), x = box.x + box.width * .9, y = box.y + box.height * .55;
-    const before = await position(); await page.touchscreen.tap(x, y); await delay(400); assert.equal(await position(), before);
-    await page.touchscreen.tap(x, y); await delay(70); await page.touchscreen.tap(x, y); await changed(before);
-    const after = await position(); await delay(500); assert.equal(await position(), after);
+  await check('single edge taps and short swipes turn pages, with a double tap turning only once', async () => {
+    await page.locator('#contents-button').tap();
+    await page.getByRole('button', { name: 'Primera parte', exact: true }).tap();
+    await page.waitForFunction(() => document.querySelector('#page-label').textContent.startsWith('Page 1 of '));
+    const box = await page.locator('.reading-main').boundingBox(), x = box.x + box.width - 2, y = box.y + box.height * .55;
+    let before = await position(); await page.touchscreen.tap(x, y); await changed(before);
+    assert.match(await page.locator('#page-label').textContent(), /^Page 2 of /u);
+    before = await position(); await page.touchscreen.tap(box.x + 2, y); await changed(before);
+    assert.match(await page.locator('#page-label').textContent(), /^Page 1 of /u);
+    before = await position(); await swipe(-43); await changed(before);
+    assert.match(await page.locator('#page-label').textContent(), /^Page 2 of /u);
+    before = await position(); await page.locator('#previous').tap(); await changed(before);
+    assert.match(await page.locator('#page-label').textContent(), /^Page 1 of /u);
+    before = await position(); await page.touchscreen.tap(x, y); await changed(before);
+    const after = await position(); await page.touchscreen.tap(x, y); await delay(400);
+    assert.equal(await position(), after);
   });
-  await check('a mobile hold and drag selects a passage and the next swipe turns one page', async () => {
+  await check('mobile handles adjust text without turning pages until a tap dismisses the selection', async () => {
     await page.locator('#contents-button').tap();
     await page.getByRole('button', { name: 'Primera parte', exact: true }).tap();
     const source = page.frameLocator('#viewer iframe').first().locator('#source');
     await source.waitFor({ state: 'visible' });
-    const [first, last] = await source.evaluate((paragraph) => ['viajera', 'tranquila'].map((word) => {
+    const [first, last, extension] = await source.evaluate((paragraph) => ['viajera', 'tranquila', 'cerca'].map((word) => {
       const node = paragraph.firstChild, start = node.data.indexOf(word), range = document.createRange();
       range.setStart(node, start); range.setEnd(node, start + word.length);
       const box = range.getBoundingClientRect(), frame = window.frameElement.getBoundingClientRect();
-      return { x: frame.x + box.x + box.width / 2, y: frame.y + box.y + box.height / 2 };
+      return { x: frame.x + box.x + box.width / 2, y: frame.y + box.y + box.height / 2,
+        right: frame.x + box.right, bottom: frame.y + box.bottom };
     }));
     const before = await position();
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [first] });
-    await delay(525);
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [last] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: first.x, y: first.y }] });
+    await delay(100);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: first.x + 16, y: first.y + 2 }] });
+    await delay(330);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: last.x, y: last.y }] });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await page.locator('[data-bookmark-selection]').waitFor({ state: 'visible' });
-    assert.equal(await page.locator('[data-selection-edge="end"]').isVisible(), true);
-    const highlighted = await source.evaluate(() => [...CSS.highlights.get('langy-passage')].map((range) => range.toString()).join(''));
-    assert.equal(highlighted, 'viajera llegó a una casa tranquila');
+    const highlight = () => source.evaluate(() => [...CSS.highlights.get('langy-passage')].map((range) => range.toString()).join(''));
+    assert.equal(await highlight(), 'viajera llegó a una casa tranquila');
+    const handle = await page.locator('[data-selection-edge="end"]').boundingBox();
+    assert.ok(handle.width >= 44 && handle.height >= 44);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: handle.x + handle.width / 2, y: handle.y + 18 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: extension.right, y: extension.bottom + 18 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    assert.equal((await highlight()).trim(), 'viajera llegó a una casa tranquila cerca');
     assert.equal(await position(), before);
+    await swipe(-145, 2, true);
+    await delay(100);
+    assert.equal(await position(), before, 'missing a handle during a drag should keep the same page');
+    assert.equal((await highlight()).trim(), 'viajera llegó a una casa tranquila cerca');
+    const box = await page.locator('.reading-main').boundingBox();
+    await page.touchscreen.tap(box.x + box.width - 2, box.y + box.height * .6);
+    await page.locator('#phrase-help').waitFor({ state: 'hidden' });
+    assert.equal(await position(), before, 'the tap should only clear the selection');
     await swipe(-145, 2, true);
     await changed(before);
     assert.match(await page.locator('#page-label').textContent(), /^Page 2 of /u);

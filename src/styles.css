@@ -922,13 +922,15 @@ html[data-immersion="true"] .reader-screen > .process-queue-toggle {
 
 ::highlight(langy-passage) { background-color: #3bb8d266; }
 .selection-handle {
-  position: fixed; z-index: 159; width: 34px; height: 34px; transform: translateX(-50%);
+  position: fixed; z-index: 159; width: 44px; height: 44px; transform: translateX(-50%);
   touch-action: none; user-select: none; cursor: grab;
 }
 .selection-handle::before {
-  content: ""; display: block; width: 13px; height: 13px; margin: 1px auto;
+  content: ""; position: absolute; top: 1px; left: 50%; transform: translateX(-50%); width: 13px; height: 13px;
   background: #1580a2; border: 1px solid #fff; border-radius: 50%;
 }
+.selection-handle[data-selection-edge="start"] { transform: translate(-50%, -100%); }
+.selection-handle[data-selection-edge="start"]::before { top: auto; bottom: 1px; }
 .phrase-help {
   position: fixed; z-index: 160; display: flex; flex-direction: column; overflow: hidden;
   max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); padding: 4px;

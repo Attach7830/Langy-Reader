@@ -152,7 +152,7 @@ export function settingsPage({ preferences, apply, navigate, back, safeMode = fa
     }
     fields.autoHideDocks.checked = current.autoHideDocks;
     importedFonts.select(current.font);
-    for (const key of ['doubleTapToTurn', 'swipeToTurn', 'tapCenterFullscreen']) fields[key].checked = current[key] ?? defaults[key];
+    for (const key of ['tapToTurn', 'doubleTapToTurn', 'swipeToTurn', 'tapCenterFullscreen']) fields[key].checked = current[key] ?? defaults[key];
     fields.size.value = readingFontSize(current);
     $('#font-size-device-note').textContent = touchReader() ? 'Phone/tablet text size. Desktop text size is saved separately.' : 'Desktop text size. Phone/tablet text size is saved separately.';
     fields.immersionMode.checked = current.immersionMode;
@@ -266,7 +266,8 @@ export function settingsPage({ preferences, apply, navigate, back, safeMode = fa
       background: fields.background.value, font: fields.font.value, width: fields.width.value,
       ...fontSizeChange(fields.size.valueAsNumber), line: fields.line.valueAsNumber,
       autoHideDocks: fields.autoHideDocks.checked,
-      doubleTapToTurn: fields.doubleTapToTurn.checked, swipeToTurn: fields.swipeToTurn.checked, tapCenterFullscreen: fields.tapCenterFullscreen.checked,
+      tapToTurn: fields.tapToTurn.checked, doubleTapToTurn: fields.doubleTapToTurn.checked,
+      swipeToTurn: fields.swipeToTurn.checked, tapCenterFullscreen: fields.tapCenterFullscreen.checked,
       immersionMode: fields.immersionMode.checked, quietLibrary: fields.quietLibrary.checked,
       pdfNight: fields.pdfNight.checked, keys: { ...shadowKeys },
     };

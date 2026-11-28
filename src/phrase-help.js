@@ -215,8 +215,9 @@ export function phraseHelp({ book, preferences, request, explanations = true, ro
   viewer.addEventListener('scroll', place, { passive: true });
   if (typeof ResizeObserver === 'function') new ResizeObserver(place).observe(panel);
 
-  return { bind, clear, bookmark, explain, selectPassage: touch.start,
+  return { bind, clear, dismiss, bookmark, explain, selectPassage: touch.start,
     get touchSelected() { return touch.active; },
+    get hasSelection() { return touch.active || selected?.root.ownerDocument.getSelection()?.isCollapsed === false; },
     keydown(event) {
       if (event.key !== 'Escape' || panel.hidden) return false;
       event.preventDefault(); dismiss(); return true;

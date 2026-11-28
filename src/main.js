@@ -92,6 +92,7 @@ const pageTurns = pageTurnQueue({ perform: performMove, busy(value) {
 const pageGestures = pageNavigation({ host: $('.reading-main'),
   enabled: () => Boolean(activeBook && renderer && !document.querySelector('dialog[open]')),
   canSwipe: () => settings.swipeToTurn !== false && !viewer.classList.contains('pdf-panning'),
+  canTap: () => settings.tapToTurn === true,
   canDoubleTap: () => settings.doubleTapToTurn !== false,
   canCenterTap: () => settings.tapCenterFullscreen !== false,
   wordAt: (event) => words.at(event),
@@ -103,8 +104,8 @@ const pageGestures = pageNavigation({ host: $('.reading-main'),
     if (passage) audio.pause();
     return passage;
   },
-  passageSelected: () => phrases.touchSelected,
-  dismissPassage: () => phrases.clear(),
+  passageSelected: () => phrases.hasSelection,
+  dismissPassage: () => phrases.dismiss(),
   centerTap: () => { words.clear(); void toggleFullscreen(); },
   centerDoubleTap: () => void togglePlaybackFromGesture(),
   swipeUp: toggleAudioToolbar, swipeDown: swipeDownReaderPanels,

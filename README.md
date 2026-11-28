@@ -130,9 +130,9 @@ While reading, **[** rewinds audio ten seconds and **]** skips forward ten secon
 
 **Import book** and **Book details** include six selectable default covers: Terracotta, Forest, Ocean, Night sky, Parchment and Plum geometry. Previews show your title and author. The choice is saved with the book across browsers. **Original / automatic** restores the embedded image when available, or the existing generated cover; choosing a design never alters the EPUB/PDF or deletes the original cover.
 
-On phones and tablets, **swipe left/right to turn pages**. A single tap on a word opens word help. Double-tap a word to play audio from there. Double-tap blank space in the left/right third to turn, or double-tap blank center space to play or pause. A single tap in blank center space toggles fullscreen. Swipe up to toggle the audio toolbar. Swipe down to close it or open sections when it’s already closed. Gesture preferences are under **Settings → Appearance → Reading controls**.
+On phones and tablets, **swipe left or right** or **tap a blank side margin** to turn pages. A single tap on a word opens word help. Double-tap a word to play audio from there. Double-tap blank center space to play or pause, or tap it once to toggle fullscreen. Swipe up to toggle the audio toolbar. Swipe down to close it or open sections when it’s already closed. Enable edge taps, double taps, and swipes under **Settings → Appearance → Reading controls**.
 
-**Press and hold a word** to select it, then drag across the passage. After lifting your finger, use the handles to refine either end. Choose the bookmark or explain icon to act on the selection, or tap elsewhere to dismiss it.
+**Press and hold a word** to select it, then drag across the passage. After lifting your finger, use the handles to refine either end. Choose the bookmark or explain icon to act on the selection. Tap elsewhere to dismiss the selection and resume turning pages with gestures.
 
 **Spread or pinch two fingers** to change the reader’s text size in a reflowable EPUB or zoom the current PDF page. Use one finger to pan a zoomed PDF. Desktop trackpad pinches and Ctrl+mouse wheel over the book change the desktop reading size, which is saved separately from the phone/tablet size.
 

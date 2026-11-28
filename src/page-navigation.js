@@ -1,9 +1,10 @@
 const interactive = 'a,button,input,select,textarea,label,summary,[contenteditable]:not([contenteditable="false"]),[role="button"],[role="link"],[data-page-navigation-ignore],.reader-message';
 const doubleTapDelay = 320;
-const holdDelay = 420;
+const holdDelay = 350;
 const tapSlop = 12;
+const holdSlop = 20;
 
-export function pageNavigation({ host, turn, enabled = () => true, canSwipe = () => true, canDoubleTap = () => true,
+export function pageNavigation({ host, turn, enabled = () => true, canSwipe = () => true, canTap = () => false, canDoubleTap = () => true,
   canCenterTap = () => false, centerTap = () => {}, centerDoubleTap, wordAt = () => false, wordDoubleTap, swipeUp, swipeDown,
   pinch: onPinch, canPan = () => false, panBy, selectPassage, passageSelected = () => false, dismissPassage = () => {},
   now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout }) {
@@ -19,6 +20,8 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
   const clearTap = () => { clearTimer(tapTimer); tapTimer = undefined; lastTap = undefined; };
   function clearHold() { clearTimer(holdTimer); holdTimer = undefined; }
   const sameWord = (a, b) => a?.node && a.node === b?.node && a.index === b.index;
+  const nearLastTap = (p) => lastTap && now() - lastTap.time <= doubleTapDelay
+    && Math.hypot(p.x - lastTap.point.x, p.y - lastTap.point.y) <= 30;
   function point(event, source) {
     let x = event.clientX, y = event.clientY, win = source.defaultView;
     if (!win) return null;
@@ -72,7 +75,8 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
     return { distance: Math.hypot(a.x - b.x, a.y - b.y), center: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
   }
   function beginPassage(previous) {
-    if (gesture !== previous || previous.moved || multi || !enabled() || zoomed()) return;
+    if (gesture !== previous || !previous.word || previous.type !== 'touch' || previous.locked || previous.passage
+      || previous.motionTime != null || multi || !enabled() || zoomed()) return;
     const passage = selectPassage?.(previous.word);
     if (!passage) return;
     previous.passage = passage;
@@ -94,10 +98,21 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
     if (previous.passage) {
       previous.passage.finish(); consume(event); suppressUntil = now() + 700; return;
     }
-    if (!current || !enabled() || selection(source) || now() - previous.time > 1000) { clearTap(); suppressUntil = now() + 700; return; }
+    if (!current || !enabled()) { clearTap(); suppressUntil = now() + 700; return; }
     const dx = current.x - previous.start.x, dy = current.y - previous.start.y;
     const distance = Math.hypot(dx, dy), elapsed = now() - previous.time;
-    const threshold = Math.min(60, Math.max(32, previous.width * .105));
+    if (previous.type === 'touch' && (previous.locked || selection(previous.source))) {
+      clearTap(); consume(event); suppressUntil = now() + 700;
+      if (previous.locked && !previous.moved && distance <= tapSlop && elapsed < holdDelay
+        && inside(current, host.getBoundingClientRect())) {
+        previous.source.getSelection?.()?.removeAllRanges();
+        if (previous.source !== doc) doc.getSelection?.()?.removeAllRanges();
+        dismissPassage();
+      }
+      return;
+    }
+    if (elapsed > 1000) { clearTap(); suppressUntil = now() + 700; return; }
+    const threshold = Math.min(56, Math.max(30, previous.width * .09));
     const movedBeforeHold = (previous.motionTime ?? now()) - previous.time < holdDelay;
     if (previous.type === 'touch' && !zoomed() && !canPan() && movedBeforeHold && distance >= threshold) {
       let handled = false;
@@ -105,14 +120,21 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
       else if (Math.abs(dy) > Math.abs(dx) * 1.5 && (dy < 0 ? swipeUp : swipeDown)) { clearTap(); consume(event); (dy < 0 ? swipeUp : swipeDown)(); handled = true; }
       if (handled) { suppressUntil = now() + 700; return; }
     }
-    if (previous.dismissed || previous.moved || distance > tapSlop || elapsed >= holdDelay || ignored(event.target)) {
+    if (previous.moved || distance > tapSlop || elapsed >= holdDelay || ignored(event.target)) {
       clearTap(); suppressUntil = now() + 700; if (previous.type === 'touch') consume(event); return;
     }
     if (previous.type !== 'touch' || zoomed()) return;
     const side = zone(current); if (side == null || side !== zone(previous.start)) return;
-    const word = wordAt(event);
-    const doubled = lastTap && lastTap.doc === source && now() - lastTap.time <= doubleTapDelay
-      && Math.hypot(current.x - lastTap.point.x, current.y - lastTap.point.y) <= 30;
+    const word = wordAt(event) || previous.word;
+    const nearby = nearLastTap(current);
+    if (side && !word && canTap()) {
+      const alreadyTurned = nearby && lastTap.turned && lastTap.side === side;
+      clearTap(); consume(event); suppressUntil = now() + 700;
+      lastTap = { doc: source, side, point: current, time: now(), turned: true };
+      if (!alreadyTurned) turn(side);
+      return;
+    }
+    const doubled = nearby && lastTap.doc === source && !lastTap.turned;
     if (doubled && wordDoubleTap && sameWord(word, lastTap.word)) {
       clearTap(); consume(event); suppressUntil = now() + 700; wordDoubleTap(word); return;
     }
@@ -131,9 +153,21 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
     if (!root || bindings.has(root)) return bindings.get(root)?.unbind || (() => {});
     for (const item of [...bindings.values()]) if (item.frame && !item.frame.isConnected) item.unbind();
     const source = root.nodeType === 9 ? root : root.ownerDocument, frame = source.defaultView?.frameElement;
-    const style = root.nodeType === 9 ? source.createElementNS(source.documentElement.namespaceURI, 'style') : null;
+    const outer = root === doc;
+    const style = !outer && root.nodeType === 9 ? source.createElementNS(source.documentElement.namespaceURI, 'style') : null;
     if (style) source.head?.append(style);
-    const listeners = [], listen = (name, handler) => { root.addEventListener(name, handler, { capture: true, passive: false }); listeners.push([name, handler]); };
+    const listeners = [];
+    const listen = (name, handler) => {
+      const listener = outer ? (event) => {
+        // Chromium can send a margin touch to the outer HTML element after an
+        // EPUB column scrolls. Accept it within the reader's physical bounds.
+        const target = event.target;
+        const retargeted = event.pointerType === 'touch' && (target === doc.documentElement || target === doc.body);
+        if (host.contains(target) || retargeted && inside(point(event, source), host.getBoundingClientRect())) handler(event);
+      } : handler;
+      root.addEventListener(name, listener, { capture: true, passive: false });
+      listeners.push([name, listener]);
+    };
     listen('wheel', (event) => {
       if (!event.ctrlKey || event.altKey || event.metaKey || !Number.isFinite(event.deltaY) || !event.deltaY || !desktopAllowed(event, source)) return;
       // Chromium and Firefox expose trackpad pinches as Ctrl+wheel events.
@@ -172,7 +206,12 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
       if (onPinch && enabled() && !zoomed() && event.touches?.length > 1 && event.cancelable) event.preventDefault();
     };
     listen('touchstart', reservePinch);
-    listen('touchmove', reservePinch);
+    listen('touchmove', (event) => {
+      reservePinch(event);
+      if (!event.cancelable || gesture?.source !== source || gesture.type !== 'touch' || !enabled() || zoomed()) return;
+      // Prevent a browser fling from claiming the next tap after we handle the drag.
+      if (gesture.passage || gesture.locked || !canPan() || panBy) event.preventDefault();
+    });
     listen('contextmenu', (event) => {
       if (!gesture?.word || gesture.source !== source || gesture.type !== 'touch') return;
       if (!gesture.passage) beginPassage(gesture);
@@ -195,21 +234,20 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
         }
         return;
       }
-      if (ignored(event.target) || event.defaultPrevented) { clearTap(); return; }
-      const dismissed = event.pointerType === 'touch' && passageSelected();
-      if (dismissed) { dismissPassage(); clearTap(); }
-      if (selection(source)) { clearTap(); return; }
+      const locked = event.pointerType === 'touch' && selection(source);
+      if (!locked && (ignored(event.target) || event.defaultPrevented)) { clearTap(); return; }
+      const previous = gesture = {
+        id: event.pointerId ?? 1, source, start, time: now(), type: event.pointerType || 'mouse', width: rect.width, moved: false, locked,
+      };
+      if (locked) { clearTap(); consume(event); return; }
       const side = zone(start), word = wordAt(event);
-      if (event.pointerType === 'touch' && lastTap?.doc === source
-        && now() - lastTap.time <= doubleTapDelay && Math.hypot(start.x - lastTap.point.x, start.y - lastTap.point.y) <= 30
+      if (previous.type === 'touch' && lastTap?.doc === source && nearLastTap(start)
         && (wordDoubleTap && sameWord(word, lastTap.word) || lastTap.side === side && !(wordDoubleTap && (word || lastTap.word)) && (side === 0 ? centerDoubleTap : canDoubleTap())) && event.cancelable) {
         // Native multi-tap selection starts on pointerdown, before our
         // pointerup action. Keep it from swallowing consecutive double taps.
         event.preventDefault();
       }
-      const previous = gesture = {
-        id: event.pointerId ?? 1, source, start, word, time: now(), type: event.pointerType || 'mouse', width: rect.width, moved: false, dismissed,
-      };
+      previous.word = word;
       if (selectPassage && word && previous.type === 'touch' && !zoomed()) {
         holdTimer = setTimer(() => beginPassage(previous), holdDelay);
       }
@@ -225,11 +263,18 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
         consume(event); onPinch({ phase: 'move', factor: pinch.factor, center: value.center }); return;
       }
       if (!gesture || gesture.id !== id) return;
+      if (!gesture.passage && now() - gesture.time >= holdDelay) beginPassage(gesture);
       if (gesture.passage) { gesture.passage.extend(current, wordAt(event)); consume(event); return; }
-      if (!gesture.moved && Math.hypot(current.x - gesture.start.x, current.y - gesture.start.y) > tapSlop) {
-        gesture.moved = true; gesture.motionTime = now(); clearHold(); clearTap();
+      const distance = Math.hypot(current.x - gesture.start.x, current.y - gesture.start.y);
+      if (!gesture.moved && distance > tapSlop) { gesture.moved = true; clearTap(); }
+      if (gesture.type !== 'touch') return;
+      if (gesture.locked || selection(source)) {
+        gesture.locked = true; clearHold(); consume(event); return;
       }
-      if (gesture.moved && gesture.type === 'touch' && !zoomed() && !selection(source) && canPan() && panBy) {
+      if (gesture.motionTime == null && distance > holdSlop) {
+        gesture.motionTime = now(); clearHold();
+      }
+      if (gesture.moved && (!gesture.word || gesture.motionTime != null) && !zoomed() && canPan() && panBy) {
         panBy(last.x - current.x, last.y - current.y);
         consume(event);
       }
@@ -244,15 +289,15 @@ export function pageNavigation({ host, turn, enabled = () => true, canSwipe = ()
       for (const [name, handler] of listeners) root.removeEventListener(name, handler, true);
       // An EPUB frame can disappear during an audio turn before it sends pointerup.
       if (frame && [...pointers.values()].some((contact) => contact.source === source)) reset();
-      if (lastTap?.doc === source) clearTap();
+      if (lastTap?.doc === source && !lastTap.turned) clearTap();
       style?.remove(); bindings.delete(root);
     };
     bindings.set(root, { frame, style, unbind }); policy(); return unbind;
   }
   function outside(event) { if (!host.contains(event.target) && pointers.has(event.pointerId ?? 1)) release(event, doc); }
-  bind(host); viewport?.addEventListener('resize', policy); doc.addEventListener('pointerup', outside, true);
+  bind(doc); viewport?.addEventListener('resize', policy); doc.addEventListener('pointerup', outside, true);
   return { bind, refresh: policy,
-    reset() { reset(); for (const [root, item] of [...bindings]) if (root !== host) item.unbind(); },
+    reset() { reset(); for (const [root, item] of [...bindings]) if (root !== doc) item.unbind(); },
     destroy() { reset(); for (const item of [...bindings.values()]) item.unbind(); host.style.touchAction = originalTouch; host.classList.remove('reader-native-zoom'); viewport?.removeEventListener('resize', policy); doc.removeEventListener('pointerup', outside, true); },
   };
 }
