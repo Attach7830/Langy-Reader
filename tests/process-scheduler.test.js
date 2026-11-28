@@ -10,6 +10,7 @@ import { openPDFOCR } from '../server/pdf-ocr.js';
 import { openBookImports } from '../server/book-imports.js';
 import { openLibrary } from '../server/books.js';
 import { openLearning } from '../server/learning.js';
+import { openProcesses } from '../server/processes.js';
 import { DatabaseSync } from 'node:sqlite';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -191,6 +192,29 @@ test('queued priority survives restart and completed work does not retain a prio
   await queue.close(); await again;
 });
 
+test('relative moves survive restart and keep the order of other jobs, including Archive defaults', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'langy-queue-move-'));
+  let time = 1000;
+  const options = { paused: true, now: () => time };
+  let queue = openProcessScheduler(dir, options);
+  t.after(async () => { await queue.close(); await rm(dir, { recursive: true, force: true }); });
+  const ids = ['archive:one', 'archive:two', 'analysis:one', 'narration:two'];
+  const waiting = ids.map((id, index) => queue.run(id, () => {}, { created: time + index }));
+  time += 10;
+  queue.move('narration:two', 'archive:two', 'before');
+  queue.move('archive:one', 'analysis:one', 'after');
+  assert.deepEqual(queue.snapshot().queued.map(({ id }) => id), ['narration:two', 'archive:two', 'analysis:one', 'archive:one']);
+  await queue.close(); await Promise.all(waiting);
+  queue = openProcessScheduler(dir, options);
+  const order = [];
+  const tasks = [...ids, 'archive:new', 'analysis:new'].map((id) => queue.run(id, () => order.push(id), { created: ++time }));
+  const ranked = queue.snapshot().queued;
+  assert.deepEqual(ranked.map((job) => job.id), ['narration:two', 'archive:two', 'archive:new', 'analysis:one', 'archive:one', 'analysis:new']);
+  assert.deepEqual(ranked.filter((job) => job.topPriority).map((job) => job.id), ['archive:two', 'archive:new']);
+  queue.resume(); await Promise.all(tasks);
+  assert.deepEqual(order, ranked.map((job) => job.id));
+});
+
 test('another task from the currently running provider remains available for reprioritization', async (t) => {
   const { queue } = await fixture(t), held = gate(), started = gate(), order = [];
   const consume = consumeProcesses(queue, () => ['first','second'].map((id) => ({ id, data: id })), async (id) => {
@@ -343,4 +367,54 @@ test('a promoted audiobook finishes all sections and final assembly before the o
   assert.equal(learning.narration(books.one).audio.state, 'ready');
   await until(() => !queue.snapshot().active);
   assert.deepEqual(order.map((text) => text.split(' ')[0]), ['two','two','one','one']);
+});
+
+test('vocabulary analysis remains promotable when saving revised PDF text requeues it', { timeout: 10000 }, async (t) => {
+  const { dir, queue } = await fixture(t, { paused: true });
+  const library = await openLibrary(dir), pdf = Buffer.from('%PDF-1.4\n%%EOF');
+  async function addBook(id) {
+    const path = join(library.uploads, id + '.pdf');
+    await writeFile(path, pdf);
+    return library.importBook(id, { path, size: pdf.length, originalname: id + '.pdf' }, { title: id, language: 'en' });
+  }
+  const [first, second] = [await addBook('first'), await addBook('second')];
+  const initial = 'Original short PDF page.', revised = 'The revised story.', other = 'A different waiting analysis.';
+  const firstStarted = gate(), secondStarted = gate(), firstRelease = gate(), secondRelease = gate();
+  let extracting = 0;
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (new URL(url).pathname === '/pdf') {
+      return Response.json({ chapters: [{ key: 'pdf:1', title: 'Page 1', text: extracting++ < 1 ? initial : other }] });
+    }
+    const { text } = JSON.parse(options.body);
+    if (text === initial) { firstStarted.release(); await firstRelease.promise; }
+    if (text === other) { secondStarted.release(); await secondRelease.promise; }
+    return Response.json({ tokens: [], lemmas: [], method: 'contextual' });
+  });
+  const learning = await openLearning(dir, library, false, {}, { scheduler: queue, autoRepair: false });
+  const processes = openProcesses(dir, { library, learning, scheduler: queue, account: () => ({ id: 'test' }),
+    discovery: { status: () => ({}) }, archive: { list: () => [] } });
+  t.after(() => processes.close());
+  learning.ensure(first);
+  queue.resume();
+  await firstStarted.promise;
+  try {
+    learning.ensure(second);
+    queue.top('analysis:second');
+    const review = learning.pdfReview(first, 1);
+    learning.savePdfReview(first, { revision: review.revision, excluded: [], edits: [{ page: 1, text: revised }] });
+    firstRelease.release();
+    await secondStarted.promise;
+    const pending = processes.list().jobs.find((job) => job.id === 'analysis:first');
+    assert.equal(pending.state, 'queued');
+    assert.equal(pending.canPrioritize, true);
+    assert.equal(pending.activity, undefined, 'a new text revision starts with fresh progress');
+    queue.raise(pending.id);
+    const schedule = queue.snapshot();
+    assert.ok(schedule.queued.find((job) => job.id === pending.id).position < schedule.active.position);
+  } finally {
+    firstRelease.release();
+    secondRelease.release();
+    await until(() => [first, second].every((book) => learning.info(book).state === 'ready'));
+    await until(() => !queue.snapshot().active && !queue.snapshot().queued.length);
+  }
 });

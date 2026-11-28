@@ -24,14 +24,43 @@ export async function searchJson(response) {
   catch { throw new RequestError(502, 'Search returned an unreadable response.'); }
 }
 
+export class WebSearchError extends RequestError {
+  constructor(reason, message) {
+    super(503, message);
+    this.reason = reason;
+  }
+}
+
 export function openWebSearch({ searchUrl = process.env.READER_SEARCH_URL ?? 'http://search:8080', fetcher = (...args) => fetch(...args) } = {}) {
   return async (query, signal) => {
-    if (!searchUrl) throw new RequestError(503, 'Web search is not configured.');
-    const url = new URL('search', searchUrl.replace(/\/+$/u, '') + '/');
+    let url;
+    try { if (searchUrl) url = new URL('search', searchUrl.replace(/\/+$/u, '') + '/'); } catch {}
+    if (!url || !['http:', 'https:'].includes(url.protocol)) throw new WebSearchError('configuration', 'Web search is not configured.');
     url.searchParams.set('q', query); url.searchParams.set('format', 'json'); url.searchParams.set('categories', 'general');
-    const data = await searchJson(await fetcher(url, { headers: { Accept: 'application/json' }, redirect: 'error',
-      signal: AbortSignal.any([signal, AbortSignal.timeout(18000)].filter(Boolean)) }));
-    return (Array.isArray(data?.results) ? data.results : []).slice(0, 6).flatMap((item) => {
+    const timeout = AbortSignal.timeout(18000);
+    let response;
+    try {
+      response = await fetcher(url, { headers: { Accept: 'application/json' }, redirect: 'error',
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+    } catch {
+      signal?.throwIfAborted();
+      if (timeout.aborted) throw new WebSearchError('timeout', 'The search service did not respond in time.');
+      throw new WebSearchError('connection', 'Could not connect to the search service.');
+    }
+    if (!response.ok) {
+      await response.body?.cancel?.().catch(() => {});
+      const reason = [401, 403].includes(response.status) ? 'access' : response.status === 429 ? 'busy' : response.status === 404 ? 'configuration' : 'service';
+      throw new WebSearchError(reason, `Search returned HTTP ${response.status}.`);
+    }
+    let data;
+    try { data = await searchJson(response); }
+    catch (error) {
+      signal?.throwIfAborted();
+      if (timeout.aborted) throw new WebSearchError('timeout', 'The search service did not respond in time.');
+      throw error;
+    }
+    if (!Array.isArray(data?.results)) throw new WebSearchError('service', 'The search service returned an unexpected response.');
+    return data.results.slice(0, 6).flatMap((item) => {
       const url = searchLink(item?.url), title = clean(item?.title, 180), snippet = clean(item?.content, 500);
       return url && title ? [{ url, title, snippet }] : [];
     });

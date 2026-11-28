@@ -519,6 +519,13 @@ test('the priority API keeps one active task and permits only the owner to promo
     body: JSON.stringify({ username: 'queue-member', password: 'queue-member-test-password' }) });
   const member = { Authorization: 'Basic ' + Buffer.from('queue-member:queue-member-test-password').toString('base64'), 'Content-Type': 'application/json' };
   await response(base, priority, { method: 'POST', headers: member, status: 404 });
+  const drop = { action: 'move', target: active.id, position: 'before' };
+  await response(base, priority, { method: 'POST', headers: json, body: JSON.stringify({ ...drop, position: 'inside' }), status: 422 });
+  await response(base, priority, { method: 'POST', headers: json, body: JSON.stringify({ ...drop, target: 'missing' }), status: 409 });
+  await response(base, priority, { method: 'POST', headers: json, body: JSON.stringify(drop), status: 202 });
+  const reordered = await response(base, '/api/processes', { headers: json });
+  assert.ok(reordered.jobs.find((job) => job.id === queued.id).queuePosition < reordered.jobs.find((job) => job.id === active.id).queuePosition);
+  assert.equal(reordered.jobs.find((job) => job.id === active.id).pauseRequested, true);
   const raised = await response(base, priority, { method: 'POST', headers: json, status: 202 }); assert.ok(raised.priority > 0);
   const after = await response(base, '/api/processes', { headers: json });
   assert.equal(after.jobs.find((job) => job.state === 'running').id, active.id, 'raising priority must not interrupt the current task');
@@ -527,5 +534,6 @@ test('the priority API keeps one active task and permits only the owner to promo
   const shared = await response(base, '/api/processes', { headers: member });
   assert.equal(shared.jobs.find((job) => job.id === queued.id).canPrioritize, false);
   await response(base, priority, { method: 'POST', headers: member, status: 403 });
+  await response(base, priority, { method: 'POST', headers: member, body: JSON.stringify(drop), status: 403 });
   release();
 });

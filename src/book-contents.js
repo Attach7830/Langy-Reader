@@ -1,7 +1,7 @@
-import { $, element, api } from './ui.js';
+import { $, element } from './ui.js';
 import { dismissOnBackdrop } from './dialog-backdrop.js';
 
-export function bookContents({ renderer, book, go, focus = () => {}, jumpPage }) {
+export function bookContents({ renderer, book, go, focus = () => {}, jumpPage, bookmarks }) {
   const dialog = $('#contents-dialog'), body = $('#contents-body');
   dismissOnBackdrop(dialog, focus);
   return { open() {
@@ -48,16 +48,25 @@ export function bookContents({ renderer, book, go, focus = () => {}, jumpPage })
     if (entries.length) body.append(tocList(entries, 'Book contents'));
     const saved = element('details', 'toc-bookmarks'), savedList = element('div', 'form-stack');
     saved.append(element('summary', '', 'Bookmarks'), savedList); body.append(saved); let bookmarksStarted = false;
+    function showBookmarks(entries) {
+      savedList.replaceChildren(...(entries.length ? entries.map((mark) => {
+        const button = element('button', 'toc-item', mark.label || mark.note || 'Bookmark');
+        button.type = 'button'; button.dir = 'auto'; button.setAttribute('data-user-content', '');
+        button.addEventListener('click', () => jump(mark.target)); return button;
+      }) : [element('p', 'field-note', 'No bookmarks yet.')]));
+    }
     saved.addEventListener('toggle', async () => {
-      if (!saved.open || bookmarksStarted) return; bookmarksStarted = true;
-      savedList.replaceChildren(element('p', 'field-note', 'Loading bookmarks…'));
+      if (!saved.open || bookmarksStarted || renderer() !== current) return; bookmarksStarted = true;
+      const cached = bookmarks.cached();
+      if (cached) showBookmarks(cached);
+      else savedList.replaceChildren(element('p', 'field-note', 'Loading bookmarks…'));
       try {
-        const result = await api(`/api/books/${book().id}/bookmarks`); if (renderer() !== current || !savedList.isConnected) return;
-        savedList.replaceChildren(...(result.bookmarks?.length ? result.bookmarks.map((mark) => {
-          const button = element('button', 'toc-item', mark.label || mark.note || 'Bookmark'); button.type = 'button'; button.setAttribute('data-user-content', '');
-          button.addEventListener('click', () => jump(mark.target)); return button;
-        }) : [element('p', 'field-note', 'No bookmarks yet.')]));
-      } catch { savedList.replaceChildren(element('p', 'field-note', 'Could not load bookmarks.')); bookmarksStarted = false; }
+        const entries = await bookmarks.load();
+        if (renderer() === current && savedList.isConnected && entries !== cached) showBookmarks(entries);
+      } catch {
+        if (!cached) savedList.replaceChildren(element('p', 'field-note', 'Could not load bookmarks.'));
+        bookmarksStarted = false;
+      }
     });
     if (current.readingOutline) {
       const detail = element('details', 'toc-outline'), output = element('div', 'toc-outline-body');

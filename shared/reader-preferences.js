@@ -9,7 +9,7 @@ export const defaults = {
   progressSyncEnabled: true, syncDeviceName: 'Langy browser',
   keys: { previous: 'ArrowLeft', next: 'ArrowRight', alternate: 'Space', fullscreen: 'f', summary: 's', playback: 'p', audioToolbar: 'a', pinyin: 'y', returnLocation: 'b', rewindAudio: '[', forwardAudio: ']', bookmarks: 'm', bookmarkSelection: 'k', explainSelection: 'e' },
   autoHideDocks: false,
-  tapToTurn: false, swipeToTurn: true, tapCenterFullscreen: true,
+  tapToTurn: true, swipeToTurn: true, tapCenterFullscreen: true,
   doubleTapToTurn: true,
   immersionMode: false, quietLibrary: true, showSharedBooks: true, libraryLayout: 'auto', libraryFormat: '', coversOnly: false, processDismissMinutes: 0,
 };

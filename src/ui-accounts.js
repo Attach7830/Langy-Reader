@@ -3,16 +3,25 @@ import { signOut } from './auth.js';
 import { accountPolicyFields } from './account-policy.js';
 import { androidApp } from './platform.js';
 
+function accountState({ role, disabled, safeMode }) {
+  return [role === 'admin' ? 'Administrator' : 'Reader', disabled ? 'Disabled' : 'Active', safeMode ? 'Safe mode' : '']
+    .filter(Boolean).join(' · ');
+}
+
 export function accountPanel(session) {
   const user = session.user;
   if (!user) return;
   $('#account-name').textContent = user.username;
-  $('#account-role').textContent = user.role === 'admin' ? 'Administrator' : 'Reader';
+  $('#account-role').textContent = user.role === 'admin' ? 'Administrator' : user.safeMode ? 'Reader · Safe mode' : 'Reader';
   $('#account-admin').hidden = user.role !== 'admin';
   $('#account-offline-note').hidden = !session.offline;
   for (const label of document.querySelectorAll('[data-account-name]')) label.textContent = user.username;
   let loading, resetting;
-  const newPolicy = accountPolicyFields(); $('#account-create').before(newPolicy.root);
+  const savingSafeModes = new Set();
+  const newPolicy = accountPolicyFields(), newRole = $('#account-new-role');
+  $('#account-create').before(newPolicy.root);
+  newPolicy.setReader(newRole.value === 'user');
+  newRole.addEventListener('change', () => newPolicy.setReader(newRole.value === 'user'));
   function error(text = '') { message('#account-message', text); }
   async function loadUsers() {
     if (user.role !== 'admin' || loading) return loading;
@@ -22,7 +31,7 @@ export function accountPanel(session) {
         $('#account-users').replaceChildren(...users.map((item) => {
           const row = element('article', 'account-user');
           const name = element('strong', '', item.username); name.setAttribute('data-user-content', '');
-          const state = element('span', 'field-note', `${item.role === 'admin' ? 'Administrator' : 'Reader'} · ${item.disabled ? 'Disabled' : 'Active'}`);
+          const state = element('span', 'field-note', accountState(item));
           const role = document.createElement('select'); role.setAttribute('aria-label', `Role for ${item.username}`);
           role.append(new Option('Reader', 'user', item.role === 'user', item.role === 'user'), new Option('Administrator', 'admin', item.role === 'admin', item.role === 'admin')); role.value = item.role; role.disabled = item.id === user.id;
           role.addEventListener('change', async () => {
@@ -45,8 +54,51 @@ export function accountPanel(session) {
           const revoke = element('button', 'button quiet small', 'Revoke browser sessions'); revoke.type = 'button'; revoke.disabled = item.id === user.id;
           revoke.addEventListener('click', async () => { revoke.disabled = true; error(); try { await api(`/api/admin/users/${item.id}/sessions/revoke`, { method: 'POST' }); error('Browser sessions revoked. Reset the password to revoke saved device credentials too.'); } catch (failure) { error(failure.message); } finally { revoke.disabled = false; } });
           const details = document.createElement('details'), summary = element('summary', '', 'Permissions and limits'), policy = accountPolicyFields(item, { current: item.id === user.id });
+          const { safeMode } = policy;
+          const saving = savingSafeModes.has(item.id);
+          const safeModeStatus = element('p', 'field-note', saving ? 'Saving Safe mode…' : 'Safe mode saves immediately.');
+          safeModeStatus.hidden = item.role !== 'user';
+          safeModeStatus.setAttribute('role', 'status');
+          safeMode.closest('label').after(safeModeStatus);
+          if (saving) safeMode.disabled = true;
+          safeMode.addEventListener('change', async () => {
+            savingSafeModes.add(item.id);
+            safeMode.disabled = true;
+            safeModeStatus.textContent = 'Saving Safe mode…';
+            error();
+            let failureMessage;
+            try {
+              const saved = await api(`/api/admin/users/${item.id}`, { method: 'PATCH', body: { safeMode: safeMode.checked } });
+              safeMode.defaultChecked = safeMode.checked = saved.safeMode;
+              state.textContent = accountState(saved);
+              safeModeStatus.textContent = saved.safeMode ? 'Safe mode enabled.' : 'Safe mode disabled.';
+            } catch (failure) {
+              safeMode.checked = safeMode.defaultChecked;
+              failureMessage = `Could not save Safe mode. ${failure.message}`;
+              safeModeStatus.textContent = failureMessage;
+            } finally {
+              // An account refresh can render a new checkbox while the save is pending.
+              await loading;
+              savingSafeModes.delete(item.id);
+              safeMode.disabled = false;
+              if (!row.isConnected) {
+                await loadUsers();
+                if (failureMessage) error(failureMessage);
+              }
+            }
+          });
           const save = element('button', 'button secondary small', 'Save account limits'); save.type = 'button';
-          save.addEventListener('click', async () => { save.disabled = true; error(); try { await api(`/api/admin/users/${item.id}`, { method: 'PATCH', body: policy.read() }); error('Account permissions and limits saved.'); await loadUsersAfter(); } catch (failure) { error(failure.message); } finally { save.disabled = false; } });
+          save.addEventListener('click', async () => {
+            save.disabled = true; error();
+            try {
+              const limits = policy.read();
+              delete limits.safeMode;
+              await api(`/api/admin/users/${item.id}`, { method: 'PATCH', body: limits });
+              error('Account permissions and limits saved.');
+              await loadUsersAfter();
+            } catch (failure) { error(failure.message); }
+            finally { save.disabled = false; }
+          });
           details.append(summary, policy.root, save);
           actions.append(role, reset, toggle, revoke); row.append(name, state, actions, details); return row;
         }));
@@ -60,7 +112,7 @@ export function accountPanel(session) {
     if (!name.reportValidity() || !password.reportValidity()) return;
     event.target.disabled = true; error();
     try {
-      await api('/api/admin/users', { method: 'POST', body: { username: name.value.trim(), password: password.value, role: $('#account-new-role').value, ...newPolicy.read() } });
+      await api('/api/admin/users', { method: 'POST', body: { username: name.value.trim(), password: password.value, role: newRole.value, ...newPolicy.read() } });
       name.value = password.value = ''; newPolicy.reset(); error('Account created. The new user can sign in with these credentials.'); await loadUsers();
     } catch (failure) { error(failure.message); }
     finally { event.target.disabled = false; }

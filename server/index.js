@@ -6,7 +6,7 @@ import express from 'express';
 import multer from 'multer';
 import { maxUpload, openLibrary, RequestError } from './books.js';
 import { openAccounts } from './accounts.js';
-import { bookmarkTargetKey } from '../shared/bookmark-targets.js';
+import { safeModeAllows } from './safe-mode.js';
 import { userStorage } from './user-storage.js';
 import { fontDownloads } from './font-downloads.js';
 import { openBookImports } from './book-imports.js';
@@ -42,6 +42,7 @@ import { bookTools } from './book-tools.js';
 import { openAudiobookshelf } from './audiobookshelf.js';
 import { offlinePacks } from './offline-pack.js';
 import { learningLanguages } from '../shared/learning-languages.js';
+import { maxPdfBoxes, maxPdfBoxImageBytes, maxPdfBoxUpload } from '../shared/pdf-regions.js';
 import { demoUploadLimit, demoBookLimit, demoStorageLimit, limitJobs, visitorMiddleware } from './demo.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -51,7 +52,7 @@ await verifyStorage(dir);
 const limits = demo ? { upload: demoUploadLimit, books: demoBookLimit, storage: demoStorageLimit } : null;
 let accountStorage;
 const reserveStorage = (owner, bytes) => accountStorage ? accountStorage.reserve(owner, bytes) : Promise.resolve(() => {});
-const library = await openLibrary(dir, limits, { reserveStorage });
+const library = await openLibrary(dir, limits, { reserveStorage, knownSharingUser: (id) => accounts.ownerForUser(id) !== undefined });
 const scheduler = openProcessScheduler(dir, { paused: true });
 const password = process.env.READER_PASSWORD || '';
 const accounts = await openAccounts(dir, { demo, username: process.env.READER_USER || 'reader', password, reservedUsernames: [process.env.READER_SYNC_USER] });
@@ -109,13 +110,14 @@ const webImports = await openBookImports(dir,{library,demo,scheduler,connector:k
 const processes = openProcesses(dir, { library, webImports, archive, discovery, learning, demo, account: readingAccount, scheduler });
 scheduler.resume();
 const uploadLimit = limits?.upload ?? maxUpload;
-const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 12, fieldSize: 4096 } });
+const upload = multer({ dest: library.uploads, limits: { fileSize: uploadLimit, files: 1, fields: 13, fieldSize: 4096 } });
 const audioUpload = multer({ dest: library.uploads, limits: { fileSize: maxAudioUpload, files: 1, fields: 1, fieldSize: 1024 } });
 const chapterUpload = multer({ storage: chapterStorage(library.uploads), limits: { fileSize: maxAudioUpload, files: chapterFileLimit, fields: 1, fieldSize: 1024 } });
 const demoUploads = demo ? [limitJobs({ perMinute: 32, perVisitor: 8 })] : [];
 const demoGenerations = demo ? [limitJobs({ perMinute: 45, perVisitor: 16 })] : [];
 const demoDictionaryRequests = demo ? [limitJobs({ perMinute: 600, perVisitor: 240 })] : [];
 const app = express();
+const parseApiBody = express.json({ limit: '320kb', strict: true });
 app.disable('x-powered-by');
 // Keep route and authorization matching consistent, including owner-only tools.
 app.set('case sensitive routing', true);
@@ -146,14 +148,14 @@ app.use('/api', (req, res, next) => {
     return next(new RequestError(403, 'Open Langy Reader directly to make this change.'));
   }
   next();
-}, express.json({ limit: '320kb', strict: true }));
+});
 
 
 const isAdministrator = (req) => !accounts.enabled || req.visitor?.role === 'admin';
 const usesOwnerAudiobookshelf = (req) => !accounts.enabled || req.visitor?.id === '';
 const accountInfo = (visitor) => ({ ...accounts.describe(visitor), legacyAccount: visitor?.id === '', readerAccountId: visitor ? readerSettings.get(visitor).accountId : null });
 app.get('/api/account', async (req, res) => { req.visitor = await accounts.identify(req); res.json(accountInfo(req.visitor)); });
-app.post('/api/account/login', async (req, res) => {
+app.post('/api/account/login', parseApiBody, async (req, res) => {
   if (!accounts.enabled) throw new RequestError(403, 'Accounts are not enabled on this installation.');
   if (req.body?.rememberMe !== undefined && typeof req.body.rememberMe !== 'boolean') throw new RequestError(422, 'Choose whether to remember this sign-in.');
   const visitor = await accounts.authenticate(req.body?.username, req.body?.password, { source: `login:${req.ip}` });
@@ -164,9 +166,19 @@ app.post('/api/account/logout', (req, res) => { accounts.logout(req, res); res.j
 app.use(async (req, res, next) => {
   if (demo || !accounts.enabled || !/^\/(?:api|opds)(?:\/|$)/iu.test(req.path)) return next();
   req.visitor = await accounts.identify(req);
-  if (req.visitor) return next();
+  if (req.visitor) {
+    if (req.visitor.safeMode && !safeModeAllows(req.method, req.path)) {
+      throw new RequestError(403, 'This action is unavailable in Safe mode.');
+    }
+    return next();
+  }
   if (req.path.startsWith('/opds')) res.set('WWW-Authenticate', 'Basic realm="Langy Reader", charset="UTF-8"');
   res.status(401).json({ error: 'Sign in to Langy Reader.', authenticationRequired: true });
+});
+app.use('/api', parseApiBody);
+app.get('/api/sharing/recipients', (req, res) => {
+  if (!req.visitor?.authenticated) throw new RequestError(403, 'Sign in on a self-hosted installation to choose sharing recipients.');
+  res.json({ users: accounts.sharingUsers(req.visitor) });
 });
 app.post('/api/account/password', async (req, res) => {
   if (!accounts.enabled) throw new RequestError(403, 'Accounts are not enabled.');
@@ -287,17 +299,53 @@ app.get('/api/books/:id/ocr', async (req, res) => {
   if (!demo && book.format === 'pdf') { try { languages = await ocr.languages(); } catch (failure) { error = failure.message; } }
   res.json({ available: !demo && book.format === 'pdf', job: ocr.status(book), languages, error, provider: ocr.settings().provider });
 });
+if (!demo) {
+  app.get('/api/books/:id/epub-text', (req, res) => res.json(learning.epubText(library.getBook(req.params.id, req.visitor))));
+  const editableEpub = (req) => {
+    const book = library.getBook(req.params.id, req.visitor);
+    if (book.canEdit === false) throw new RequestError(403, 'Only the book owner can edit its audiobook text or timing.');
+    if (book.format !== 'epub') throw new RequestError(422, 'Choose an EPUB book.');
+    return book;
+  };
+  app.get('/api/books/:id/epub-narration', (req, res) => res.json(learning.epubAudioText(editableEpub(req), req.query.key)));
+  app.put('/api/books/:id/epub-narration', (req, res) => res.json(learning.saveEpubAudioText(editableEpub(req), req.body)));
+  app.get('/api/books/:id/epub-timing/:recording', (req, res) => res.json(learning.epubTiming.get(editableEpub(req), req.params.recording, req.query.key)));
+  app.put('/api/books/:id/epub-timing/:recording', (req, res) => res.json(learning.epubTiming.save(editableEpub(req), req.params.recording, req.body)));
+  const editablePDF = (req) => {
+    const book = library.getBook(req.params.id, req.visitor);
+    if (book.canEdit === false) throw new RequestError(403, 'Only the book’s owner can change its PDF text or audio timing.');
+    if (book.format !== 'pdf') throw new RequestError(422, 'Choose a PDF book.');
+    return book;
+  };
+  app.get('/api/books/:id/pdf-review', (req, res) => res.json(learning.pdfReview(editablePDF(req), Number(req.query.page ?? 1))));
+  app.put('/api/books/:id/pdf-review', (req, res) => res.json(learning.savePdfReview(editablePDF(req), req.body ?? {})));
+  const uploadBoxes = multer({ limits: { files: maxPdfBoxes, fields: 2, fileSize: maxPdfBoxImageBytes, fieldSize: 1024 } }).array('image', maxPdfBoxes);
+  app.post('/api/books/:id/pdf-review/ocr', (req, res, next) => {
+    editablePDF(req);
+    if (Number(req.get('Content-Length')) > maxPdfBoxUpload + 8192) throw new RequestError(413, 'These boxes are too large to scan together. Use smaller boxes.');
+    req.pdfBoxUpload = true;
+    uploadBoxes(req, res, next);
+  }, async (req, res) => {
+    const book = editablePDF(req), review = learning.pdfReview(book, Number(req.body?.page));
+    if (review.state !== 'ready' || review.revision !== req.body?.revision) throw new RequestError(409, 'The PDF or its reviewed text changed. Reopen the editor before extracting.');
+    const controller = new AbortController();
+    res.once('close', () => controller.abort());
+    const texts = await ocr.extractBoxes(book, (req.files || []).map(({ buffer }) => buffer), controller.signal);
+    res.json({ texts });
+  });
+  app.get('/api/books/:id/pdf-timing/:recording', (req, res) => res.json(learning.pdfTiming(editablePDF(req), req.params.recording)));
+  app.put('/api/books/:id/pdf-timing/:recording', (req, res) => res.json(learning.savePdfTiming(editablePDF(req), req.params.recording, req.body ?? {})));
+}
 app.get('/api/books/:id/bookmarks', (req, res) => res.json({ bookmarks: library.bookmarks(req.params.id, req.visitor) }));
-app.get('/api/books/:id/search', (req, res) => res.json(toolsForBook.search(library.getBook(req.params.id, req.visitor), req.query.q)));
+app.get('/api/books/:id/search', (req, res) => {
+  const book = library.getBook(req.params.id, req.visitor);
+  res.json(toolsForBook.search(book, req.query.q, { original: req.query.view !== 'epub' || book.format !== 'pdf' }));
+});
 app.get('/api/books/:id/offline', async (req, res) => {
   const pack = await offlinePack(library.getBook(req.params.id, req.visitor), req.query.recording);
   pack.narration.absConnected = (usesOwnerAudiobookshelf(req) && audiobookshelf.settings().connected); res.json(pack);
 });
-app.post('/api/books/:id/bookmarks/remove', (req, res) => {
-  const book = library.getBook(req.params.id, req.visitor), target = bookmarkTargetKey(req.body?.target);
-  const existing = library.bookmarks(book.id, req.visitor).find((item) => bookmarkTargetKey(item.target) === target);
-  res.json(existing ? library.removeBookmark(book.id, existing.id, req.visitor) : { bookmarks: library.bookmarks(book.id, req.visitor) });
-});
+app.post('/api/books/:id/bookmarks/remove', (req, res) => res.json(library.removeBookmarkTarget(req.params.id, req.body?.target, req.visitor)));
 app.post('/api/books/:id/character-guide', ...demoGenerations, async (req, res) => {
   const controller = new AbortController(); res.on('close', () => controller.abort());
   res.json(await toolsForBook.guide(library.getBook(req.params.id, req.visitor), req.body ?? {}, controller.signal));
@@ -340,18 +388,25 @@ app.delete('/api/settings/kavita', (req,res)=>res.json(kavita.remove(req.visitor
 app.get('/api/kavita/catalogue', async(req,res)=>res.json(await kavita.catalogue(req.visitor,req.query)));
 app.get('/api/kavita/covers/:id', async(req,res)=>{const image=await kavita.cover(req.params.id,req.visitor);res.set('Cache-Control','private, no-store').type(image.thumbnailType).send(image.thumbnail);});
 app.post('/api/imports/kavita', (req,res)=>res.status(202).json(webImports.queueKavita(req.body ?? {},req.visitor)));
-const conversionUpload = multer({dest:library.uploads,limits:{fileSize:Math.min(uploadLimit,conversionLimit),files:1,fields:12,fieldSize:4096}}).single('file');
+const conversionUpload = multer({dest:library.uploads,limits:{fileSize:Math.min(uploadLimit,conversionLimit),files:1,fields:13,fieldSize:4096}}).single('file');
 app.post('/api/imports/convert', ...demoUploads, (req,res,next)=>{req.conversionUpload=true;conversionUpload(req,res,next);}, async(req,res)=>res.status(202).json(await webImports.queueFile(req.file,req.body ?? {},req.visitor)));
 app.get('/api/imports/web', (req,res)=>res.json({jobs:webImports.list(req.visitor)}));
 app.post('/api/imports/web/:id/retry',(req,res)=>res.status(202).json(webImports.retry(req.params.id,req.visitor)));
 app.get('/api/processes', (req, res) => res.json(processes.list(req.visitor)));
 app.post('/api/processes/:id/priority', (req, res) => {
-  const job = processes.list(req.visitor).jobs.find((item) => item.id === req.params.id);
+  const { jobs } = processes.list(req.visitor);
+  const job = jobs.find((item) => item.id === req.params.id);
   if (!job) throw new RequestError(404, 'Process not found.');
   if (!job.canPrioritize) throw new RequestError(403, 'Only the owner can change the priority of an active or queued task.');
   if (job.kind === 'audiobookshelf' && !usesOwnerAudiobookshelf(req)) throw new RequestError(403, 'This Audiobookshelf connection belongs to the instance owner.');
   const action = req.body?.action ?? 'raise';
-  if (!['raise','top','lowest'].includes(action)) throw new RequestError(422, 'Choose raise, top, or lowest priority.');
+  if (action === 'move') {
+    const { target, position } = req.body;
+    if (typeof target !== 'string' || !['before', 'after'].includes(position)) throw new RequestError(422, 'Choose where to move this task.');
+    if (!jobs.some((item) => item.id === target && item.canPrioritize)) throw new RequestError(409, 'The destination task is no longer available. Refresh the queue and try again.');
+    return res.status(202).json(scheduler.move(job.id, target, position));
+  }
+  if (!['raise','top','lowest'].includes(action)) throw new RequestError(422, 'Choose raise, top, lowest, or a queue position.');
   res.status(202).json(scheduler[action](job.id));
 });
 app.delete('/api/processes/:id', async (req,res) => {
@@ -372,14 +427,23 @@ app.post('/api/discovery', ...(demo ? [limitJobs({ perMinute: 6, perVisitor: 2 }
 app.delete('/api/discovery', (req, res) => res.json(discovery.cancel(req.visitor)));
 app.get('/api/library', async (req, res) => {
   const snapshot = library.snapshot(req.visitor);
-  const books = snapshot.books.map((book) => ({ ...book, learning: learningLanguages(learning.info(library.getBook(book.id, req.visitor)), nativeLanguage(req.visitor)), audioSynced: learning.audioSynced(book) }));
+  const safeMode = req.visitor?.safeMode === true;
+  const native = nativeLanguage(req.visitor);
+  const books = snapshot.books.map((book) => {
+    const source = library.getBook(book.id, req.visitor);
+    const analysis = learning.info(source, { startWork: !safeMode });
+    return { ...book, ...(safeMode ? { canEdit: false } : {}),
+      ...(book.format === 'pdf' ? { epubRevision: learning.epubRevision(source) } : {}),
+      learning: learningLanguages(analysis, native), audioSynced: learning.audioSynced(book) };
+  });
   const reader = learning.vocabulary.profile(req.visitor);
   res.json({
     ...snapshot,
     progress: demo ? null : progressSync.snapshot(req.visitor),
-    storage: await storageFor(req.visitor),
-    imports: webImports.list(req.visitor),
-    archive: { available: !demo, hasKey: archive.settings(req.visitor).hasKey, job: demo ? null : archive.latest(req.visitor), jobs: demo ? [] : archive.list(req.visitor) },
+    storage: safeMode ? null : await storageFor(req.visitor),
+    imports: safeMode ? [] : webImports.list(req.visitor),
+    archive: safeMode ? { available: false, hasKey: false, job: null, jobs: [] }
+      : { available: !demo, hasKey: archive.settings(req.visitor).hasKey, job: demo ? null : archive.latest(req.visitor), jobs: demo ? [] : archive.list(req.visitor) },
     vocabulary: { byLanguage: reader.byLanguage, likelyKnown: reader.knownByLanguage, threshold: reader.threshold, reading: reader.reading },
     readingTime: readingTime.summary(readingAccount(req.visitor)),
     books: books.map((book) => ({ ...book, familiarity: learning.vocabulary.familiarity(book, reader) })),
@@ -390,7 +454,7 @@ app.get('/api/vocabulary/settings', (req, res) => res.json(learning.vocabulary.p
 app.put('/api/vocabulary/settings', (req, res) => res.json(learning.vocabulary.savePreferences(req.body ?? {}, req.visitor)));
 app.get('/api/books/:id/vocabulary/below-threshold', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);
-  learning.ensure(book);
+  if (!req.visitor?.safeMode) learning.ensure(book);
   res.json(learning.vocabulary.belowThreshold(book, req.visitor, req.query));
 });
 app.post('/api/books/:id/vocabulary/meaning', ...demoGenerations, async (req, res) => {
@@ -403,12 +467,12 @@ app.post('/api/books/:id/vocabulary/meaning', ...demoGenerations, async (req, re
 });
 app.get('/api/books/:id/vocabulary/sections/:key', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);
-  learning.ensure(book);
+  if (!req.visitor?.safeMode) learning.ensure(book);
   res.json(learning.vocabulary.section(book, req.params.key));
 });
 app.post('/api/books/:id/vocabulary/seen', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);
-  learning.ensure(book);
+  if (!req.visitor?.safeMode) learning.ensure(book);
   res.json(learning.vocabulary.record(book, req.body ?? {}, req.visitor));
 });
 app.get('/api/books/:id/recommendations', (req, res) => {
@@ -437,9 +501,9 @@ app.post('/api/books', ...demoUploads, (req, _res, next) => {
 }, upload.single('file'), async (req, res) => {
   let narrationOptions;
   try {
-    const allowed = new Set(['title','author','language','languages','categoryId','coverStyle','coverUrl','autoAudiobook','audiobookDelayMinutes','shared','series','seriesIndex']);
+    const allowed = new Set(['title','author','language','languages','categoryId','coverStyle','coverUrl','autoAudiobook','audiobookDelayMinutes','shared','shareWith','series','seriesIndex']);
     if (Object.keys(req.body ?? {}).some((key) => !allowed.has(key))) throw new RequestError(400, 'Too many book details were submitted. Refresh the page and try again.');
-    if (Object.entries(req.body ?? {}).some(([key, value]) => typeof value !== 'string' || key !== 'coverUrl' && Buffer.byteLength(value) > 1024)) throw new RequestError(400, 'One of the book details is too long or invalid. Shorten it and try again.');
+    if (Object.entries(req.body ?? {}).some(([key, value]) => typeof value !== 'string' || !['coverUrl', 'shareWith'].includes(key) && Buffer.byteLength(value) > 1024)) throw new RequestError(400, 'One of the book details is too long or invalid. Shorten it and try again.');
     narrationOptions = importNarrationOptions(req.body ?? {});
     if (demo && narrationOptions) throw new RequestError(403, 'Scheduled audiobook generation is available on self-hosted installations.');
   } catch (error) { if (req.file?.path) await rm(req.file.path, { force: true }); throw error; }
@@ -456,7 +520,7 @@ app.patch('/api/books/:id', async (req, res) => {
 });
 app.patch('/api/books/:id/read-status', (req, res) => {
   const status = library.setReadStatus(req.params.id, req.body ?? {}, req.visitor);
-  if (status.readAt) learning.ensure(library.getBook(status.id, req.visitor));
+  if (status.readAt && !req.visitor?.safeMode) learning.ensure(library.getBook(status.id, req.visitor));
   learning.vocabulary.syncCompletions(req.visitor);
   res.json(status);
 });
@@ -476,8 +540,8 @@ app.delete('/api/books/:id', async (req, res) => {
 });
 app.get('/api/books/:id/learning', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);
-  const result = learning.chapters(book), native = nativeLanguage(req.visitor);
-  res.json({ ...result, rescanAvailable: result.rescanAvailable && book.canEdit !== false, analysis: learningLanguages(result.analysis, native), chapters: result.chapters.map((chapter) => learningLanguages(chapter, native)),
+  const result = learning.chapters(book, { startWork: !req.visitor?.safeMode }), native = nativeLanguage(req.visitor);
+  res.json({ ...result, epubRevision: learning.epubRevision(book), rescanAvailable: result.rescanAvailable && book.canEdit !== false && !req.visitor?.safeMode, analysis: learningLanguages(result.analysis, native), chapters: result.chapters.map((chapter) => learningLanguages(chapter, native)),
     familiarity: learning.vocabulary.familiarity(book, learning.vocabulary.profile(req.visitor)) });
 });
 app.post('/api/books/:id/learning', (req, res) => {
@@ -497,7 +561,10 @@ app.get('/api/books/:id/chapters/:key', (req, res) => {
     typeof req.query.recording === 'string' ? req.query.recording : undefined));
 });
 app.get('/api/books/:id/narration', (req, res) => {
-  res.json({ ...learning.narration(library.getBook(req.params.id, req.visitor), typeof req.query.recording === 'string' ? req.query.recording : undefined), absConnected: usesOwnerAudiobookshelf(req) && audiobookshelf.settings().connected });
+  const book = library.getBook(req.params.id, req.visitor);
+  const selected = typeof req.query.recording === 'string' ? req.query.recording : undefined;
+  const textEdition = req.query.view === 'epub' && Boolean(learning.epubRevision(book));
+  res.json({ ...learning.narration(book, selected, { textEdition }), absConnected: usesOwnerAudiobookshelf(req) && audiobookshelf.settings().connected });
 });
 app.get('/api/books/:id/recordings', (req, res) => {
   const book = library.getBook(req.params.id, req.visitor);
@@ -595,6 +662,9 @@ app.use((err, _req, res, next) => {
   if (res.headersSent) return next(err);
   if (res.destroyed) return;
   if (err instanceof multer.MulterError) {
+    if (_req.pdfBoxUpload) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
+      error: err.code === 'LIMIT_FILE_SIZE' ? 'A box image is too large. Draw a smaller box.' : 'The selected box images could not be uploaded.',
+    });
     if (_req.fontUpload) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'Font files must be at most 32 MiB.' : 'Choose one font file and an optional name.' });
     if (_req.audioUpload) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
       error: err.code === 'LIMIT_FILE_SIZE' ? 'Audio files must be 1 GiB or smaller.' : _req.chapterUpload ? 'Choose at most 200 chapter files and one recording name.' : 'Upload one audiobook at a time.',

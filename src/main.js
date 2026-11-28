@@ -18,6 +18,7 @@ import { wordHelp } from './words.js';
 import { earlierPageContext } from './reading-context.js';
 import { narration } from './narration.js';
 import { readingProgressSync } from './reading-sync.js';
+import { syncPositionDialog } from './sync-position-dialog.js';
 import { pinyinOverlay, pinyinToolbar } from './pinyin.js';
 import { readingVocabulary } from './reading-vocabulary.js';
 import { renderSummaryDetail } from './summary-detail.js';
@@ -30,7 +31,7 @@ import { temporaryControls } from './reader-peek.js';
 import { discoveryScreen } from './ui-discovery.js';
 import { locationHistory } from './location-history.js';
 import { readingShortcut } from './reader-shortcuts.js';
-import { beforeSignOut } from './auth.js';
+import { accountSession, beforeSignOut } from './auth.js';
 import { userFonts } from './user-fonts.js';
 import { accountSettings } from './account-settings.js';
 import { readingBookmarks } from './bookmarks.js';
@@ -50,6 +51,8 @@ import { getProgress, getSettings, keyLabel, languageName, modes, saveProgress, 
 const viewer = $('#viewer');
 const stage = $('#stage');
 const readerScreen = $('#reader-screen');
+const safeMode = accountSession()?.user?.safeMode === true;
+const processLauncher = $('#open-process-queue');
 const setDockAutoHide = readerDocks(readerScreen);
 const summaryPanel = $('#summary-panel');
 const summaryBody = $('#summary-body');
@@ -62,10 +65,14 @@ const discovery = discoveryScreen({ request: api });
 const summaries = new Map();
 let settings = getSettings();
 let activeBook, renderer, loadController, activePosition, summaryController, activeSummary, hadSavedPosition = false;
+let readingPdfEpub = false;
+const readingFormat = () => readingPdfEpub ? 'epub' : activeBook?.format;
 let moving = false, summaryQueued = false, fallbackFullscreen = false;
 let hasReturnLocation = false, temporaryAudioVisible = false, pinchStart;
 let zoom = 1;
 let statusCheck = 0;
+let checkingOpeningPositions = false;
+let readingSyncState = { state: 'disabled' };
 let settingsReturnHash = '#library', settingsHistoryEntry = false;
 const returnHistory = locationHistory({
   location: () => activePosition && ({ target: activePosition.target, label: [activePosition.detail, activePosition.label].filter(Boolean).join(' · '), scrollTop: viewer.scrollTop, scrollLeft: viewer.scrollLeft }),
@@ -88,21 +95,30 @@ const pageTurns = pageTurnQueue({ perform: performMove, busy(value) {
 const pageGestures = pageNavigation({ host: $('.reading-main'),
   enabled: () => Boolean(activeBook && renderer && !document.querySelector('dialog[open]')),
   canSwipe: () => settings.swipeToTurn !== false && !viewer.classList.contains('pdf-panning'),
+  canTap: () => settings.tapToTurn === true,
   canDoubleTap: () => settings.doubleTapToTurn !== false,
   canCenterTap: () => settings.tapCenterFullscreen !== false,
   wordAt: (event) => words.at(event),
   wordDoubleTap: (word) => void playWordFromGesture(word),
   canPan: () => viewer.classList.contains('pdf-panning'),
+  panBy: (x, y) => viewer.scrollBy(x, y),
+  selectPassage(word) {
+    const passage = phrases.selectPassage(word);
+    if (passage) audio.pause();
+    return passage;
+  },
+  passageSelected: () => phrases.hasSelection,
+  dismissPassage: () => phrases.dismiss(),
   centerTap: () => { words.clear(); void toggleFullscreen(); },
   centerDoubleTap: () => void togglePlaybackFromGesture(),
   swipeUp: toggleAudioToolbar, swipeDown: swipeDownReaderPanels,
   pinch: pinchText,
   turn: (direction) => { viewer.focus({ preventScroll: true }); void move(direction); },
 });
-const pinyin = pinyinOverlay({ host: viewer, preferences: () => settings, renderer: () => renderer, book: () => activeBook, request: api });
+const pinyin = pinyinOverlay({ host: viewer, preferences: comprehensionPreferences, renderer: () => renderer, book: () => activeBook, request: api });
 const pinyinButton = pinyinToolbar({ button: $('#pinyin-toggle'), preferences: () => settings, book: () => activeBook,
   change: (showPinyin) => { applySettings({ ...settings, showPinyin }); toast(showPinyin ? 'Pinyin shown' : 'Pinyin hidden'); } });
-const bookTools = readingBookTools({ book: () => activeBook, renderer: () => renderer, preferences: outputPreferences, request: api,
+const bookTools = readingBookTools({ book: () => activeBook, renderer: () => renderer, preferences: outputPreferences, request: api, textEdition: () => readingPdfEpub,
   async go(target) { const moved = await returnHistory.follow(target); if (moved) await audio.seekSource(target.key, target.from); return moved; } });
 const questions = pageQuestions({ book: () => activeBook, renderer: () => renderer, preferences: outputPreferences, request: api });
 const readingTime = readingTimeTracker({ book: () => activeBook, renderer: () => renderer, request: api,
@@ -117,11 +133,15 @@ const words = wordHelp({
   seekWord: (node, offset) => audio.seekWord(node, offset),
   onWord: readingTime.activity,
 });
-const phrases = phraseHelp({ book: () => activeBook, preferences: () => settings, request: api,
+const phrases = phraseHelp({ book: () => activeBook, preferences: () => settings, request: api, explanations: !safeMode,
   roots: () => renderer?.readingRoots() || [], onSelection: words.clear,
   onBookmark: (range, text) => bookmarks.openSelection(renderer?.bookmarkTarget?.(range) ?? activePosition?.target, text),
 });
 const audio = narration({
+  safeMode, textEdition: () => readingPdfEpub, highlight: () => readingFormat() === 'epub',
+  canFollow: () => !phrases.touchSelected,
+  editableTiming: (book) => library.editableTiming(book),
+  showAudioTiming: (book, recording, position) => library.showAudioTiming(book, recording, position),
   preferences: () => temporaryAudioVisible ? { ...settings, audioToolbarHidden: false } : settings, renderer: () => renderer, book: () => activeBook,
   readingPosition: () => activePosition?.target,
   navigate: (target) => move(0, target, { audio: true }),
@@ -140,7 +160,10 @@ for (const type of ['input', 'change', 'click', 'wheel', 'focusin']) $('#narrati
 $('#narration-player').addEventListener('pointerdown', audioPeek.hold, { passive: true });
 document.addEventListener('pointerup', audioPeek.release, { passive: true });
 document.addEventListener('pointercancel', audioPeek.release, { passive: true });
-const absProgress = audiobookshelfProgress({ audio, request: api, reading: {
+const positionPrompt = syncPositionDialog({ dialog: $('#sync-position-dialog'),
+  available: () => Boolean(renderer && !readerScreen.hidden && !checkingOpeningPositions), onPending: updateSyncButton,
+});
+const absProgress = audiobookshelfProgress({ audio, request: api, notify: (offer) => positionPrompt.update('audiobookshelf', offer), reading: {
   hasSavedPosition: () => hadSavedPosition,
   playbackPosition() {
     const current = renderer?.syncPosition?.();
@@ -148,15 +171,16 @@ const absProgress = audiobookshelfProgress({ audio, request: api, reading: {
   },
   async resumeAt(percentage) { if (!await move(0, { sync: { percentage } })) throw new Error('The Audiobookshelf reading position could not be opened.'); },
 } });
-const processes = processQueue({ changePreferences: (values) => applySettings({ ...settings, ...values }) });
+const processes = safeMode ? null : processQueue({ changePreferences: (values) => applySettings({ ...settings, ...values }) });
 const library = libraryScreen({
+  safeMode,
   preferences: () => settings, changePreferences: (updated) => { applySettings({ ...settings, ...updated }); },
-  progress, readingLanguages: () => settings.readingLanguages, onSnapshot: (snapshot) => { processes.setAccount(snapshot.readingTime?.accountId); readingTime.setAccount(snapshot.readingTime?.accountId); void setOfflineAccount(snapshot.readingTime?.accountId).catch(() => {}); updateActiveBook(snapshot); },
+  progress, readingLanguages: () => settings.readingLanguages, onSnapshot: (snapshot) => { processes?.setAccount(snapshot.readingTime?.accountId); readingTime.setAccount(snapshot.readingTime?.accountId); void setOfflineAccount(snapshot.readingTime?.accountId).catch(() => {}); updateActiveBook(snapshot); },
   onRemove(id) { delete progress[id]; saveProgress(progress); },
 });
 const proficiency = proficiencyPage({ preferences: () => settings });
 const bookmarks = readingBookmarks({ book: () => activeBook, position: () => activePosition, go: (target) => returnHistory.follow(target), request: api });
-const settingsUI = settingsPage({ preferences: () => settings, apply: applySettings, navigate: openSettings, back: leaveSettings });
+const settingsUI = settingsPage({ preferences: () => settings, apply: applySettings, navigate: openSettings, back: leaveSettings, safeMode });
 const account = accountSettings({ request: api, preferences: () => settings,
   busy: () => settingsUI.active,
   apply: (updated) => applySettings(updated, false, false),
@@ -177,12 +201,24 @@ const readingSync = readingProgressSync({
 });
 
 function syncStatus({ state, pending, error }) {
+  readingSyncState = { state, error };
+  const saved = pending?.progress;
+  positionPrompt.update('reading', saved && state !== 'disabled' ? {
+    key: `${pending.document}:${pending.version}`, device: saved.device || 'Another device',
+    label: `${Math.round(saved.percentage * 100)}%`, percentage: saved.percentage, timestamp: saved.timestamp,
+    error: state === 'error' ? error : '',
+    resume: () => readingSync.resume(pending), keep: () => readingSync.keepLocal(pending),
+  } : null);
+  if (state === 'approximate') toast('Resumed near the saved position. This EPUB location could only be mapped approximately.');
+}
+
+function updateSyncButton(hasPending) {
+  const { state, error } = readingSyncState;
+  const display = hasPending ? 'conflict' : state;
   const button = $('#sync-progress');
-  const notice = $('#sync-notice');
-  const wasHidden = notice.hidden;
-  button.hidden = state === 'disabled';
-  button.disabled = state === 'syncing';
-  button.dataset.state = state;
+  button.hidden = display === 'disabled';
+  button.disabled = display === 'syncing' || checkingOpeningPositions;
+  button.dataset.state = display;
   const labels = {
     syncing: 'Syncing reading progress…', waiting: 'Saving reading progress…',
     synced: 'Reading progress synced. Check for updates',
@@ -191,18 +227,8 @@ function syncStatus({ state, pending, error }) {
     conflict: 'Choose which reading position to keep', remote: 'Another device saved a reading position',
     error: error || 'Could not resume the saved position. Click to retry',
   };
-  button.title = labels[state] || 'Sync reading progress';
+  button.title = labels[display] || 'Sync reading progress';
   button.setAttribute('aria-label', button.title);
-  notice.hidden = !pending || state === 'disabled';
-  if (!notice.hidden) {
-    const saved = pending.progress;
-    const date = new Date(saved.timestamp * 1000).toLocaleString();
-    $('#sync-notice-text').textContent = `${saved.device || 'Another device'} saved a position at ${Math.round(saved.percentage * 100)}% (${date}).`
-      + (state === 'error' ? ` ${error}` : ' Resume there or keep your current place.');
-  }
-  $('#sync-resume').disabled = $('#sync-keep').disabled = state === 'syncing';
-  if (wasHidden !== notice.hidden) syncFullscreen();
-  if (state === 'approximate') toast('Resumed near the saved position. This EPUB location could only be mapped approximately.');
 }
 
 for (const close of $$('[data-close]')) {
@@ -270,27 +296,38 @@ function applySettings(updated, aiChanged, notify = true) {
 }
 
 function comprehensionPreferences() {
-  return activeBook?.l1Folder ? { ...settings, mode: 'off', showPinyin: false } : settings;
+  return activeBook?.l1Folder || safeMode ? { ...settings, mode: 'off', showPinyin: false } : settings;
 }
 function outputPreferences() { return languageHelpPreferences(comprehensionPreferences(), activeBook?.language); }
 function updateComprehension() {
   applyAppearance();
-  const l1 = Boolean(activeBook?.l1Folder);
-  $('#summarize').hidden = l1; $('.word-settings').hidden = l1; $('#character-guide-tools').hidden = l1;
-  const tools = $('#book-tools-button'), label = l1 ? 'Search book' : 'Search book and character guide';
+  const limitedHelp = safeMode || Boolean(activeBook?.l1Folder);
+  $('#summarize').hidden = limitedHelp; $('.word-settings').hidden = limitedHelp; $('#character-guide-tools').hidden = limitedHelp;
+  const tools = $('#book-tools-button'), label = limitedHelp ? 'Search book' : 'Search book and character guide';
   tools.title = label; tools.setAttribute('aria-label', label);
-  if (l1) { words.clear(); phrases.clear(); showSummary(false); bookTools.reset(); }
+  if (limitedHelp) { words.clear(); phrases.clear(); showSummary(false); bookTools.reset(); }
 }
 function updateActiveBook(snapshot) {
   const current = activeBook && snapshot.books.find((book) => book.id === activeBook.id);
-  if (current && (current.contentRevision || '') !== (activeBook.contentRevision || '') && !readerScreen.hidden) { void openBook(current); return; }
-  if (!current || Boolean(current.l1Folder) === Boolean(activeBook.l1Folder)) return;
-  activeBook = { ...activeBook, l1Folder: current.l1Folder };
+  if (!current) return;
+  const pdfChanged = (current.contentRevision || '') !== (activeBook.contentRevision || '');
+  const editionChanged = current.epubRevision !== activeBook.epubRevision;
+  if (!readerScreen.hidden && (pdfChanged || readingPdfEpub && editionChanged && current.epubRevision)) {
+    const epub = readingPdfEpub && Boolean(current.epubRevision);
+    if (readingPdfEpub && !epub) history.replaceState(null, '', `#read/${current.id}`);
+    void openBook(current, epub); return;
+  }
+  const l1Changed = Boolean(current.l1Folder) !== Boolean(activeBook.l1Folder);
+  if (!l1Changed && !editionChanged) return;
+  activeBook = { ...activeBook, l1Folder: current.l1Folder, epubRevision: current.epubRevision };
+  updateFormatLink();
+  if (!l1Changed) return;
   updateComprehension(); pinyinButton.refresh(); pinyin.refresh();
   void Promise.resolve(renderer?.apply?.(readingPreferences(comprehensionPreferences()))).catch(reportError);
 }
 
 async function checkAI() {
+  if (safeMode) return;
   const request = ++statusCheck;
   const button = $('#ai-status');
   const label = $('span:last-child', button);
@@ -308,6 +345,8 @@ async function checkAI() {
 }
 
 function showScreen(screen) {
+  const launcherParent = screen === 'reader' ? readerScreen : document.body;
+  if (processLauncher.parentElement !== launcherParent) launcherParent.append(processLauncher);
   $('#mobile-navigation').hidden = screen === 'reader';
   for (const link of document.querySelectorAll('.mobile-navigation a')) {
     if (link.hash === `#${screen}`) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
@@ -342,18 +381,23 @@ function reportError(error) {
 
 function positionChanged(position) {
   if (!activeBook) return;
-  const changed = position.target !== activePosition?.target;
+  const sourceChanged = position.target !== activePosition?.target;
+  const changed = sourceChanged || position.editionTarget !== activePosition?.editionTarget;
   activePosition = position;
   readingTime.refresh();
   const saved = { target: position.target, percent: position.percent };
-  if (progress[activeBook.id]?.target !== saved.target || progress[activeBook.id]?.percent !== saved.percent) {
-    progress[activeBook.id] = { ...progress[activeBook.id], ...saved };
+  const previous = progress[activeBook.id];
+  if (position.editionTarget) saved.epubPosition = { cfi: position.editionTarget, page: position.target, revision: activeBook.epubRevision };
+  if (previous?.target !== saved.target || previous?.percent !== saved.percent
+    || saved.epubPosition && (previous?.epubPosition?.cfi !== saved.epubPosition.cfi || previous?.epubPosition?.revision !== saved.epubPosition.revision)) {
+    progress[activeBook.id] = { ...previous, ...saved };
     saveProgress(progress);
   }
-  if (changed && !position.reflowed) readingSync.changed();
-  if (changed && !position.reflowed) absProgress.changed();
+  if (sourceChanged && !position.reflowed) readingSync.changed();
+  if (sourceChanged && !position.reflowed) absProgress.changed();
   $('#page-label').textContent = position.label;
-  const heading = [activeBook.format === 'pdf' && activeBook.ocrComplete ? bookFormatLabel(activeBook) : '', position.heading || position.label].filter(Boolean).join(' · ');
+  const format = readingPdfEpub ? 'Simplified EPUB' : activeBook.format === 'pdf' && activeBook.ocrComplete ? bookFormatLabel(activeBook) : '';
+  const heading = [format, position.heading || position.label].filter(Boolean).join(' · ');
   $('#reading-subtitle').textContent = heading; $('#reading-subtitle').title = heading;
   $('#position-detail').textContent = position.detail;
   $('#previous').disabled = !position.previous;
@@ -475,6 +519,7 @@ async function explainSummary(mode, label, selected) {
 }
 
 function summarize() {
+  if (safeMode) return;
   if (!renderer || summaryController || activeBook?.l1Folder) return;
   if (moving) {
     summaryQueued = true;
@@ -529,7 +574,7 @@ function syncFullscreen() {
   $('#fullscreen').setAttribute('aria-pressed', String(fullscreen));
   $('#fullscreen').setAttribute('aria-label', fullscreen ? 'Exit full screen' : 'Full screen');
   $('#fullscreen').title = fullscreen ? 'Exit full screen' : 'Full screen';
-  setDockAutoHide(Boolean(activeBook && fullscreen && settings.autoHideDocks && !hasReturnLocation && !temporaryAudioVisible && $('#sync-notice').hidden));
+  setDockAutoHide(Boolean(activeBook && fullscreen && settings.autoHideDocks && !hasReturnLocation && !temporaryAudioVisible));
 }
 
 async function toggleFullscreen() {
@@ -544,7 +589,9 @@ async function toggleFullscreen() {
   syncFullscreen();
 }
 
-function closeReader() {
+function closeReader(playbackPosition) {
+  checkingOpeningPositions = false;
+  positionPrompt.reset();
   audioPeek.reset();
   pinchText({ phase: 'cancel' });
   absProgress.stop();
@@ -555,12 +602,13 @@ function closeReader() {
   vocabulary.stop();
   pinyin.clear();
   readingSync.stop();
-  audio.stop();
+  audio.stop(playbackPosition);
   loadController?.abort();
   loadController = undefined;
   renderer?.destroy();
   renderer = undefined;
   activeBook = undefined;
+  readingPdfEpub = false;
   pinyinButton.refresh();
   summaryQueued = false;
   pageTurns.reset();
@@ -578,22 +626,37 @@ function closeReader() {
   readerMessage();
 }
 
-async function openBook(book) {
-  closeReader();
+function updateFormatLink() {
+  const link = $('#reader-format-link');
+  link.hidden = !readingPdfEpub && !activeBook?.epubRevision;
+  if (!link.hidden) {
+    link.href = `#read/${activeBook.id}${readingPdfEpub ? '' : '/epub'}`;
+    $('span', link).textContent = readingPdfEpub ? 'Read PDF' : 'Read simplified EPUB';
+  }
+}
+
+async function openBook(book, textEdition = readingPdfEpub && activeBook?.id === book.id) {
+  const playbackPosition = activeBook?.id === book.id && textEdition !== readingPdfEpub ? audio.playbackPosition() : null;
+  closeReader(playbackPosition);
+  checkingOpeningPositions = true;
   hadSavedPosition = Boolean(progress[book.id]?.target);
   const finishOpening = processTasks.begin('Open book', { bookId: book.id, title: book.title, cancel: () => { closeReader(); location.hash = '#library'; } });
   activeBook = book;
+  readingPdfEpub = textEdition;
+  const isPdf = readingFormat() === 'pdf';
+  updateFormatLink();
   updateComprehension();
   setOfflineBook(book.id);
+  void bookmarks.load().catch(() => {});
   loadController = new AbortController();
   const { signal } = loadController;
   showScreen('reader');
   audio.apply();
   document.title = `${book.title} · Langy Reader`;
   $('#reading-title').textContent = book.title;
-  $('#reading-subtitle').textContent = [bookFormatLabel(book), languageName(book.language)].join(' · ');
+  $('#reading-subtitle').textContent = [textEdition ? 'Simplified EPUB' : bookFormatLabel(book), languageName(book.language)].join(' · ');
   $('#reading-subtitle').title = '';
-  $('#pdf-zoom').hidden = book.format !== 'pdf';
+  $('#pdf-zoom').hidden = !isPdf;
   pinyinButton.refresh();
   const contentsButton = $('#contents-button');
   contentsButton.disabled = true;
@@ -608,14 +671,25 @@ async function openBook(book) {
   $('#zoom-out').disabled = true;
   $('#zoom-in').disabled = false;
   zoom = 1;
-  viewer.classList.toggle('pdf-viewer', book.format === 'pdf');
+  viewer.classList.toggle('pdf-viewer', isPdf);
   readerMessage('Opening book…');
   try {
-    const open = book.format === 'pdf' ? (await import('./pdf.js')).openPdf : (await import('./epub.js')).openEpub;
-    if (book.format === 'epub') try { await userFonts.ensure(settings.font); } catch { toast('Imported font unavailable. Using the built-in fallback.'); }
+    const open = isPdf ? (await import('./pdf.js')).openPdf : (await import('./epub.js')).openEpub;
+    if (!isPdf) try { await userFonts.ensure(settings.font); } catch { toast('Imported font unavailable. Using the built-in fallback.'); }
     signal.throwIfAborted();
+    let position = progress[book.id]?.target, archive, pdfSource;
+    if (textEdition) {
+      const edition = await api(`/api/books/${book.id}/epub-text`, { signal });
+      const { pdfEpub } = await import('./pdf-epub.js');
+      archive = await pdfEpub(book, edition);
+      signal.throwIfAborted();
+      pdfSource = { total: edition.total, pages: edition.pages.map(({ number }) => number) };
+      activeBook = { ...book, epubRevision: edition.revision };
+      const saved = progress[book.id]?.epubPosition;
+      if (saved?.revision === edition.revision && saved.page === position) position = saved.cfi;
+    }
     const opened = await open({
-      host: viewer, url: `/api/books/${book.id}/file${book.contentRevision ? '?revision=' + encodeURIComponent(book.contentRevision) : ''}`, position: progress[book.id]?.target,
+      host: viewer, url: `/api/books/${book.id}/file${book.contentRevision ? '?revision=' + encodeURIComponent(book.contentRevision) : ''}`, position, archive, pdfSource,
       language: book.language, settings: readingPreferences(comprehensionPreferences()), signal,
       hooks: {
         keydown, bindWords: (...args) => { const wordCleanup = words.bind(...args), phraseCleanup = phrases.bind(args[0]); return () => { wordCleanup?.(); phraseCleanup(); }; }, bindPageNavigation: pageGestures.bind,
@@ -629,7 +703,7 @@ async function openBook(book) {
     renderer = opened;
     pinyin.refresh();
     vocabulary.refresh();
-    if (book.format === 'pdf' && opened.contents.length) {
+    if (isPdf && opened.contents.length) {
       contentsButton.title = 'Book sections';
       contentsButton.setAttribute('aria-label', contentsButton.title);
     }
@@ -637,9 +711,16 @@ async function openBook(book) {
     if (signal.aborted) return;
     contentsButton.disabled = false;
     audio.apply();
-    void Promise.all([audio.refresh(), readingSync.start(book, opened)]).then(() => {
-      if (!signal.aborted && renderer === opened) absProgress.start();
-    });
+    void audio.refresh();
+    void Promise.allSettled([readerDeadline(audio.waitForAudiobookshelf, { signal, milliseconds: 8000 }), readingSync.start(book, opened)])
+      .then(() => { if (!signal.aborted && renderer === opened) return absProgress.start(); })
+      .catch((error) => { if (!signal.aborted) reportError(error); })
+      .finally(() => {
+        if (!signal.aborted && renderer === opened) {
+          checkingOpeningPositions = false;
+          positionPrompt.refresh();
+        }
+      });
     readerMessage();
     if (!document.querySelector('dialog[open]')) viewer.focus({ preventScroll: true });
   } catch (error) {
@@ -680,6 +761,7 @@ async function route() {
     showScreen('proficiency'); document.title='Reading profile · Langy Reader';
     $('#proficiency-title').focus({preventScroll:true}); await proficiency.open(); return;
   }
+  if (location.hash === '#discover' && safeMode) history.replaceState(null, '', '#library');
   if (location.hash === '#discover') {
     if (activeBook) { closeReader(); await vocabulary.flush(); }
     showScreen('discovery'); document.title = 'Discover books · Langy Reader';
@@ -694,7 +776,7 @@ async function route() {
     $(`#${screen}-title`).focus({ preventScroll: true });
     return;
   }
-  const match = /^#read\/([a-z0-9-]+)$/i.exec(location.hash);
+  const match = /^#read\/([a-z0-9-]+)(?:\/(epub))?$/i.exec(location.hash);
   if (!match) {
     const returning = Boolean(activeBook);
     if (activeBook) closeReader();
@@ -715,7 +797,12 @@ async function route() {
     showScreen('library');
     return message('#library-error', 'This book could not be found. Demo uploads expire after 24 hours.');
   }
-  if (activeBook?.id !== book.id || activeBook?.contentRevision !== book.contentRevision) await openBook(book);
+  const textEdition = Boolean(match[2] && book.epubRevision);
+  if (match[2] && !textEdition) {
+    history.replaceState(null, '', `#read/${book.id}`);
+    toast('The simplified EPUB needs indexed PDF text.');
+  }
+  if (activeBook?.id !== book.id || activeBook?.contentRevision !== book.contentRevision || readingPdfEpub !== textEdition) await openBook(book, textEdition);
 }
 
 function move(direction, target, context) { return pageTurns.request(direction, target, context); }
@@ -763,9 +850,9 @@ async function zoomPDF(factor) {
   } catch (error) { reportError(error); }
 }
 
-const pageJump = bookPageJump({ renderer: () => renderer, book: () => activeBook,
+const pageJump = bookPageJump({ renderer: () => renderer, book: () => ({ format: readingFormat() }),
   go: (target) => returnHistory.follow(target), focus: () => viewer.focus({ preventScroll: true }) });
-const contentsUI = bookContents({ renderer: () => renderer, book: () => activeBook,
+const contentsUI = bookContents({ renderer: () => renderer, book: () => ({ format: readingFormat() }), bookmarks,
   go: (target) => returnHistory.follow(target), focus: () => viewer.focus({ preventScroll: true }), jumpPage: () => pageJump.open() });
 function contents() { words.clear(); contentsUI.open(); }
 for (const id of ['jump-page', 'page-label']) $(`#${id}`).addEventListener('click', () => { words.clear(); pageJump.open(); });
@@ -791,9 +878,9 @@ function keydown(event) {
   else if (action === 'bookmarkSelection') phrases.bookmark();
   else if (action === 'explainSelection') void phrases.explain();
   else if (action === 'audioToolbar') toggleAudioToolbar();
-  else if (action === 'pinyin' && !activeBook?.l1Folder) { applySettings({ ...settings, showPinyin: !settings.showPinyin }); toast(settings.showPinyin ? 'Pinyin shown' : 'Pinyin hidden'); }
+  else if (action === 'pinyin' && !safeMode && !activeBook?.l1Folder) { applySettings({ ...settings, showPinyin: !settings.showPinyin }); toast(settings.showPinyin ? 'Pinyin shown' : 'Pinyin hidden'); }
   else if (action === 'returnLocation') void returnHistory.back();
-  else if (action === 'summary') {
+  else if (action === 'summary' && !safeMode) {
     if (summaryPanel.hidden) summarize();
     else closeSummary();
   }
@@ -809,14 +896,13 @@ async function skipSection(direction) {
 }
 
 $('#previous').addEventListener('click', () => { viewer.focus({ preventScroll: true }); void move(-1); });
+$('#reader-format-link').addEventListener('click', () => { $('#reader-more').open = false; });
 $('#return-location').addEventListener('click', () => { viewer.focus({ preventScroll: true }); void returnHistory.back(); });
 $('#next').addEventListener('click', () => { viewer.focus({ preventScroll: true }); void move(1); });
 $('#contents-button').addEventListener('click', contents);
 $('#reader-more').addEventListener('click', (event) => { if (event.target.closest('button')) $('#reader-more').open = false; });
 $('#bookmarks-button').addEventListener('click', () => void bookmarks.open());
-$('#sync-progress').addEventListener('click', () => void readingSync.check());
-$('#sync-resume').addEventListener('click', () => void readingSync.resume());
-$('#sync-keep').addEventListener('click', () => void readingSync.keepLocal());
+$('#sync-progress').addEventListener('click', () => { if (!positionPrompt.open()) void readingSync.check(); });
 $('#fullscreen').addEventListener('click', toggleFullscreen);
 function toggleAudioToolbar() {
   const visible = temporaryAudioVisible || settings.audioEnabled && !settings.audioToolbarHidden;
@@ -859,7 +945,7 @@ async function playWordFromGesture(word) {
 function pinchText({ phase, factor = 1 }) {
   const feedback = $('#text-size-feedback');
   if (phase === 'start') {
-    words.clear(); phrases.clear(); pinchStart = { book: activeBook, size: readingFontSize(settings), zoom, format: activeBook?.format };
+    words.clear(); phrases.clear(); pinchStart = { book: activeBook, size: readingFontSize(settings), zoom, format: readingFormat() };
   }
   if (!pinchStart) return;
   if (phase === 'move') {
@@ -900,7 +986,7 @@ document.addEventListener('visibilitychange', () => {
   else { void readingSync.check(); void account.resume(); }
 });
 beforeSignOut(async () => { closeReader(); await Promise.allSettled([account.flush(), readingTime.flush(), vocabulary.flush(), readingSync.flushSaved()]); });
-window.addEventListener('langy-signing-out', () => { account.close(); closeReader(); proficiency.leave(); library.dispose(); processes.dispose(); });
+window.addEventListener('langy-signing-out', () => { account.close(); closeReader(); proficiency.leave(); library.dispose(); processes?.dispose(); });
 window.addEventListener('pagehide', () => { void readingSync.flush(); void account.flush({ keepalive: true }); });
 window.addEventListener('online', () => { void account.resume(); void flushOfflineChanges(); void readingSync.flushSaved(); void refreshOfflineReader(); });
 window.addEventListener('langy-offline-synced', () => { if (!$('#library-screen').hidden) void library.refresh().catch((error) => message('#library-error', error.message)); });

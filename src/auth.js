@@ -40,6 +40,8 @@ async function accept(session) {
   try { localStorage.setItem('langy-auth-mode', session.enabled ? 'accounts' : 'public'); } catch {}
   current = session;
   document.body.dataset.auth = 'ready'; document.querySelector('#login-screen').hidden = true;
+  document.body.dataset.safeMode = String(session.user?.safeMode === true);
+  for (const notice of document.querySelectorAll('[data-safe-mode-notice]')) notice.hidden = !session.user?.safeMode;
   for (const tab of document.querySelectorAll('[data-account-control]')) tab.hidden = !session.enabled;
   return session;
 }

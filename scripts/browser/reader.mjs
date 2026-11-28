@@ -382,7 +382,24 @@ try {
       await open();
       for (let n = 0; n < 60 && aborted < 2; n++) await delay(50);
       assert.ok(aborted >= 2); await delay(100);
-      await page.locator('#reader-more > summary').click(); await page.locator('#reader-more [data-open-processes]').click();
+      assert.equal(await page.locator('#reader-more [data-open-processes]').count(), 0);
+      const menu = page.locator('#reader-more > summary');
+      const sync = page.locator('#sync-progress');
+      const syncLabel = await sync.evaluate((node) => {
+        const before = { label: node.getAttribute('aria-label'), hidden: node.hidden };
+        node.setAttribute('aria-label', 'Reading progress synced. Check for a newer reading position saved on another device.');
+        node.hidden = false;
+        return before;
+      });
+      await menu.click();
+      assert.equal(await page.locator('.reader-more-menu').evaluate((node) => {
+        const row = node.querySelector('#sync-progress');
+        return node.scrollWidth <= node.clientWidth && row.scrollWidth <= row.clientWidth
+          && getComputedStyle(row, '::after').whiteSpace === 'normal';
+      }), true);
+      await sync.evaluate((node, before) => { node.setAttribute('aria-label', before.label); node.hidden = before.hidden; }, syncLabel);
+      await menu.click();
+      await page.locator('#reader-screen #open-process-queue').click();
       await page.locator('#downloads-dialog').waitFor({ state: 'visible' });
       assert.equal(await page.locator('#process-list .process-card').filter({ hasText: 'Load book tools' }).filter({ hasText: 'Needs attention' }).count(), 0);
       await page.locator('#downloads-dialog [data-close]').click();
@@ -473,11 +490,64 @@ try {
     const before = await position(); await page.locator('#next').click(); await changed(before);
     const after = await position(); await delay(700); assert.equal(await position(), after, 'a delayed layout must not restore the previous page');
   });
-  await check('an outer double tap turns once and a single tap does not turn', async () => {
-    const box = await page.locator('.reading-main').boundingBox(), x = box.x + box.width * .9, y = box.y + box.height * .55;
-    const before = await position(); await page.touchscreen.tap(x, y); await delay(400); assert.equal(await position(), before);
-    await page.touchscreen.tap(x, y); await delay(70); await page.touchscreen.tap(x, y); await changed(before);
-    const after = await position(); await delay(500); assert.equal(await position(), after);
+  await check('single edge taps and short swipes turn pages, with a double tap turning only once', async () => {
+    await page.locator('#contents-button').tap();
+    await page.getByRole('button', { name: 'Primera parte', exact: true }).tap();
+    await page.waitForFunction(() => document.querySelector('#page-label').textContent.startsWith('Page 1 of '));
+    const box = await page.locator('.reading-main').boundingBox(), x = box.x + box.width - 2, y = box.y + box.height * .55;
+    let before = await position(); await page.touchscreen.tap(x, y); await changed(before);
+    assert.match(await page.locator('#page-label').textContent(), /^Page 2 of /u);
+    before = await position(); await page.touchscreen.tap(box.x + 2, y); await changed(before);
+    assert.match(await page.locator('#page-label').textContent(), /^Page 1 of /u);
+    before = await position(); await swipe(-43); await changed(before);
+    assert.match(await page.locator('#page-label').textContent(), /^Page 2 of /u);
+    before = await position(); await page.locator('#previous').tap(); await changed(before);
+    assert.match(await page.locator('#page-label').textContent(), /^Page 1 of /u);
+    before = await position(); await page.touchscreen.tap(x, y); await changed(before);
+    const after = await position(); await page.touchscreen.tap(x, y); await delay(400);
+    assert.equal(await position(), after);
+  });
+  await check('mobile handles adjust text without turning pages until a tap dismisses the selection', async () => {
+    await page.locator('#contents-button').tap();
+    await page.getByRole('button', { name: 'Primera parte', exact: true }).tap();
+    const source = page.frameLocator('#viewer iframe').first().locator('#source');
+    await source.waitFor({ state: 'visible' });
+    const [first, last, extension] = await source.evaluate((paragraph) => ['viajera', 'tranquila', 'cerca'].map((word) => {
+      const node = paragraph.firstChild, start = node.data.indexOf(word), range = document.createRange();
+      range.setStart(node, start); range.setEnd(node, start + word.length);
+      const box = range.getBoundingClientRect(), frame = window.frameElement.getBoundingClientRect();
+      return { x: frame.x + box.x + box.width / 2, y: frame.y + box.y + box.height / 2,
+        right: frame.x + box.right, bottom: frame.y + box.bottom };
+    }));
+    const before = await position();
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: first.x, y: first.y }] });
+    await delay(100);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: first.x + 16, y: first.y + 2 }] });
+    await delay(330);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: last.x, y: last.y }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.locator('[data-bookmark-selection]').waitFor({ state: 'visible' });
+    const highlight = () => source.evaluate(() => [...CSS.highlights.get('langy-passage')].map((range) => range.toString()).join(''));
+    assert.equal(await highlight(), 'viajera llegó a una casa tranquila');
+    const handle = await page.locator('[data-selection-edge="end"]').boundingBox();
+    assert.ok(handle.width >= 44 && handle.height >= 44);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: handle.x + handle.width / 2, y: handle.y + 18 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: extension.right, y: extension.bottom + 18 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    assert.equal((await highlight()).trim(), 'viajera llegó a una casa tranquila cerca');
+    assert.equal(await position(), before);
+    await swipe(-145, 2, true);
+    await delay(100);
+    assert.equal(await position(), before, 'missing a handle during a drag should keep the same page');
+    assert.equal((await highlight()).trim(), 'viajera llegó a una casa tranquila cerca');
+    const box = await page.locator('.reading-main').boundingBox();
+    await page.touchscreen.tap(box.x + box.width - 2, box.y + box.height * .6);
+    await page.locator('#phrase-help').waitFor({ state: 'hidden' });
+    assert.equal(await position(), before, 'the tap should only clear the selection');
+    await swipe(-145, 2, true);
+    await changed(before);
+    assert.match(await page.locator('#page-label').textContent(), /^Page 2 of /u);
+    assert.equal(await page.locator('#phrase-help').isVisible(), false);
   });
   await check('repeated pinch gestures enlarge and reduce touch text without changing desktop size or browser zoom', async () => {
     const before = await page.evaluate(() => ({ size: 20, ...JSON.parse(localStorage.getItem('langy-settings-v1')) }));
@@ -504,6 +574,45 @@ try {
     await page.locator('.toc-bookmarks summary').click();
     await page.locator('.toc-bookmarks').getByText('No bookmarks yet.').waitFor();
     await page.locator('#contents-dialog [data-close]').click(); assert.equal(await position(), before);
+  });
+  await check('on a phone the prefetched bookmark list wraps long passages, keeps Remove visible and is reused in sections', async () => {
+    const target = await position(), label = paragraph.slice(0, 190), note = 'palabra'.repeat(40);
+    const path = '/api/books/' + book.id + '/bookmarks';
+    const seeded = await context.request.post(base + path, { data: { target, label, note } });
+    assert.equal(seeded.status(), 200, await seeded.text());
+    let requests = 0;
+    const count = (route) => { if (route.request().method() === 'GET') requests++; return route.continue(); };
+    await page.route('**' + path, count);
+    try {
+      const prefetched = page.waitForResponse((response) => response.url() === base + path && response.request().method() === 'GET');
+      await page.reload();
+      await prefetched;
+      await page.locator('#reader-message').waitFor({ state: 'hidden' });
+      await page.locator('#reader-more > summary').click();
+      await page.locator('#bookmarks-button').click();
+      const row = page.locator('.bookmark-entry').filter({ hasText: label });
+      await row.waitFor();
+      assert.equal(await row.evaluate((node) => {
+        const [open, remove] = node.querySelectorAll('button');
+        const note = node.querySelector('p');
+        return open.scrollWidth <= open.clientWidth && note.scrollWidth <= note.clientWidth
+          && open.offsetHeight > remove.offsetHeight && open.getBoundingClientRect().right < remove.getBoundingClientRect().left;
+      }), true);
+      await page.locator('#bookmarks-dialog [data-close]').first().click();
+      await page.locator('#contents-button').click();
+      await page.locator('.toc-bookmarks summary').click();
+      await page.locator('.toc-bookmarks').getByRole('button', { name: label, exact: true }).waitFor();
+      assert.equal(requests, 1);
+      await page.locator('#contents-dialog [data-close]').click();
+      await page.locator('#reader-more > summary').click();
+      await page.locator('#bookmarks-button').click();
+      await row.getByRole('button', { name: 'Remove', exact: true }).click();
+      await row.waitFor({ state: 'detached' });
+      await page.locator('#bookmarks-dialog [data-close]').first().click();
+    } finally {
+      await page.unroute('**' + path, count);
+      await context.request.post(base + path + '/remove', { data: { target } });
+    }
   });
   await check('center double taps reveal temporary audio controls and play or pause without stopping when controls hide', async () => {
     const before = await position();
@@ -575,6 +684,36 @@ try {
     assert.equal(await page.evaluate(() => document.querySelector('#narration-audio').paused), false);
     await page.locator('#audio-toggle').click(); await page.locator('#narration-play').click();
     await page.locator('#narration-close').click();
+  });
+  await check('immersion mode hides the Process queue and shows progress in both audio layouts', async () => {
+    const clock = page.locator('#narration-time'), completion = page.locator('#narration-completion'), player = page.locator('#narration-player');
+    const queueButton = page.locator('#reader-screen > #open-process-queue');
+    const toggleImmersion = async () => {
+      await page.locator('#reader-more > summary').click();
+      await page.locator('#immersion-toggle').click();
+    };
+    await queueButton.waitFor({ state: 'visible' });
+    await toggleImmersion();
+    await queueButton.waitFor({ state: 'hidden' });
+    assert.ok(await queueButton.evaluate((button) => button.getBoundingClientRect().right <= 0), 'the queue button is off the left edge');
+    await page.locator('#audio-toggle').click();
+    const seek = page.locator('#narration-seek:enabled');
+    await seek.waitFor();
+    await seek.evaluate((slider) => { slider.value = '30'; slider.dispatchEvent(new Event('input')); });
+    await completion.filter({ hasText: '25% complete' }).waitFor();
+    for (let index = 0; index < 2; index++) {
+      const box = await player.boundingBox();
+      for (const counter of [clock, completion]) {
+        const bounds = await counter.boundingBox();
+        assert.ok(bounds && bounds.x >= box.x && bounds.x + bounds.width <= box.x + box.width);
+      }
+      assert.equal(await page.locator('#page-label').isVisible(), false);
+      await page.locator('#podcast-toggle').click();
+    }
+    await page.locator('#narration-close').click();
+    await toggleImmersion();
+    await queueButton.waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.querySelector('#open-process-queue').getBoundingClientRect().left >= 0);
   });
   await check('double tapping a word starts at its timestamp, including with audio disabled, and never pauses it', async () => {
     const pattern = '**/api/books/' + book.id + '/chapters/*';
@@ -802,6 +941,94 @@ try {
       } finally { await currentPage.goto(base + '/#library'); await currentPage.locator('#books .book-card').first().waitFor(); }
     }
   });
+  await check('Audiobookshelf and device progress share one centered, dimmed resume dialog', async () => {
+    const syncContext = await browser.newContext({ viewport: { width: 320, height: 568 }, isMobile: true, hasTouch: true, serviceWorkers: 'block', extraHTTPHeaders: adminHeaders });
+    try {
+      const syncPage = await syncContext.newPage();
+      await syncPage.addInitScript((id) => {
+        if (window.top !== window) return;
+        localStorage.setItem('langy-progress-v1', JSON.stringify({ [id]: { target: 'epubcfi(/6/2[one]!/4/2/1:0)', syncDirty: true } }));
+        window.syncPromptOpenings = [];
+        const showModal = HTMLDialogElement.prototype.showModal;
+        HTMLDialogElement.prototype.showModal = function () {
+          if (this.id === 'sync-position-dialog') window.syncPromptOpenings.push(this.querySelector('#sync-position-message').textContent);
+          return showModal.call(this);
+        };
+      }, book.id);
+      const bookPath = '/api/books/' + book.id;
+      const shared = { document: 'b'.repeat(32), version: 2,
+        progress: { percentage: .55, device: 'E-reader', timestamp: 1000 } };
+      let abs = { linked: true, recording: 'reading', automatic: true, approximate: true, currentTime: .55, updated: 1000, version: 'abs-1' };
+      const writes = [];
+      const reply = (value) => (route) => {
+        if (route.request().method() === 'PUT') writes.push(route.request().url());
+        return route.fulfill({ json: value() });
+      };
+      await syncPage.route('**' + bookPath + '/narration*', async (route) => {
+        await delay(250);
+        return reply(() => ({ absConnected: true, recordings: [], audio: { state: 'missing' } }))(route);
+      });
+      await syncPage.route('**' + bookPath + '/chapters/*', async (route) => {
+        await delay(1200);
+        return route.fulfill({ json: { key: 'epub:0', tokens: [], audio: { timings: [] } } });
+      });
+      await syncPage.route('**' + bookPath + '/progress', reply(() => shared));
+      let firstABSResponse = true;
+      await syncPage.route('**' + bookPath + '/audiobookshelf/progress*', async (route) => {
+        if (firstABSResponse) { firstABSResponse = false; await delay(250); }
+        return reply(() => abs)(route);
+      });
+      await syncPage.goto(base + '/#read/' + book.id, { waitUntil: 'commit' });
+      const modal = syncPage.getByRole('dialog', { name: 'Choose where to continue' });
+      const matchingPosition = 'Audiobookshelf and E-reader saved a position at 55%.';
+      await modal.waitFor();
+      assert.deepEqual(await syncPage.evaluate(() => window.syncPromptOpenings), [matchingPosition],
+        'the first and only opening must include the initial Audiobookshelf response');
+      assert.equal(await syncPage.locator('dialog:modal').count(), 1);
+      assert.equal(await syncPage.locator('#sync-notice, #abs-sync-notice').count(), 0);
+      assert.deepEqual(await modal.locator('footer button:visible').allTextContents(), ['Keep this position', 'Resume there']);
+      assert.deepEqual(await modal.evaluate((dialog) => {
+        const box = dialog.getBoundingClientRect(), backdrop = getComputedStyle(dialog, '::backdrop');
+        return { centered: Math.abs(box.left * 2 + box.width - innerWidth) < 2 && Math.abs(box.top * 2 + box.height - innerHeight) < 2,
+          fits: dialog.scrollWidth <= dialog.clientWidth, dimmed: backdrop.backgroundColor === 'rgba(23, 23, 23, 0.7)',
+          focused: dialog.contains(document.activeElement) };
+      }), { centered: true, fits: true, dimmed: true, focused: true });
+      const before = await syncPage.evaluate((id) => JSON.parse(localStorage.getItem('langy-progress-v1'))[id].target, book.id);
+      await syncPage.keyboard.press('ArrowRight');
+      assert.equal(await syncPage.evaluate((id) => JSON.parse(localStorage.getItem('langy-progress-v1'))[id].target, book.id), before);
+      await modal.getByRole('button', { name: 'Decide later' }).click();
+      await modal.waitFor({ state: 'hidden' });
+      assert.deepEqual(writes, [], 'deferring must leave both saved positions alone');
+      await syncPage.locator('#reader-more > summary').click();
+      await syncPage.locator('#sync-progress').click();
+      await modal.waitFor();
+
+      async function updateABS(value) {
+        abs = value;
+        await Promise.all([syncPage.waitForResponse((response) => response.url().includes(bookPath + '/audiobookshelf/progress?')),
+          syncPage.locator('#narration-audio').dispatchEvent('seeked')]);
+      }
+      await updateABS({ ...abs, currentTime: .72, version: 'abs-2' });
+      await modal.getByRole('button', { name: 'Audiobookshelf (72%)', exact: true }).waitFor();
+      assert.equal(await modal.getByRole('button', { name: 'E-reader (55%)', exact: true }).isVisible(), true);
+      assert.equal(await syncPage.locator('dialog:modal').count(), 1);
+      await updateABS({ ...abs, currentTime: .55, version: 'abs-3' });
+      await modal.getByRole('button', { name: 'Resume there', exact: true }).click();
+      await modal.waitFor({ state: 'hidden' });
+      const persisted = await syncPage.evaluate((id) => ({
+        reading: JSON.parse(localStorage.getItem('langy-progress-v1'))[id],
+        abs: Object.keys(localStorage).filter((key) => key.endsWith('-' + id + '-reading'))
+          .map((key) => JSON.parse(localStorage.getItem(key))).find((value) => value.version === 'abs-3'),
+      }), book.id);
+      assert.notEqual(persisted.reading.target, before);
+      assert.equal(persisted.reading.syncVersion, 2);
+      assert.ok(persisted.abs, 'resuming the shared position acknowledges the matching Audiobookshelf version too');
+      assert.deepEqual(writes, [], 'resuming a saved position must not overwrite either remote');
+      await syncPage.goto(base + '/#library');
+      await syncPage.locator('#books .book-card').first().waitFor();
+      assert.equal(await syncPage.locator('dialog:modal').count(), 0);
+    } finally { await syncContext.close(); }
+  });
   await check('desktop reader supports trackpad text size, section shortcuts, contextual phrase help and one process queue', async () => {
     await desktopPage.goto(base + '/#read/' + book.id);
     await desktopPage.waitForFunction((title) => document.querySelector('#reading-title').textContent === title, book.title);
@@ -823,9 +1050,11 @@ try {
     await desktopPage.keyboard.press('Control+ArrowLeft');
     await desktopPage.waitForFunction(() => document.querySelector('#position-detail').textContent === 'Section 1 of 3'); await delay(300);
     const phrases = [], selection = desktopPage.frameLocator('#viewer iframe').locator('#source');
+    let searchDown = true;
     await desktopPage.route('**/api/ai/phrase', async (route) => {
       const data = route.request().postDataJSON(); phrases.push(data.web === true);
       assert.equal(data.phrase, 'La viajera'); assert.ok(data.context.includes('casa tranquila'));
+      if (data.web && searchDown) return route.fulfill({ json: { webStatus: 'unavailable', webReason: 'connection' } });
       await route.fulfill({ json: data.web ? { text: 'A traveler is someone on a journey. [1]', sources: [{ id: 1, title: 'Dictionary entry', url: 'https://example.org/traveler' }] }
         : { text: Array(90).fill('The traveler is the woman arriving at the house.').join('\n') } });
     });
@@ -845,8 +1074,12 @@ try {
       return box.top >= 0 && box.left >= 0 && box.right <= innerWidth && box.bottom <= innerHeight && scroll.scrollHeight > scroll.clientHeight;
     }), true);
     await panel.getByRole('button', { name: 'Search the web', exact: true }).click();
+    await panel.locator('[data-phrase-web-status]').filter({ hasText: 'Could not reach the search service.' }).waitFor();
+    assert.match(await answer.textContent(), /traveler is the woman/u);
+    searchDown = false;
+    await panel.getByRole('button', { name: 'Search the web', exact: true }).click();
     assert.equal(await panel.getByRole('link', { name: 'Dictionary entry' }).getAttribute('href'), 'https://example.org/traveler');
-    assert.deepEqual(phrases, [false, true]);
+    assert.deepEqual(phrases, [false, true, true]);
     await desktopPage.screenshot({ path: output + '/contextual-phrase-desktop.png' });
     await desktopPage.keyboard.press('Escape'); await panel.waitFor({ state: 'hidden' });
     await select(3, 10);
@@ -910,9 +1143,10 @@ try {
       assert.equal((await (await resumed.request.get(base + '/api/account')).json()).user.username, 'member');
     } finally { await resumed.close(); }
   });
-  await check('mobile readers can import privately and share an existing book from Edit', async () => {
+  await check('mobile readers can import privately and choose individual recipients from Edit', async () => {
     await memberPage.locator('#import-book').click(); await memberPage.locator('#book-dialog').waitFor({ state: 'visible' });
-    assert.equal(await memberPage.locator('#book-form [name=shared]').isChecked(), false);
+    const sharingMode = memberPage.locator('#book-sharing-mode');
+    assert.equal(await sharingMode.inputValue(), 'private');
     await memberPage.locator('#book-file').setInputFiles({ name: 'member.epub', mimeType: 'application/epub+zip', buffer: await zip.generateAsync({ type: 'nodebuffer' }) });
     await memberPage.waitForFunction(() => document.querySelector('#book-form [name=title]').value === 'Reader interactions');
     await memberPage.locator('#book-form [name=title]').fill('Member private book'); await memberPage.locator('#book-submit').click();
@@ -920,10 +1154,27 @@ try {
     memberBook = (await (await memberContext.request.get(base + '/api/library')).json()).books.find((item) => item.title === 'Member private book');
     assert.ok(memberBook?.id); assert.equal(memberBook.shared, false);
     assert.equal((await context.request.get(base + '/api/books/' + memberBook.id + '/file')).status(), 404);
+    const created = await context.request.post(base + '/api/admin/users', { data: { username: 'other-reader', password: memberPassword } });
+    assert.equal(created.status(), 201);
+    const otherHeaders = { Authorization: 'Basic ' + Buffer.from(`other-reader:${memberPassword}`).toString('base64') };
     await memberPage.locator('.book-mobile-menu').click(); await memberPage.locator('#book-actions-body button').filter({ hasText: /^Edit book details$/ }).click();
-    await memberPage.locator('#book-form [name=shared]').check(); await memberPage.locator('#book-submit').click(); await memberPage.locator('#book-dialog').waitFor({ state: 'hidden' });
+    await sharingMode.selectOption('selected');
+    const recipients = memberPage.locator('#book-sharing-list');
+    await recipients.getByRole('checkbox', { name: 'reader', exact: true }).waitFor();
+    await memberPage.locator('#book-submit').click();
+    await memberPage.locator('#book-error').getByText('Choose at least one user to share with.').waitFor();
+    assert.equal(await recipients.getByRole('checkbox', { name: 'member', exact: true }).count(), 0);
+    assert.equal(await recipients.getByRole('checkbox', { name: 'other-reader', exact: true }).isChecked(), false);
+    await recipients.getByRole('checkbox', { name: 'reader', exact: true }).check();
+    await memberPage.locator('#book-submit').click(); await memberPage.locator('#book-dialog').waitFor({ state: 'hidden' });
     assert.equal((await context.request.get(base + '/api/books/' + memberBook.id + '/file')).status(), 200);
+    assert.equal((await context.request.get(base + '/api/books/' + memberBook.id + '/file', { headers: otherHeaders })).status(), 404);
     assert.equal((await context.request.patch(base + '/api/books/' + memberBook.id, { data: { title: 'Cannot edit someone else’s book' } })).status(), 403);
+    await memberPage.locator('.book-mobile-menu').click(); await memberPage.locator('#book-actions-body button').filter({ hasText: /^Edit book details$/ }).click();
+    assert.equal(await sharingMode.inputValue(), 'selected');
+    await recipients.getByRole('checkbox', { name: 'reader', exact: true }).waitFor();
+    assert.equal(await recipients.getByRole('checkbox', { name: 'reader', exact: true }).isChecked(), true);
+    await memberPage.locator('#book-dialog [data-close]').last().click();
   });
   await check('Show shared books persists across reloads while keeping the reader’s own shared books visible', async () => {
     assert.equal((await context.request.patch(base + '/api/books/' + book.id, { data: { shared: true } })).status(), 200);

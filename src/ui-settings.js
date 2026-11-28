@@ -13,7 +13,7 @@ import { fontSettings } from './ui-fonts.js';
 import { coverSearchSettings } from './ui-cover-settings.js';
 import { languageDefaultsEditor } from './ui-language-defaults.js';
 
-export function settingsPage({ preferences, apply, navigate, back }) {
+export function settingsPage({ preferences, apply, navigate, back, safeMode = false }) {
   const narration = narrationSettings();
   const archive = archiveSettings();
   const kavita = kavitaConnection();
@@ -30,6 +30,7 @@ export function settingsPage({ preferences, apply, navigate, back }) {
   const languageDefaults = languageDefaultsEditor();
   const readingLanguages = readingLanguagesPicker({ host: $('#reading-language-list'), input: $('#reading-language-choice'), add: $('#reading-language-add'), error: (text) => message('#settings-error', text), changed: (values) => languageDefaults.languages(values) });
   const aiTab = $('[data-settings-tab="ai"]');
+  if (safeMode) for (const tab of $$('[data-settings-tab][data-full-access]')) tab.hidden = true;
   const themeButtons = Object.entries(themes).map(([value, theme]) => {
     const label = element('label', 'theme-option');
     const input = document.createElement('input');
@@ -151,7 +152,7 @@ export function settingsPage({ preferences, apply, navigate, back }) {
     }
     fields.autoHideDocks.checked = current.autoHideDocks;
     importedFonts.select(current.font);
-    for (const key of ['doubleTapToTurn', 'swipeToTurn', 'tapCenterFullscreen']) fields[key].checked = current[key] ?? defaults[key];
+    for (const key of ['tapToTurn', 'doubleTapToTurn', 'swipeToTurn', 'tapCenterFullscreen']) fields[key].checked = current[key] ?? defaults[key];
     fields.size.value = readingFontSize(current);
     $('#font-size-device-note').textContent = touchReader() ? 'Phone/tablet text size. Desktop text size is saved separately.' : 'Desktop text size. Phone/tablet text size is saved separately.';
     fields.immersionMode.checked = current.immersionMode;
@@ -265,7 +266,8 @@ export function settingsPage({ preferences, apply, navigate, back }) {
       background: fields.background.value, font: fields.font.value, width: fields.width.value,
       ...fontSizeChange(fields.size.valueAsNumber), line: fields.line.valueAsNumber,
       autoHideDocks: fields.autoHideDocks.checked,
-      doubleTapToTurn: fields.doubleTapToTurn.checked, swipeToTurn: fields.swipeToTurn.checked, tapCenterFullscreen: fields.tapCenterFullscreen.checked,
+      tapToTurn: fields.tapToTurn.checked, doubleTapToTurn: fields.doubleTapToTurn.checked,
+      swipeToTurn: fields.swipeToTurn.checked, tapCenterFullscreen: fields.tapCenterFullscreen.checked,
       immersionMode: fields.immersionMode.checked, quietLibrary: fields.quietLibrary.checked,
       pdfNight: fields.pdfNight.checked, keys: { ...shadowKeys },
     };
@@ -315,8 +317,8 @@ export function settingsPage({ preferences, apply, navigate, back }) {
     leave() { active = false; visit++; recording = undefined; },
     get active() { return active; },
     setDemo(demo) {
-      canConfigureAI = !demo;
-      aiTab.hidden = demo;
+      canConfigureAI = !demo && !safeMode;
+      aiTab.hidden = demo || safeMode;
     },
   };
 }

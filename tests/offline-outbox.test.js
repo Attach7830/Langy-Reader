@@ -39,7 +39,7 @@ test('offline packs show only downloaded books, bookmarks survive lost acknowled
   const listed = await offlineRequest(base); assert.equal(listed.bookmarks[0].id, 'server-id');
   const savedAgain = await offlineRequest(base, { method: 'POST', body: { target: { from: 18, key: 'pdf:4', text: true }, label: 'My passage' } });
   assert.equal(savedAgain.bookmarks.length, 1); assert.equal(savedAgain.bookmarks[0].note, 'A note');
-  await offlineRequest(base + '/' + savedAgain.bookmarks[0].id, { method: 'DELETE' }); assert.equal((await offlineRequest(base)).bookmarks.length, 0);
+  await offlineRequest(base + '/remove', { method: 'POST', body: { target: body.target } }); assert.equal((await offlineRequest(base)).bookmarks.length, 0);
   assert.equal([...changeMap.values()].at(-1).path, base + '/remove');
   await offlineRequest('/api/books/book/currently-reading', { method: 'PATCH', body: { currentlyReading: true } });
   assert.ok((await offlineRequest('/api/library')).books[0].starredAt);

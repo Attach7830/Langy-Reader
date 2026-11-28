@@ -1,7 +1,7 @@
 import { $, element, message } from './ui.js';
 import { displayedRanges } from './reading-vocabulary.js';
 
-export function readingBookTools({ book, renderer, preferences, request, go }) {
+export function readingBookTools({ book, renderer, preferences, request, go, textEdition = () => false }) {
   const dialog = $('#book-tools-dialog'), form = $('#book-search-form'), results = $('#book-search-results'), guide = $('#character-guide-output');
   let epoch = 0, controller;
   form.addEventListener('submit', async (event) => {
@@ -9,7 +9,9 @@ export function readingBookTools({ book, renderer, preferences, request, go }) {
     const version = ++epoch; controller?.abort(); controller = new AbortController(); message('#book-tools-error');
     results.textContent = 'Searching…';
     try {
-      const answer = await request(`/api/books/${book().id}/search?q=${encodeURIComponent(form.elements.query.value.trim())}`, { signal: controller.signal });
+      const query = new URLSearchParams({ q: form.elements.query.value.trim() });
+      if (textEdition()) query.set('view', 'epub');
+      const answer = await request(`/api/books/${book().id}/search?${query}`, { signal: controller.signal });
       if (version !== epoch) return;
       results.replaceChildren(...answer.results.map((hit) => {
         const button = element('button', 'book-search-result'); button.type = 'button';

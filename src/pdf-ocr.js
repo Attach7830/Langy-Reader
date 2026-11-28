@@ -1,5 +1,4 @@
 import { $, api, element, message, toast } from './ui.js';
-import { bookLanguages } from '../shared/language.js';
 import { selectedOCRLanguages, preferredOCRLanguages } from '../shared/ocr-languages.js';
 import { defaults } from './settings.js';
 import { androidApp } from './platform.js';
@@ -34,7 +33,7 @@ export function pdfOCR({ changed, readingLanguages = () => defaults.readingLangu
       if (version !== epoch) return;
       if (initial) {
         const choices = selectedOCRLanguages(result.languages, readingLanguages() || defaults.readingLanguages);
-        const preferred = new Set(preferredOCRLanguages(choices, bookLanguages(book)));
+        const preferred = new Set(preferredOCRLanguages(choices, [book.language, ...(book.languages || [])]));
         languages.replaceChildren(...choices.map((code) => { const option = new Option(`${name(code)} (${code})`, code); option.selected = preferred.has(code); return option; }));
         if (!languages.selectedOptions.length && languages.options.length) languages.options[0].selected = true;
         loaded = result.available && choices.length > 0;

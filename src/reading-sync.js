@@ -57,23 +57,28 @@ export function readingProgressSync({ request, progress, persist, preferences, a
     return session.writing;
   }
 
-  async function apply(session, remote, version) {
-    if (!active(session)) return;
+  async function apply(session, choice) {
+    if (!active(session) || session.applying) return false;
     clearTimeout(session.timer);
     session.applying = true;
     report(session, 'syncing');
     try {
-      const result = await applyRemote(remote);
-      if (!active(session)) return;
+      const result = await applyRemote(choice.progress);
+      if (!active(session)) return false;
       if (result === false) throw new Error('The saved position could not be opened.');
       session.pending = null;
-      session.base = version;
+      session.base = choice.version;
       capture(session);
       session.serial++;
-      Object.assign(entry(session), { syncDirty: false, syncVersion: version, syncDocument: session.document });
+      Object.assign(entry(session), { syncDirty: false, syncVersion: choice.version, syncDocument: session.document });
       persist();
       report(session, result?.exact === false ? 'approximate' : 'synced');
-    } catch (error) { report(session, 'error', { error: error.message }); }
+      return true;
+    } catch (error) {
+      session.pending = choice;
+      report(session, 'error', { error: error.message });
+      return false;
+    }
     finally { session.applying = false; }
   }
 
@@ -91,8 +96,7 @@ export function readingProgressSync({ request, progress, persist, preferences, a
       if (saved.syncDocument && saved.syncDocument !== result.document) session.base = 0;
       if (result.progress && result.version !== session.base) {
         if (opening && !saved.syncDirty && !session.moved) {
-          session.pending = result;
-          await apply(session, result.progress, result.version);
+          await apply(session, result);
         }
         else {
           session.pending = result;
@@ -116,6 +120,11 @@ export function readingProgressSync({ request, progress, persist, preferences, a
       report(session, 'offline', { error: error.message });
     } finally { session.checking = false; }
     if (active(session) && entry(session).syncDirty && !session.pending) await flush(session);
+  }
+
+  function pendingChoice(session, expected) {
+    const choice = session?.pending;
+    if (choice && !session.applying && (!expected || choice.document === expected.document && choice.version === expected.version)) return choice;
   }
 
   function stop() {
@@ -188,19 +197,22 @@ export function readingProgressSync({ request, progress, persist, preferences, a
         }
       })().finally(() => { syncingSaved = undefined; }); return syncingSaved;
     },
-    async resume() {
+    async resume(expected) {
       const session = current;
-      if (session?.pending) await apply(session, session.pending.progress, session.pending.version);
+      const choice = pendingChoice(session, expected);
+      return choice ? apply(session, choice) : false;
     },
-    async keepLocal() {
+    async keepLocal(expected) {
       const session = current;
-      if (!session?.pending) return;
-      session.base = session.pending.version;
+      const choice = pendingChoice(session, expected);
+      if (!choice) return false;
+      session.base = choice.version;
       session.pending = null;
       capture(session);
       entry(session).syncDirty = true;
       persist();
       await flush(session);
+      return true;
     },
   };
 }

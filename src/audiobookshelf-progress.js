@@ -1,32 +1,53 @@
 import { $, message } from './ui.js';
 import { offlineOwner } from './offline-store.js';
 
-export function audiobookshelfProgress({ audio, request, reading }) {
-  const notice = $('#abs-sync-notice'); let session, checking, syncingSaved, offered, applying = false, suspended = false;
+export function audiobookshelfProgress({ audio, request, reading, notify = () => {} }) {
+  let session, syncingSaved, offered, applying, suspended = false;
   const keyFor = (state) => `langy-listening-${offlineOwner()}-${state.book}-${state.recording}`;
   const position = () => audio.playbackPosition() || reading?.playbackPosition();
   const tolerance = (state) => state.recording === 'reading' ? .00001 : .5;
   function persist() { if (session) try { localStorage.setItem(session.key, JSON.stringify({ book: session.book, recording: session.recording, duration: session.duration,
     absConnected: session.absConnected, absLinked: session.absLinked, time: session.time, readingTarget: session.readingTarget, version: session.version, dirty: session.dirty })); } catch {} }
   function tell(text) { message('#abs-sync-status', text); }
-  async function resume(remote) {
-    if (!session || remote.recording !== session.recording) return;
+  function clearOffer() {
+    if (!offered) return;
+    offered = null;
+    notify(null);
+  }
+  async function resume(remote, useCurrent = false) {
+    if (!session || remote.recording !== session.recording) return false;
     const current = session;
-    applying = true;
+    applying = current;
     try {
-      await (current.recording === 'reading' ? reading : audio).resumeAt(remote.currentTime); if (session !== current) return;
+      if (!useCurrent) await (current.recording === 'reading' ? reading : audio).resumeAt(remote.currentTime);
+      if (session !== current) return false;
       const actual = current.recording === 'reading' ? position() : null;
       const page = actual?.book === current.book && actual.recording === current.recording ? actual : null;
       session.time = page?.time ?? remote.currentTime; session.readingTarget = page?.readingTarget ?? session.readingTarget;
-      session.version = remote.version; session.dirty = false; persist(); notice.hidden = true;
+      session.version = remote.version; session.dirty = false; persist(); clearOffer();
       tell(remote.approximate ? 'Audiobookshelf position synced by book percentage.' : 'Audiobookshelf position synced.');
+      return true;
     }
-    finally { applying = false; }
+    finally { if (applying === current) applying = null; }
   }
   function offer(remote) {
-    offered = remote; notice.hidden = false;
-    const label = remote.recording === 'reading' ? `${Math.round(remote.currentTime * 100)}%` : `${Math.floor(remote.currentTime / 60)}:${String(Math.floor(remote.currentTime % 60)).padStart(2, '0')}`;
-    $('#abs-sync-message').textContent = `Audiobookshelf has a different position (${label}). Choose where to continue.`;
+    if (offered?.version === remote.version) return;
+    const current = session;
+    offered = remote;
+    const readingOnly = remote.recording === 'reading';
+    const label = readingOnly ? `${Math.round(remote.currentTime * 100)}%` : `${Math.floor(remote.currentTime / 60)}:${String(Math.floor(remote.currentTime % 60)).padStart(2, '0')}`;
+    const valid = () => session === current && offered === remote && applying !== current;
+    notify({
+      key: `${current.key}:${remote.version}`, label, device: 'Audiobookshelf',
+      percentage: readingOnly ? remote.currentTime : null,
+      resume: (useCurrent = false) => valid() && resume(remote, useCurrent),
+      async keep() {
+        if (!valid()) return false;
+        current.version = remote.version; current.dirty = true; persist(); clearOffer();
+        await sync();
+        return true;
+      },
+    });
   }
   function sample() {
     if (suspended) return;
@@ -40,32 +61,48 @@ export function audiobookshelfProgress({ audio, request, reading }) {
       const samePage = saved?.readingTarget != null && saved.readingTarget === state.readingTarget;
       session = { ...state, key, absLinked: saved?.absLinked, time: samePage ? saved.time : state.time,
         version: saved?.version || 'none', dirty: samePage && Boolean(saved?.dirty), serial: 0, loaded: !state.absConnected };
-      notice.hidden = true;
+      clearOffer();
       if (samePage && Number.isFinite(saved.time) && saved.time >= 0 && saved.time <= state.duration) {
-        applying = true; void (state.recording === 'reading' ? reading : audio).resumeAt(saved.time).finally(() => { applying = false; });
+        const current = session;
+        applying = current;
+        return current.restoring = (state.recording === 'reading' ? reading : audio).resumeAt(saved.time).catch((error) => {
+          if (session === current) tell(error.message);
+        }).finally(() => {
+          current.restoring = null;
+          if (applying === current) applying = null;
+          if (session === current) return sync();
+        });
       }
-      void sync(); return;
+      return sync();
     }
     session.absConnected = state.absConnected;
     session.readingTarget = state.readingTarget;
-    if (!applying && Math.abs(state.time - session.time) > tolerance(state) / 2) { session.time = state.time; session.dirty = true; session.serial++; persist(); }
+    if (applying !== session && Math.abs(state.time - session.time) > tolerance(state) / 2) { session.time = state.time; session.dirty = true; session.serial++; persist(); }
   }
-  async function sync() {
-    if (checking || !session || !position()?.absConnected) return;
-    const current = session; checking = current;
+  function sync() {
+    const current = session;
+    if (!current || applying === current || !position()?.absConnected) return;
+    return current.checking ||= check(current).finally(() => { current.checking = null; });
+  }
+  async function check(current) {
     try {
       const remote = await request(`/api/books/${current.book}/audiobookshelf/progress?recording=${encodeURIComponent(current.recording)}`, { signal: AbortSignal.timeout(8000) });
-      if (session !== current) return; current.loaded = true;
+      if (session !== current || applying === current) return; current.loaded = true;
       const firstLink = !current.absLinked;
       current.absLinked = remote.linked; persist();
-      if (!remote.linked) { tell(remote.notice || ''); return; }
+      if (!remote.linked) { clearOffer(); tell(remote.notice || ''); return; }
       if (firstLink && !current.dirty) {
         if (remote.automatic && (current.hasSavedPosition || reading?.hasSavedPosition?.()) && remote.updated > 0 && Math.abs(remote.currentTime - current.time) > tolerance(current)) { offer(remote); return; }
         if (remote.updated > 0) { await resume(remote); return; }
         current.version = remote.version; current.dirty = true;
       }
-      if (remote.version !== current.version) { offer(remote); return; }
+      if (remote.version !== current.version) {
+        if (Math.abs(remote.currentTime - current.time) > tolerance(current)) { offer(remote); return; }
+        current.dirty = false;
+      }
       current.version = remote.version;
+      persist();
+      clearOffer();
       if (current.dirty) {
         const serial = current.serial;
         const result = await request(`/api/books/${current.book}/audiobookshelf/progress`, { method: 'PUT', signal: AbortSignal.timeout(8000), body: {
@@ -77,7 +114,7 @@ export function audiobookshelfProgress({ audio, request, reading }) {
       if (session !== current) return; current.loaded = true;
       if (error.status === 409 && error.details?.currentTime != null) offer(error.details);
       else tell('Listening position saved on this device. Sync will retry when connected.');
-    } finally { if (checking === current) checking = null; }
+    }
   }
   async function syncSaved() {
     if (syncingSaved || !offlineOwner()) return syncingSaved;
@@ -104,8 +141,6 @@ export function audiobookshelfProgress({ audio, request, reading }) {
       }
     })().finally(() => { syncingSaved = null; }); return syncingSaved;
   }
-  $('#abs-sync-resume').addEventListener('click', () => { if (offered) void resume(offered).catch((error) => tell(error.message)); });
-  $('#abs-sync-keep').addEventListener('click', () => { if (session && offered) { session.version = offered.version; session.dirty = true; persist(); notice.hidden = true; void sync(); } });
   const element = $('#narration-audio');
   element.addEventListener('timeupdate', sample);
   for (const name of ['pause', 'seeked']) element.addEventListener(name, () => { sample(); void sync(); });
@@ -113,5 +148,14 @@ export function audiobookshelfProgress({ audio, request, reading }) {
   window.addEventListener('online', () => { void sync(); void syncSaved(); });
   window.addEventListener('pagehide', () => { sample(); persist(); });
   setInterval(() => { sample(); void sync(); void syncSaved(); }, 15000);
-  return { syncSaved, start() { suspended = false; sample(); }, changed: sample, stop() { sample(); persist(); suspended = true; session = null; offered = null; notice.hidden = true; tell(''); } };
+  async function start() {
+    suspended = false;
+    sample();
+    let current;
+    do {
+      current = session;
+      await (current?.restoring ?? sync());
+    } while (session && session !== current);
+  }
+  return { syncSaved, start, changed: sample, stop() { sample(); persist(); suspended = true; session = null; clearOffer(); tell(''); } };
 }

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { francAll } from 'franc-min';
 import { normalizeLanguage, RequestError } from './books.js';
-import { openWebSearch } from './web-search.js';
+import { openWebSearch, WebSearchError } from './web-search.js';
 
 const bundled = {
   provider: 'bundled',
@@ -361,7 +361,10 @@ export async function openAISettings(dir, demo, { webSearch = openWebSearch() } 
       const config = current, { source, languagePolicy } = phraseInput(body);
       let results;
       try { results = await webSearch(source.selectedPhrase.replace(/\s+/gu, ' ').slice(0, 220).trim(), signal); }
-      catch { signal?.throwIfAborted(); return { webStatus: 'unavailable' }; }
+      catch (error) {
+        signal?.throwIfAborted();
+        return { webStatus: 'unavailable', webReason: error instanceof WebSearchError ? error.reason : 'service' };
+      }
       const byURL = new Map(results.filter((item) => item.snippet).map((item) => [item.url, item]));
       const references = [...byURL.values()].slice(0, 4).map((item, index) => ({ ...item, id: index + 1 }));
       if (!references.length) return { webStatus: 'no-sources' };

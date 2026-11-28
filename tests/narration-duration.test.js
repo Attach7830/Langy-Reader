@@ -7,7 +7,8 @@ import { narration } from '../src/narration.js';
 
 async function until(check) { for (let n = 0; n < 100; n++) { if (check()) return; await delay(10); } throw new Error('Narration UI timed out'); }
 
-async function fixture(t, { words = [], timings = [], visible = () => true, roundSeek = (time) => time, initialKey = 'epub:0', rendered = true, delayMetadata = false } = {}) {
+async function fixture(t, { words = [], timings = [], visible = () => true, roundSeek = (time) => time, initialKey = 'epub:0',
+  rendered = true, delayMetadata = false, source = { id: 'book', title: 'Test audiobook' }, showAudioTiming } = {}) {
   const dom = new JSDOM(await readFile(new URL('../index.html', import.meta.url), 'utf8'), { url: 'https://langy.test' });
   const values = { window: dom.window, document: dom.window.document, Option: dom.window.Option, CustomEvent: dom.window.CustomEvent, navigator: dom.window.navigator,
     requestAnimationFrame: () => 0, cancelAnimationFrame() {} };
@@ -22,9 +23,10 @@ async function fixture(t, { words = [], timings = [], visible = () => true, roun
   Object.defineProperty(audio, 'currentTime', { configurable: true, get: () => currentTime, set: (time) => { currentTime = roundSeek(time); } });
   Object.defineProperty(audio, 'duration', { configurable: true, get: () => 3600 });
   audio.pause = () => {}; audio.load = () => { audio.currentTime = 0; }; audio.play = async () => {};
+  const section = (index) => source.format === 'pdf' ? `pdf:${index + 1}` : `epub:${index}`;
   const recording = { id: 'recording', state: 'ready', url: '/book.mp3', duration: 3600,
     markers: [{ time: 0, title: 'First chapter' }, { time: 1800, title: 'Second chapter' }],
-    segments: [{ key: 'epub:0', start: 0, end: 1800, scale: 1 }, { key: 'epub:1', start: 1800, end: 3600, scale: 1 }] };
+    segments: [{ key: section(0), start: 0, end: 1800, scale: 1 }, { key: section(1), start: 1800, end: 3600, scale: 1 }] };
   let key = initialKey;
   const local = { root, words, text: ' '.repeat(120), annotate() {}, at: (_node, offset) => ({ word: words.find((word) => word.from <= offset && word.to > offset) }), match: () => new Map(timings.map((stamp, index) => [index, words.find((word) => word.from === stamp.from)])),
     rangeFor: (word) => word ? { word } : null, visible };
@@ -42,18 +44,54 @@ async function fixture(t, { words = [], timings = [], visible = () => true, roun
     player?.stop(); globalThis.fetch = previousFetch; dom.window.close();
     for (const [name, descriptor] of originals) { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else delete globalThis[name]; }
   });
-  player = narration({ preferences: () => prefs, renderer: () => rendered ? view : undefined, book: () => ({ id: 'book', title: 'Test audiobook' }),
+  player = narration({ preferences: () => prefs, renderer: () => rendered ? view : undefined, book: () => source,
+    editableTiming: (book) => ['pdf', 'epub'].includes(book.format) && book.canEdit !== false, showAudioTiming,
     async navigate(target) { navigations.push(target); key = target.key; return true; },
     changePreferences(values) { Object.assign(prefs, values); player.apply(); } });
   function metadata() { audio.currentTime = 0; audio.onloadedmetadata?.(); }
   player.apply(); await player.refresh(); if (!delayMetadata) metadata();
-  const clock = document.querySelector('#narration-time'), seek = document.querySelector('#narration-seek'), rate = document.querySelector('#narration-rate');
-  return { dom, player, audio, root, clock, seek, prefs, positions, navigations, reveals, metadata,
+  const clock = document.querySelector('#narration-time'), completion = document.querySelector('#narration-completion');
+  const seek = document.querySelector('#narration-seek'), rate = document.querySelector('#narration-rate');
+  return { dom, player, audio, root, clock, completion, seek, prefs, positions, navigations, reveals, metadata,
     rendered(value) { rendered = value; },
     page(value) { key = value; },
     speed(value) { rate.value = String(value); rate.dispatchEvent(new dom.window.Event('change')); },
     tick(time) { audio.currentTime = time; audio.dispatchEvent(new dom.window.Event('timeupdate')); } };
 }
+
+test('the reader opens PDF sync from either audio layout for its current page and recording', async (t) => {
+  const source = { id: 'book', title: 'Test PDF', format: 'pdf', canEdit: true };
+  const openings = [];
+  const f = await fixture(t, { source, initialKey: 'pdf:2', showAudioTiming(book, recording, position) {
+    openings.push([book.id, recording.id, position.key]);
+  } });
+  const adjust = document.querySelector('#narration-adjust-timing');
+  let pauses = 0;
+  f.audio.pause = () => { pauses++; };
+  assert.equal(adjust.hidden, false);
+  adjust.click();
+  assert.equal(pauses, 1);
+  assert.deepEqual(openings, [['book', 'recording', 'pdf:2']]);
+  f.prefs.podcastMode = false; f.player.apply();
+  assert.equal(adjust.hidden, false);
+  source.canEdit = false; f.player.apply();
+  assert.equal(adjust.hidden, true);
+});
+
+test('the EPUB sync editor opens at the current section, visible word and playhead', async (t) => {
+  const source = { id: 'book', title: 'Test EPUB', format: 'epub' };
+  const words = [{ word: 'beginning', from: 0, to: 9 }, { word: 'visible', from: 10, to: 17 }];
+  const openings = [];
+  const f = await fixture(t, { source, words, initialKey: 'epub:1', visible: (word) => word.from === 10,
+    showAudioTiming(book, recording, position) { openings.push([book.id, recording.id, position]); } });
+  f.audio.currentTime = 1843;
+  const adjust = document.querySelector('#narration-adjust-timing');
+  assert.equal(adjust.hidden, false);
+  assert.equal(adjust.textContent, 'Adjust EPUB audio sync');
+  assert.equal(adjust.getAttribute('aria-controls'), 'epub-timing-dialog');
+  adjust.click();
+  assert.deepEqual(openings, [['book', 'recording', { key: 'epub:1', from: 10, time: 1843 }]]);
+});
 
 test('playing from a word seeks to its chapter timestamp and starts rather than toggles playback', async (t) => {
   const words = [{ word: 'primero', from: 0, to: 7 }, { word: 'segundo', from: 20, to: 27 }];
@@ -137,12 +175,14 @@ test('a delayed audio reveal is discarded when a manual turn starts', async (t) 
 test('audio times update immediately with player or settings speed while media position and seeking stay in recording seconds', async (t) => {
   const f = await fixture(t);
   f.tick(900); assert.equal(f.clock.textContent, '15:00 / 1:00:00');
+  assert.equal(f.completion.textContent, '25% complete');
   f.speed(2);
   assert.equal(f.clock.textContent, '7:30 / 30:00'); assert.match(f.clock.title, /22:30 remaining at 2×/);
   assert.match(f.clock.title, /Recording position: 15:00 \/ 1:00:00/);
   assert.match(f.clock.getAttribute('aria-label'), /Listening time at 2×/);
   assert.equal(f.audio.currentTime, 900); assert.equal(f.seek.max, '3600'); assert.equal(f.seek.value, '900');
-  assert.match(f.seek.getAttribute('aria-valuetext'), /7:30 of 30:00 at 2×/);
+  assert.match(f.seek.getAttribute('aria-valuetext'), /7:30 of 30:00 at 2× · 25% complete/u);
+  assert.equal(f.completion.textContent, '25% complete');
   const marker = () => document.querySelectorAll('.narration-marker')[1];
   assert.equal(marker().title, 'Second chapter · 15:00 at 2×'); assert.equal(marker().style.left, '50%');
   assert.deepEqual(f.positions.at(-1), { duration: 3600, position: 900, playbackRate: 2 });
@@ -156,6 +196,7 @@ test('audio times update immediately with player or settings speed while media p
   assert.equal(f.navigations.length, 0, 'changing speed must not move to a different book page');
   f.seek.value = '1800'; f.seek.dispatchEvent(new f.dom.window.Event('input'));
   assert.equal(f.audio.currentTime, 1800); assert.equal(f.clock.textContent, '20:00 / 40:00');
+  assert.equal(f.completion.textContent, '50% complete');
   await until(() => f.navigations.some((target) => target.key === 'epub:1'));
   assert.equal(document.querySelector('#narration-chapter').value, '1');
 });
@@ -170,8 +211,9 @@ test('speed-adjusted chapter markers and chapter buttons keep their original see
   await until(() => f.navigations.some((target) => target.key === 'epub:0'));
   document.querySelector('#narration-next-chapter').click(); assert.equal(f.audio.currentTime, 1800);
   f.tick(3600); assert.equal(f.clock.textContent, '30:00 / 30:00'); assert.match(f.clock.title, /^0:00 remaining/);
+  assert.equal(f.completion.textContent, '100% complete');
   assert.equal(document.querySelector('#narration-forward').disabled, true);
-  f.player.stop(); assert.equal(f.clock.textContent, '0:00 / 0:00'); assert.equal(f.seek.disabled, true);
+  f.player.stop(); assert.equal(f.clock.textContent, '0:00 / 0:00'); assert.equal(f.completion.hidden, true); assert.equal(f.seek.disabled, true);
 });
 
 test('audio seek shortcuts share the toolbar seek path while hidden and scrolling over speed adjusts by 0.05×', async (t) => {

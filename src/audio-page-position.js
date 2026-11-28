@@ -1,6 +1,7 @@
 // Missing alignment on a page must not seek to the beginning of its chapter.
 // Prefer an aligned visible word, then interpolate between source-text anchors.
 export function visibleAudioPosition(local, timed, mapped, segment) {
+  if (segment?.pageOnly) return { time: segment.start, from: 0 };
   const visible = local?.words?.find((word) => local.visible(word));
   const anchors = timed.flatMap((stamp) => { const word = mapped.get(stamp.index); return word ? [{ word, time: stamp.start }] : []; });
   const aligned = anchors.find(({ word }) => local.visible(word));

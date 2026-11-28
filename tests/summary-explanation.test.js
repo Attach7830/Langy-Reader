@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openAISettings } from '../server/ai.js';
+import { openWebSearch } from '../server/web-search.js';
 
 const page = 'La niña regresó a la casa al caer la tarde. En la puerta encontró a su hermano con una carta en la mano. Él guardó el papel antes de que ella pudiera leerlo y dijo que no había ocurrido nada. La niña recordó entonces la conversación de la mañana y decidió esperar antes de hacer preguntas.';
 const earlier = 'Por la mañana, los hermanos habían discutido sobre una deuda que no podían pagar. La niña quería pedir ayuda a su madre, pero su hermano insistió en resolver el problema sin contarle nada a la familia.';
@@ -169,6 +170,27 @@ test('optional web context searches only the selected phrase and returns links f
   assert.equal(source(f.requests[1]).passage, body.context);
   assert.equal(source(f.requests[1]).searchExcerpts[0].title, 'Dictionary');
   relevant = false; assert.deepEqual(await f.ai.phraseWithWeb(body, f.signal), { webStatus: 'no-sources' });
-  unavailable = true; assert.deepEqual(await f.ai.phraseWithWeb(body, f.signal), { webStatus: 'unavailable' });
+  unavailable = true; assert.deepEqual(await f.ai.phraseWithWeb(body, f.signal), { webStatus: 'unavailable', webReason: 'service' });
   assert.equal(f.requests.length, 3);
+});
+
+test('phrase search reports the provider failure and retries after search comes back', async (t) => {
+  let outcome = 'offline';
+  const webSearch = openWebSearch({ searchUrl: 'http://search.test:8080', fetcher: async (url) => {
+    assert.equal(url.pathname, '/search');
+    assert.equal(url.searchParams.get('format'), 'json');
+    if (outcome === 'offline') throw new TypeError('A test connection failure');
+    if (outcome === 'forbidden') return new Response('Forbidden', { status: 403 });
+    return Response.json({ results: [{ url: 'https://example.org/dictionary', title: 'Dictionary', content: 'Useful entry.' }] });
+  } });
+  const f = await fixture(t, () => 'An idiom about memory [1].', 'ollama', { webSearch });
+  const body = { phrase: 'irse el santo al cielo', context: 'Suele decir irse el santo al cielo.', language: 'es', translationLanguage: 'en' };
+  assert.deepEqual(await f.ai.phraseWithWeb(body, f.signal), { webStatus: 'unavailable', webReason: 'connection' });
+  outcome = 'forbidden';
+  assert.deepEqual(await f.ai.phraseWithWeb(body, f.signal), { webStatus: 'unavailable', webReason: 'access' });
+  assert.equal(f.requests.length, 0);
+  outcome = 'online';
+  const result = await f.ai.phraseWithWeb(body, f.signal);
+  assert.equal(result.sources[0].title, 'Dictionary');
+  assert.equal(f.requests.length, 1);
 });

@@ -5,8 +5,9 @@ import { RequestError } from './books.js';
 
 // Archive downloads lead the automatic queue. Explicit positive/negative
 // priorities let the user move any task above/below those defaults.
-const archivePriority = (job) => job.priority === 0 && job.id.startsWith('archive:');
-const rank = (job) => job.priority > 0 ? job.priority + 1 : job.priority || Number(archivePriority(job));
+const rank = (job) => job.priority > 0 ? job.priority + 1 : job.priority || (job.defaultRank ?? Number(job.id.startsWith('archive:')));
+const priorityForRank = (value) => value > 0 ? value - 1 : value;
+const archivePriority = (job) => job.id.startsWith('archive:') && rank(job) === 1;
 const compare = (a, b) => rank(b) - rank(a) || a.queuedAt - b.queuedAt || a.id.localeCompare(b.id);
 export const PROCESS_YIELD = Symbol('process-yield');
 
@@ -15,15 +16,18 @@ export const PROCESS_YIELD = Symbol('process-yield');
 export function openProcessScheduler(dir, { paused = false, now = Date.now } = {}) {
   const db = new DatabaseSync(join(dir, 'process-queue.sqlite'));
   db.exec(`PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS ordering(
-    id TEXT PRIMARY KEY, priority INTEGER NOT NULL, queuedAt INTEGER NOT NULL
+    id TEXT PRIMARY KEY, priority INTEGER NOT NULL, queuedAt INTEGER NOT NULL, defaultRank INTEGER
   ) STRICT;`);
+  if (!db.prepare('PRAGMA table_info(ordering)').all().some((column) => column.name === 'defaultRank')) {
+    db.exec('ALTER TABLE ordering ADD COLUMN defaultRank INTEGER');
+  }
   const ordering = new Map(db.prepare('SELECT * FROM ordering').all().map((row) => [row.id, row]));
   const pending = new Set(), context = new AsyncLocalStorage(), suspended = new Set(), started = new Map();
   let active, scheduled = false, closed = false;
   function order(job) {
     if (!ordering.has(job.id)) {
-      const value = { id: job.id, priority: 0, queuedAt: Number.isFinite(job.created) && job.created > 0 ? job.created : now() };
-      db.prepare('INSERT INTO ordering VALUES(?,?,?)').run(value.id, value.priority, value.queuedAt); ordering.set(job.id, value);
+      const value = { id: job.id, priority: 0, queuedAt: Number.isFinite(job.created) && job.created > 0 ? job.created : now(), defaultRank: null };
+      db.prepare('INSERT INTO ordering(id,priority,queuedAt) VALUES(?,?,?)').run(value.id, value.priority, value.queuedAt); ordering.set(job.id, value);
     }
     return ordering.get(job.id);
   }
@@ -40,19 +44,26 @@ export function openProcessScheduler(dir, { paused = false, now = Date.now } = {
     // and immediately be selected again at its inherited priority.
     const running = active ? { ...active, ...order(active) } : null;
     const all = [...result, ...(running ? [running] : [])];
-    const priorities = new Map(all.map((job) => [job.id, job.priority]));
+    const priorities = new Map(all.map((job) => [job.id, { rank: rank(job), queuedAt: job.queuedAt }]));
     for (let turn = 0; turn < all.length; turn++) {
       let changed = false;
       for (const job of all) for (const id of job.dependencies || []) {
         // An explicit Lowest priority choice also applies to prerequisites.
         // Their consumers remain blocked until that extraction eventually runs.
-        if (priorities.has(id) && priorities.get(id) >= 0 && priorities.get(id) < priorities.get(job.id)) {
-          priorities.set(id, priorities.get(job.id)); changed = true;
+        const prerequisite = priorities.get(id), parent = priorities.get(job.id);
+        if (prerequisite?.rank >= 0 && (prerequisite.rank < parent.rank
+          || prerequisite.rank === parent.rank && prerequisite.queuedAt > parent.queuedAt)) {
+          priorities.set(id, parent); changed = true;
         }
       }
       if (!changed) break;
     }
-    for (const job of all) job.priority = priorities.get(job.id);
+    for (const job of all) {
+      const position = priorities.get(job.id);
+      job.priority = priorityForRank(position.rank);
+      job.queuedAt = position.queuedAt;
+      if (!job.priority) job.defaultRank = position.rank;
+    }
     return { jobs: result.sort(compare), running };
   }
   const choices = () => queueState().jobs;
@@ -124,6 +135,16 @@ export function openProcessScheduler(dir, { paused = false, now = Date.now } = {
       pauseRequested: Boolean(next && compare(next, running) < 0) } : null,
       queued: jobs.map((job) => ({ ...status(job), paused: suspended.has(job.id), ready: job.ready !== false })) };
   }
+  function saveOrder(updates) {
+    const update = db.prepare('UPDATE ordering SET priority=?,queuedAt=?,defaultRank=? WHERE id=?');
+    db.exec('BEGIN');
+    try {
+      for (const { id, priority, queuedAt, defaultRank } of updates) update.run(priority, queuedAt, defaultRank, id);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    for (const value of updates) ordering.set(value.id, value);
+    wake();
+  }
   function prioritize(id, action) {
     const { jobs, running } = queueState(); if (running) jobs.push(running);
     const job = jobs.find((item) => item.id === id);
@@ -132,18 +153,30 @@ export function openProcessScheduler(dir, { paused = false, now = Date.now } = {
     const priority = action === 'lowest' ? Math.min(0, ...jobs.map((item) => item.priority)) - 1
       : action === 'top' ? maximum + 1 : Math.max(0, job.priority, running ? running.priority : maximum) + 1;
     const updates = action === 'raise' ? jobs.filter((item) => item.id !== id && order(item).priority >= priority)
-      .map((item) => ({ id: item.id, priority: order(item).priority + 1 })) : [];
-    updates.push({ id, priority });
-    db.exec('BEGIN');
-    try {
-      for (const value of updates) db.prepare('UPDATE ordering SET priority=? WHERE id=?').run(value.priority, value.id);
-      db.exec('COMMIT');
-    } catch (error) { db.exec('ROLLBACK'); throw error; }
-    for (const value of updates) ordering.get(value.id).priority = value.priority;
-    wake(); return { priority };
+      .map((item) => ({ ...order(item), priority: order(item).priority + 1 })) : [];
+    updates.push({ ...order(job), priority, defaultRank: null });
+    saveOrder(updates); return { priority };
+  }
+  function move(id, targetId, position) {
+    const { jobs, running } = queueState();
+    if (running) jobs.push(running);
+    const job = jobs.find((item) => item.id === id), target = jobs.find((item) => item.id === targetId);
+    if (!job || !target || job === target) throw new RequestError(409, 'The queue changed. Choose two active or queued tasks.');
+    const targetRank = rank(target), priority = priorityForRank(targetRank);
+    const peers = jobs.filter((item) => item.id !== id && rank(item) === targetRank).sort(compare);
+    const index = peers.indexOf(target) + Number(position === 'after');
+    peers.splice(index, 0, job);
+    // Keep the relative order of the other tasks in this priority tier.
+    // New tasks keep their regular arrival order within the tier.
+    const last = Math.max(now(), ...peers.map((item) => item.queuedAt));
+    saveOrder(peers.map((item, ordinal) => ({
+      ...order(item), queuedAt: last - peers.length + ordinal,
+      ...(item === job ? { priority, defaultRank: priority === 0 ? targetRank : null } : {}),
+    })));
+    return { priority };
   }
   const timer = setInterval(wake, 250); timer.unref();
-  return { runNext, run, join: joinTask, snapshot, wake, shouldYield, outside: (task) => context.exit(task),
+  return { runNext, run, join: joinTask, snapshot, wake, shouldYield, move, outside: (task) => context.exit(task),
     resume() { paused = false; wake(); },
     raise: (id) => prioritize(id, 'raise'),
     top: (id) => prioritize(id, 'top'),
@@ -172,13 +205,13 @@ export function watchProcessPriority(scheduler, interrupt, canInterrupt = () => 
 
 export async function consumeProcesses(scheduler, candidates, execute) {
   const visited = new Set();
-  const remaining = () => candidates().filter((job) => !visited.has(job.id));
+  const remaining = () => candidates().filter((job) => job.allowRequeue || !visited.has(job.id));
   for (;;) {
     const value = scheduler ? await scheduler.runNext(remaining, execute) : await (async () => {
       const job = remaining().find((entry) => entry.ready !== false); return job ? { job, result: await execute(job.data) } : undefined;
     })();
     if (!value) break;
-    visited.add(value.job.id);
+    if (!value.job.allowRequeue) visited.add(value.job.id);
     if (value.result === false) break;
   }
 }

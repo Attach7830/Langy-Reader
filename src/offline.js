@@ -123,13 +123,14 @@ export async function offlineRequest(path, { body, method = body ? 'POST' : 'GET
     await offlineChanges.put(change);
     const result = { id: lifecycle[1], queued: true }; statusChange(result, lifecycle[2], body, created); return result;
   }
-  if (bookmark && ['POST', 'DELETE'].includes(method)) {
+  if (bookmark && (method === 'DELETE' || method === 'POST' && (!bookmark[2] || bookmark[2] === 'remove'))) {
     const base = `/api/books/${bookmark[1]}/bookmarks`;
-    const previous = await bookmarkList(base), target = method === 'POST' ? body.target : previous.bookmarks.find((entry) => entry.id === bookmark[2])?.target;
-    if (target == null) return previous;
+    const saving = method === 'POST' && !bookmark[2];
+    const target = method === 'POST' ? body.target : (await bookmarkList(base)).bookmarks.find((entry) => entry.id === bookmark[2])?.target;
+    if (target == null) return bookmarkList(base);
     const changes = await offlineChanges.all(); if (changes.length >= 2000) throw new Error('Reconnect to sync pending offline changes before adding more.');
-    await offlineChanges.put({ id: crypto.randomUUID(), owner: offlineOwner(), created: Date.now(), base, kind: method === 'POST' ? 'bookmark-save' : 'bookmark-remove',
-      path: method === 'POST' ? base : `${base}/remove`, method: 'POST', body: method === 'POST' ? body : { target } });
+    await offlineChanges.put({ id: crypto.randomUUID(), owner: offlineOwner(), created: Date.now(), base, kind: saving ? 'bookmark-save' : 'bookmark-remove',
+      path: saving ? base : `${base}/remove`, method: 'POST', body: saving ? body : { target } });
     return { ...await bookmarkList(base), queued: true };
   }
   if (['/api/ai/word', '/api/mandarin/word', '/api/mandarin/pinyin', '/api/mandarin/readings'].includes(path)) {

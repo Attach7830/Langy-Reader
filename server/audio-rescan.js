@@ -7,6 +7,7 @@ import { textWords } from '../shared/reading-text.js';
 import { synchronizeChunk } from './audio-timing.js';
 import { confirmed, rescanWindows, coalesceRescanWindows, mergeRescan } from './rescan-timing.js';
 import { RequestError } from './books.js';
+import { includesWord } from './epub-narration.js';
 import { sectionLanguages } from './language-voices.js';
 const run = promisify(execFile);
 const hash = (data) => createHash('sha256').update(JSON.stringify(data)).digest('hex');
@@ -59,10 +60,16 @@ export function audioRescans({ db, folder, library, languageCall, publishUploade
       const part = db.prepare("SELECT * FROM audio WHERE book=? AND id=? AND state='ready'").get(book.id, segment.audioId);
       if (!part || part.digest !== sections.find((item) => item.key === segment.key)?.digest) throw new RequestError(409, 'The audio alignment changed. Sync this recording again first.');
       const timing = JSON.parse(part.timings);
-      parts.set(segment.key, { part, segment, stamps: new Map(timing.map((stamp) => [stamp.from, stamp])) });
+      parts.set(segment.key, { part, segment, ranges: part.textRanges ? JSON.parse(part.textRanges) : null,
+        stamps: new Map(timing.map((stamp) => [stamp.from, stamp])) });
       raw.push([part.id, part.timings, part.duration]);
     }
-    const words = sections.flatMap((section) => textWords(section.text, book.language).map((word) => ({ ...word, key: section.key })));
+    const words = sections.flatMap((section) => {
+      const data = parts.get(section.key);
+      if (recording.textSelection && !data) return [];
+      return textWords(section.text, book.language).filter((word) => includesWord(data?.ranges, word))
+        .map((word) => ({ ...word, key: section.key }));
+    });
     if (!words.length || words.length > 500000) throw new RequestError(422, 'Rescanning supports books with up to 500,000 selectable words.');
     const timings = confirmed(words.map((word) => {
       const data = parts.get(word.key), stamp = data?.stamps.get(word.from);
@@ -109,7 +116,10 @@ export function audioRescans({ db, folder, library, languageCall, publishUploade
           start: (timings[index].start - segment.start) / segment.scale,
           end: (timings[index].end - segment.start) / segment.scale } : null);
         const local = synchronizeChunk(indices.map((index) => data.words[index]), stamps, part.duration);
-        db.prepare('UPDATE audio SET timings=? WHERE id=?').run(JSON.stringify(local), part.id);
+        // Keep untimed words in the canonical sequence for reader highlighting.
+        const replacements = part.textRanges ? new Map(local.map((word) => [word.from, word])) : null;
+        const complete = replacements ? JSON.parse(part.timings).map((word) => replacements.get(word.from) || word) : local;
+        db.prepare('UPDATE audio SET timings=? WHERE id=?').run(JSON.stringify(complete), part.id);
         for (const marker of markers.filter((item) => item.key === segment.key && item.from > 0)) {
           const word = local.find((item) => item.from >= marker.from && item.start != null);
           if (word) marker.time = segment.start + word.start * segment.scale;

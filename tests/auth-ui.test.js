@@ -9,7 +9,7 @@ async function fixture(t) {
   const dom = new JSDOM(await readFile(new URL('../index.html', import.meta.url), 'utf8'), { url: 'https://langy.test' });
   dom.window.HTMLMediaElement.prototype.pause = () => {};
   const saved = new Map();
-  for (const name of ['window','document','localStorage','navigator','location','Event']) { saved.set(name,Object.getOwnPropertyDescriptor(globalThis,name)); Object.defineProperty(globalThis,name,{configurable:true,value:dom.window[name]}); }
+  for (const name of ['window','document','localStorage','navigator','location','Event','Option']) { saved.set(name,Object.getOwnPropertyDescriptor(globalThis,name)); Object.defineProperty(globalThis,name,{configurable:true,value:dom.window[name]}); }
   const oldFetch = globalThis.fetch;
   t.after(() => { globalThis.fetch = oldFetch; dom.window.close(); for (const [name, value] of saved) if (value) Object.defineProperty(globalThis,name,value); else delete globalThis[name]; });
   return dom;
@@ -61,4 +61,58 @@ test('Switch user offers download removal as an unchecked choice on every openin
   document.querySelector('[data-switch-user]').click(); assert.equal(dialog.open, true); assert.equal(document.querySelector('#sign-out-remove-downloads').checked, false);
   document.querySelector('#sign-out-remove-downloads').checked = true; dialog.open = false;
   document.querySelector('[data-switch-user]').click(); assert.equal(document.querySelector('#sign-out-remove-downloads').checked, false);
+});
+
+test('Safe mode saves independently of other account limits and reloads from the server', async (t) => {
+  await fixture(t);
+  const admin = { id: 'admin', username: 'administrator', role: 'admin' };
+  const reader = { id: 'reader', username: 'member', role: 'user', safeMode: false, rememberDays: 30 };
+  const patches = [];
+  let rejectSave = false;
+  globalThis.fetch = async (path, options) => {
+    if (path === '/api/admin/users') return Response.json({ users: [admin, reader] });
+    assert.equal(path, '/api/admin/users/reader');
+    assert.equal(options.method, 'PATCH');
+    const body = JSON.parse(options.body);
+    patches.push(body);
+    if (rejectSave) return Response.json({ error: 'Try again.' }, { status: 503 });
+    return Response.json(Object.assign(reader, body));
+  };
+
+  accountPanel({ user: admin });
+  const accountTab = document.querySelector('[data-settings-tab="account"]');
+  const row = () => document.querySelector('#account-users').lastElementChild;
+  const checkbox = () => row().querySelector('[data-account-policy="safeMode"]');
+  accountTab.click();
+  await delay(0);
+  assert.equal(checkbox().checked, false);
+  const rememberDays = row().querySelector('[data-account-policy="rememberDays"]');
+  rememberDays.value = '0';
+  checkbox().click();
+  await delay(0);
+  assert.deepEqual(patches, [{ safeMode: true }]);
+  assert.equal(rememberDays.value, '0');
+  assert.match(row().textContent, /Safe mode enabled\./u);
+  document.querySelector('#settings-form').reset();
+  assert.equal(checkbox().checked, true);
+
+  accountTab.click();
+  await delay(0);
+  assert.equal(checkbox().checked, true);
+  rejectSave = true;
+  checkbox().click();
+  await delay(0);
+  assert.equal(checkbox().checked, true);
+  assert.equal(checkbox().disabled, false);
+  assert.match(row().textContent, /Could not save Safe mode\. Try again\./u);
+
+  rejectSave = false;
+  checkbox().click();
+  await delay(0);
+  assert.equal(checkbox().checked, false);
+  assert.match(row().textContent, /Safe mode disabled\./u);
+  accountTab.click();
+  await delay(0);
+  assert.equal(checkbox().checked, false);
+  assert.deepEqual(patches, [{ safeMode: true }, { safeMode: false }, { safeMode: false }]);
 });

@@ -138,7 +138,9 @@ async function readMetadata(file, format) {
   }
 }
 
-export async function openLibrary(dir, limits = null, { coverDownload = downloadCover, reserveStorage = async () => () => {} } = {}) {
+export async function openLibrary(dir, limits = null, {
+  coverDownload = downloadCover, reserveStorage = async () => () => {}, knownSharingUser = () => false,
+} = {}) {
   const folder = join(dir, 'books');
   const uploads = join(dir, 'uploads');
   await mkdir(folder, { recursive: true });
@@ -181,6 +183,12 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
       target TEXT NOT NULL,label TEXT NOT NULL,note TEXT NOT NULL,created INTEGER NOT NULL,expires INTEGER,
       UNIQUE(book,owner,target)
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS book_shares(
+      book TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+      recipient TEXT NOT NULL,
+      PRIMARY KEY(book,recipient)
+    ) STRICT, WITHOUT ROWID;
+    CREATE INDEX IF NOT EXISTS book_shares_recipient ON book_shares(recipient,book);
   `);
   db.prepare('INSERT OR IGNORE INTO library_meta VALUES (?, ?)').run('instanceId', randomUUID());
   const instanceId = db.prepare('SELECT value FROM library_meta WHERE key = ?').get('instanceId').value;
@@ -238,24 +246,50 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
   if (!db.prepare('PRAGMA table_info(books)').all().some(({ name }) => name === 'shared')) db.exec('ALTER TABLE books ADD COLUMN shared INTEGER NOT NULL DEFAULT 0');
   const demoBookIds = ['sample', ...demoSamples.map((sample) => sample.id)].map((id) => `'${id}'`).join(',');
   const demoCategoryIds = ['spanish', ...demoSamples.map((sample) => sample.categoryId)].map((id) => `'${id}'`).join(',');
-  const scope = (visitor) => limits ? { sql: `(owner=? OR id IN (${demoBookIds}))`, args: [editable(visitor)] }
-    : visitor ? { sql: '(owner=? OR shared=1)', args: [editable(visitor)] } : { sql: '1', args: [] };
+  const scope = (visitor) => limits ? { sql: `(books.owner=? OR books.id IN (${demoBookIds}))`, args: [editable(visitor)] }
+    : visitor ? { sql: '(books.owner=? OR books.shared=1 OR books.id IN (SELECT book FROM book_shares WHERE recipient=?))',
+      args: [editable(visitor), visitor.userId ?? null] } : { sql: '1', args: [] };
   const categoryScope = limits ? `(owner = ? OR id IN (${demoCategoryIds}))` : 'owner = ?';
   const editable = (visitor) => visitor?.id ?? shared;
   const l1Folder = (book, visitor) => (!visitor || book.owner === editable(visitor))
     && Boolean(db.prepare('SELECT l1Folder FROM categories WHERE id=? AND owner=?').get(book.categoryId ?? '', book.owner)?.l1Folder);
   const hasOCR = (book) => book.format === 'pdf' && Boolean(book.ocrComplete || book.contentRevision);
-  const publicBook = ({ owner, expires, bytes, ...book }, visitor) => ({ ...book, shared: Boolean(book.shared), ocrComplete: hasOCR(book),
-    l1Folder: l1Folder({ ...book, owner }, visitor),
-    canEdit: !visitor || owner === editable(visitor), sharedWithMe: Boolean(!limits && book.shared && visitor && owner !== editable(visitor)),
-    categoryId: !limits && visitor && owner !== editable(visitor) ? null : book.categoryId,
-    languages: typeof book.languages === 'string' ? JSON.parse(book.languages) : book.languages });
-  function sharing(value, previous = false) {
-    if (value === undefined) return Number(previous);
-    if (![true, false, 'true', 'false'].includes(value)) throw new RequestError(422, 'Choose whether to share this book.');
-    const share = value === true || value === 'true';
-    if (limits && share) throw new RequestError(403, 'Book sharing is available on self-hosted installations.');
-    return Number(share);
+  const sharedWithMe = (book, visitor) => Boolean(!limits && visitor && book.owner !== editable(visitor));
+  const sharingRecipients = db.prepare('SELECT recipient FROM book_shares WHERE book=? ORDER BY recipient');
+  function publicBook({ owner, expires, bytes, ...book }, visitor) {
+    const received = sharedWithMe({ owner }, visitor);
+    return { ...book, shared: Boolean(book.shared), ocrComplete: hasOCR(book), l1Folder: l1Folder({ ...book, owner }, visitor),
+      canEdit: !visitor || owner === editable(visitor), sharedWithMe: received, categoryId: received ? null : book.categoryId,
+      ...(!limits && visitor?.authenticated && owner === visitor.id
+        ? { shareWith: sharingRecipients.all(book.id).map(({ recipient }) => recipient) } : {}),
+      languages: typeof book.languages === 'string' ? JSON.parse(book.languages) : book.languages };
+  }
+  function sharing(body, visitor) {
+    const { shared: value, shareWith } = body;
+    if (value === undefined && shareWith === undefined) return {};
+    if (value !== undefined && ![true, false, 'true', 'false'].includes(value)) throw new RequestError(422, 'Choose whether to share this book.');
+    const everyone = value === true || value === 'true';
+    if (limits && everyone) throw new RequestError(403, 'Book sharing is available on self-hosted installations.');
+    // Earlier clients only sent the everyone flag. A false flag alone leaves
+    // specific recipients in place, so a metadata edit cannot drop access.
+    if (shareWith === undefined) return { everyone: Number(everyone), ...(everyone ? { recipients: [] } : {}) };
+    if (limits || !visitor?.authenticated) throw new RequestError(403, 'Sign in on a self-hosted installation to choose sharing recipients.');
+    let recipients = shareWith;
+    if (typeof recipients === 'string') {
+      try { recipients = JSON.parse(recipients); }
+      catch { throw new RequestError(422, 'Choose valid users to share with.'); }
+    }
+    if (!Array.isArray(recipients) || recipients.some((id) => typeof id !== 'string' || id === visitor.userId || !knownSharingUser(id))) {
+      throw new RequestError(422, 'Choose valid users to share with.');
+    }
+    if (everyone && recipients.length) throw new RequestError(422, 'Choose everyone or select specific users.');
+    return { everyone: Number(everyone), recipients: [...new Set(recipients)] };
+  }
+  function replaceSharingRecipients(id, recipients) {
+    if (recipients === undefined) return;
+    db.prepare('DELETE FROM book_shares WHERE book=?').run(id);
+    const grant = db.prepare('INSERT INTO book_shares(book,recipient) VALUES(?,?)');
+    for (const recipient of recipients) grant.run(id, recipient);
   }
   const publicCategory = ({ id, name, language = null, l1Folder = false }) => ({ id, name, language, l1Folder: Boolean(l1Folder) });
   const readAt = (id, visitor) => db.prepare('SELECT readAt FROM book_read_status WHERE book=? AND owner=? AND (expires IS NULL OR expires>?)')
@@ -269,7 +303,7 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
     const visible = scope(visitor);
     const book = db.prepare(`SELECT * FROM books WHERE id=? AND ${visible.sql}`).get(id, ...visible.args);
     if (!book) throw new RequestError(404, 'Book not found.');
-    return { ...book, ocrComplete: hasOCR(book), l1Folder: l1Folder(book, visitor), canEdit: !visitor || book.owner === editable(visitor), sharedWithMe: Boolean(!limits && book.shared && visitor && book.owner !== editable(visitor)), languages: JSON.parse(book.languages), readAt: readAt(id, visitor), starredAt: starredAt(id, visitor), setAsideAt: setAsideAt(id, visitor) };
+    return { ...book, ocrComplete: hasOCR(book), l1Folder: l1Folder(book, visitor), canEdit: !visitor || book.owner === editable(visitor), sharedWithMe: sharedWithMe(book, visitor), languages: JSON.parse(book.languages), readAt: readAt(id, visitor), starredAt: starredAt(id, visitor), setAsideAt: setAsideAt(id, visitor) };
   }
 
   function categoryId(value, visitor) {
@@ -310,8 +344,8 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
     storageFiles(owner) { return db.prepare('SELECT * FROM books WHERE owner=?').all(owner).flatMap((book) => [filePath(book), filePath({ ...book, contentRevision: '' }), coverPath(book), coverPath({ ...book, coverRevision: '' })]); },
     bookmarks(id, visitor) {
       getBook(id, visitor);
-      db.prepare('DELETE FROM bookmarks WHERE expires IS NOT NULL AND expires<=?').run(Date.now());
-      return db.prepare('SELECT id,target,label,note,created FROM bookmarks WHERE book=? AND owner=? ORDER BY created DESC,id').all(id, editable(visitor))
+      return db.prepare('SELECT id,target,label,note,created FROM bookmarks WHERE book=? AND owner=? AND (expires IS NULL OR expires>?) ORDER BY created DESC,id')
+        .all(id, editable(visitor), Date.now())
         .map((row) => ({ ...row, target: JSON.parse(row.target) }));
     },
     saveBookmark(id, body, visitor) {
@@ -332,12 +366,16 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
       if (!db.prepare('DELETE FROM bookmarks WHERE id=? AND book=? AND owner=?').run(bookmark, id, editable(visitor)).changes) throw new RequestError(404, 'Bookmark not found.');
       return { bookmarks: this.bookmarks(id, visitor) };
     },
+    removeBookmarkTarget(id, target, visitor) {
+      getBook(id, visitor);
+      db.prepare('DELETE FROM bookmarks WHERE book=? AND owner=? AND target=?').run(id, editable(visitor), bookmarkTargetKey(target ?? null));
+      return { bookmarks: this.bookmarks(id, visitor) };
+    },
     readBooks(visitor) {
-      const owner = editable(visitor);
-      return db.prepare(`SELECT b.id,b.language,r.readAt,r.expires FROM book_read_status r JOIN books b ON b.id=r.book
-        WHERE r.owner=? AND (r.expires IS NULL OR r.expires>?) AND (b.expires IS NULL OR b.expires>?)
-          AND ${limits ? `(b.owner=? OR b.id IN (${demoBookIds}))` : '(b.owner=? OR b.shared=1)'}`)
-        .all(owner, Date.now(), Date.now(), owner);
+      const owner = editable(visitor), visible = scope(visitor ?? { id: owner }), time = Date.now();
+      return db.prepare(`SELECT books.id,books.language,r.readAt,r.expires FROM book_read_status r JOIN books ON books.id=r.book
+        WHERE r.owner=? AND (r.expires IS NULL OR r.expires>?) AND (books.expires IS NULL OR books.expires>?) AND ${visible.sql}`)
+        .all(owner, time, time, ...visible.args);
     },
     async storage(visitor) {
       if (limits) {
@@ -422,7 +460,7 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
       const owner = editable(visitor);
       let saved = false, release = () => {};
       try {
-        const sharedBook = sharing(body.shared);
+        const share = sharing(body, visitor);
         const coverStyle = body.coverStyle ?? 'auto';
         if (!validCoverStyle(coverStyle)) throw new RequestError(422, 'Choose one of the available book covers.');
         const series = seriesDetails(body);
@@ -451,13 +489,19 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
           if (used + file.size > limits.storage) throw new RequestError(507, 'Demo storage is full. Try later.');
         }
         const assignment = folderAssignment(body.categoryId, language, languages, visitor);
-        db.prepare('INSERT INTO books(id,title,author,language,format,categoryId,thumbnailType,addedAt,owner,expires,bytes,updatedAt,languages,coverStyle,series,seriesIndex) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
-          id, title, author, assignment.language, format, assignment.categoryId,
-          metadata.thumbnail ? metadata.thumbnailType : null, Date.now(), owner, visitor?.expires ?? null, file.size, Date.now(), JSON.stringify(assignment.languages), coverStyle, series.series, series.seriesIndex,
-        );
-        db.prepare('UPDATE books SET shared=? WHERE id=?').run(sharedBook, id);
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          db.prepare(`INSERT INTO books(id,title,author,language,format,categoryId,thumbnailType,addedAt,owner,expires,bytes,updatedAt,languages,coverStyle,series,seriesIndex,shared)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+            id, title, author, assignment.language, format, assignment.categoryId, metadata.thumbnail ? metadata.thumbnailType : null,
+            Date.now(), owner, visitor?.expires ?? null, file.size, Date.now(), JSON.stringify(assignment.languages),
+            coverStyle, series.series, series.seriesIndex, share.everyone ?? 0,
+          );
+          replaceSharingRecipients(id, share.recipients);
+          touch();
+          db.exec('COMMIT');
+        } catch (error) { db.exec('ROLLBACK'); throw error; }
         saved = true;
-        touch();
         return publicBook(getBook(id, visitor), visitor);
       } finally {
         if (!saved) {
@@ -537,7 +581,7 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
     editBook(id, body, visitor) {
       const book = getBook(id, visitor);
       if (book.owner !== editable(visitor)) throw new RequestError(403, 'Only the book owner can edit or remove this book.');
-      const sharedBook = sharing(body.shared, book.shared);
+      const share = sharing(body, visitor);
       const title = asText(body.title, 250);
       const coverStyle = body.coverStyle ?? book.coverStyle;
       if (!validCoverStyle(coverStyle)) throw new RequestError(422, 'Choose one of the available book covers.');
@@ -547,10 +591,15 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
       if (!title || !requestedLanguage) throw new RequestError(422, 'Enter a title and a valid language code.');
       const language = primaryLanguage(requestedLanguage, languages);
       const assignment = folderAssignment(body.categoryId, language, languages, visitor);
-      db.prepare('UPDATE books SET title = ?, author = ?, language = ?, categoryId = ?, updatedAt = ?, languages = ?, coverStyle = ?, series = ?, seriesIndex = ? WHERE id = ?')
-        .run(title, asText(body.author, 200), assignment.language, assignment.categoryId, Date.now(), JSON.stringify(assignment.languages), coverStyle, series.series, series.seriesIndex, id);
-      db.prepare('UPDATE books SET shared=? WHERE id=?').run(sharedBook, id);
-      touch();
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        db.prepare(`UPDATE books SET title=?,author=?,language=?,categoryId=?,updatedAt=?,languages=?,coverStyle=?,series=?,seriesIndex=?,shared=?
+          WHERE id=?`).run(title, asText(body.author, 200), assignment.language, assignment.categoryId, Date.now(),
+          JSON.stringify(assignment.languages), coverStyle, series.series, series.seriesIndex, share.everyone ?? book.shared, id);
+        replaceSharingRecipients(id, share.recipients);
+        touch();
+        db.exec('COMMIT');
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
       return publicBook(getBook(id, visitor), visitor);
     },
     setReadStatus(id, body, visitor) {
@@ -602,6 +651,7 @@ export async function openLibrary(dir, limits = null, { coverDownload = download
       db.prepare('DELETE FROM book_read_status WHERE expires <= ?').run(now);
       db.prepare('DELETE FROM currently_reading WHERE expires <= ?').run(now);
       db.prepare('DELETE FROM books_set_aside WHERE expires <= ?').run(now);
+      db.prepare('DELETE FROM bookmarks WHERE expires <= ?').run(now);
       if (expired.length) touch();
       const paths = expired.flatMap((book) => [filePath(book), coverPath(book)]);
       const removed = await Promise.allSettled(paths.map((path) => rm(path, { force: true })));

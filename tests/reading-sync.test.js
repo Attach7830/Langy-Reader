@@ -71,6 +71,7 @@ test('closed offline books sync on reconnection, while a newer device position r
 test('opening resumes shared progress without publishing a reflowed page start back to the server', async (t) => {
   const f = fixture(t, { remote: remote() });
   await f.start();
+  assert.ok(f.statuses.every(({ pending }) => !pending), 'an automatic resume must not ask for a decision');
   assert.equal(f.progress.book.target, 'device:4');
   assert.equal(f.progress.book.syncVersion, 4);
   assert.equal(f.progress.book.syncDirty, false);

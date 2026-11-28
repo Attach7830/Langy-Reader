@@ -14,6 +14,7 @@ import { processQueue } from '../src/process-queue.js';
 import { saveSettings } from '../src/settings.js';
 import { folderAudiobookshelf } from '../src/folder-audiobookshelf.js';
 import { pdfOCR } from '../src/pdf-ocr.js';
+import { reviewPdfText } from '../src/pdf-review.js';
 
 async function until(check) { for (let i = 0; i < 100; i++) { if (check()) return; await delay(10); } throw new Error('Reader tool did not update'); }
 async function browser(t) {
@@ -55,6 +56,72 @@ test('rapid successive edits open the requested book and an older refresh cannot
   assert.equal(document.querySelector('#book-submit').disabled, true, 'the older save must not unlock the newer submit');
   releaseSecond(); await until(() => !document.querySelector('#book-dialog').open);
   assert.equal(books[0].series, 'First series'); assert.equal(books[1].series, 'Second series');
+});
+
+test('PDF review preserves text and undo history while the arrow keys turn pages outside input fields', async (t) => {
+  const dom = await browser(t);
+  const original = '端午Pīnyīn①２٣Ⅳ\n故事cafe\u0301ñ。', noLatin = '端午①２٣Ⅳ\n故事。', cleaned = '端午\n故事。';
+  let saved;
+  globalThis.fetch = async (path, options) => {
+    if (options.method === 'PUT') { saved = JSON.parse(options.body); return Response.json({ revision: 'updated' }); }
+    const page = Number(path.split('=').at(-1)), text = page === 1 ? original : '下一頁。';
+    return Response.json({ state: 'ready', revision: 'review', total: 2, excluded: [], page: { number: page, original: text, text, boxes: [] } });
+  };
+  reviewPdfText({ saved() {} }).open({ id: 'pdf', language: 'zh' });
+  const form = document.querySelector('#pdf-review-form'), text = form.elements.text;
+  const undo = document.querySelector('#pdf-review-undo'), redo = document.querySelector('#pdf-review-redo');
+  const preview = document.querySelector('#pdf-review-preview');
+  const press = (target, key, modifiers = {}) => target.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...modifiers }));
+  const shortcut = (shiftKey = false) => press(text, 'z', { ctrlKey: true, shiftKey });
+  function input(value, inputType = 'insertText') {
+    text.dispatchEvent(new dom.window.InputEvent('beforeinput', { inputType, bubbles: true, cancelable: true }));
+    text.value = value;
+    text.dispatchEvent(new dom.window.InputEvent('input', { inputType, bubbles: true }));
+  }
+  await until(() => !text.disabled);
+  assert.equal(undo.disabled, true);
+  text.setSelectionRange(original.length, original.length);
+  document.querySelector('#pdf-review-remove-latin').click();
+  assert.equal(text.value, noLatin);
+  assert.equal(text.selectionStart, noLatin.length);
+  document.querySelector('#pdf-review-remove-numerals').click();
+  assert.equal(text.value, cleaned);
+  shortcut();
+  assert.equal(text.value, noLatin);
+  assert.equal(redo.disabled, false);
+
+  assert.equal(press(text, 'ArrowRight'), true, 'the textarea keeps its cursor keys');
+  assert.equal(press(form.elements.excluded, 'ArrowRight'), true);
+  assert.equal(press(preview, 'ArrowRight', { shiftKey: true }), true);
+  assert.equal(press(preview, 'ArrowLeft'), true, 'the shortcut stops at page one');
+  assert.equal(press(preview, 'ArrowRight'), false);
+  await until(() => !text.disabled && form.elements.page.value === '2');
+  assert.equal(press(preview, 'ArrowRight'), true, 'the shortcut stops at the last page');
+  assert.equal(undo.disabled, true);
+  input('第二頁。');
+  assert.equal(press(preview, 'ArrowLeft'), false);
+  await until(() => !text.disabled && form.elements.page.value === '1');
+  shortcut(true);
+  assert.equal(text.value, cleaned);
+  text.dispatchEvent(new dom.window.CompositionEvent('compositionstart'));
+  input(cleaned + 'r', 'insertCompositionText');
+  input(cleaned + '人', 'insertCompositionText');
+  text.dispatchEvent(new dom.window.CompositionEvent('compositionend'));
+  shortcut();
+  assert.equal(text.value, cleaned, 'one undo reverses the whole IME composition');
+  redo.click();
+  assert.equal(text.value, cleaned + '人');
+  document.querySelector('#pdf-review-original').click();
+  assert.equal(text.value, original);
+  text.dispatchEvent(new dom.window.InputEvent('beforeinput', { inputType: 'historyUndo', bubbles: true, cancelable: true }));
+  assert.equal(text.value, cleaned + '人');
+  undo.click();
+  input(cleaned + '們');
+  assert.equal(redo.disabled, true, 'new typing clears the redo history');
+  form.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await until(() => !document.querySelector('#pdf-review-dialog').open);
+  assert.equal(press(preview, 'ArrowRight'), true);
+  assert.deepEqual(saved.edits.sort((a, b) => a.page - b.page), [{ page: 1, text: cleaned + '們' }, { page: 2, text: '第二頁。' }]);
 });
 
 test('Analysis & audio reveals ready controls while an unrelated iVoox request remains pending; empty Uncategorized is hidden', async (t) => {
@@ -237,6 +304,32 @@ test('text selection offers icon-only bookmark and explain actions and aborts st
   ui.clear(); assert.equal(calls.at(-1).signal.aborted, true); resolve({ text: 'Late answer' }); await delay(0); assert.equal(document.querySelector('#phrase-help').hidden, true); assert.equal(document.querySelector('[data-phrase-answer]').textContent, '');
 });
 
+test('a touch passage stays highlighted during extension and can be bookmarked after the browser selection collapses', async (t) => {
+  const dom = await browser(t), viewer = document.querySelector('#viewer'), root = document.createElement('p');
+  root.textContent = 'A quiet harbor at sunset.'; viewer.append(root);
+  const node = root.firstChild;
+  viewer.getBoundingClientRect = () => ({ left: 0, top: 0, right: 300, bottom: 450 });
+  dom.window.Range.prototype.getBoundingClientRect = () => ({ left: 30, top: 100, bottom: 125, height: 25 });
+  document.caretPositionFromPoint = () => ({ offsetNode: node, offset: 21 });
+  let bookmarked;
+  const ui = phraseHelp({ book: () => ({ id: 'book', language: 'en' }), preferences: () => ({}), roots: () => [root],
+    onBookmark(_range, text) { bookmarked = text; return true; } });
+  const remove = ui.bind(root);
+  t.after(remove);
+  const gesture = ui.selectPassage({ node, index: 2, word: 'quiet' });
+  assert.equal(ui.touchSelected, true);
+  assert.equal(document.querySelector('#phrase-help').hidden, true);
+  gesture.extend({ x: 195, y: 110 }, { node, index: 18, word: 'sunset' });
+  gesture.finish();
+  assert.equal(document.querySelector('#phrase-help').hidden, false);
+  assert.equal(document.querySelector('#selection-handles').hidden, false);
+  document.getSelection().removeAllRanges();
+  document.querySelector('[data-bookmark-selection]').click();
+  assert.equal(bookmarked, 'quiet harbor at sunset');
+  assert.equal(ui.touchSelected, false);
+  assert.equal(document.querySelector('#selection-handles').hidden, true);
+});
+
 test('format and shared-book filters combine, persist in preferences and expose completed OCR labels', async (t) => {
   const dom = await browser(t); let preferences = { quietLibrary: true, showSharedBooks: true }, saved;
   const books = [{ id: 'own', title: 'Own shared book', author: '', language: 'es', format: 'pdf', ocrComplete: true, shared: true, sharedWithMe: false, canEdit: true },
@@ -258,8 +351,11 @@ test('format and shared-book filters combine, persist in preferences and expose 
   format.value = 'pdf'; format.dispatchEvent(new dom.window.Event('change')); assert.deepEqual(saved, { libraryFormat: 'pdf' });
   await ui.refresh(); assert.equal(format.value, 'pdf'); assert.equal(document.querySelectorAll('#books .book-card').length, 1);
   format.value = ''; format.dispatchEvent(new dom.window.Event('change')); assert.equal(document.querySelectorAll('#books .book-card').length, 2);
-  document.querySelector('[aria-label="Edit Own shared book"]').click(); assert.equal(document.querySelector('#book-sharing-controls').hidden, false); assert.equal(document.querySelector('#book-form').elements.shared.checked, true);
-  document.querySelector('#book-dialog').close(); document.querySelector('#import-book').click(); assert.equal(document.querySelector('#book-form').elements.shared.checked, false, 'new books are private by default');
+  document.querySelector('[aria-label="Edit Own shared book"]').click();
+  assert.equal(document.querySelector('#book-sharing-controls').hidden, false);
+  assert.equal(document.querySelector('#book-sharing-mode').value, 'everyone');
+  document.querySelector('#book-dialog').close(); document.querySelector('#import-book').click();
+  assert.equal(document.querySelector('#book-sharing-mode').value, 'private', 'new books are private by default');
 });
 
 test('completed offline downloads leave the queue automatically without removing the downloaded book', async (t) => {

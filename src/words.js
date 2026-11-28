@@ -6,7 +6,7 @@ import { readingText } from '../shared/reading-text.js';
 import { mandarinHelp } from './mandarin-help.js';
 import { meaningChoices } from './meaning-choices.js';
 
-function caretAt(doc, x, y) {
+export function caretAt(doc, x, y) {
   if (doc.caretPositionFromPoint) {
     const caret = doc.caretPositionFromPoint(x, y);
     return caret && { node: caret.offsetNode, offset: caret.offset };

@@ -80,7 +80,7 @@ export async function openBookImports(dir,{library,demo=false,request=publicDown
     if([...jobs.values()].filter((job)=>pending.has(job.state)).length>=40)throw new RequestError(503,'The import queue is full. Try again after a book finishes.');
   }
   function detailsFor(body,visitor){
-    const details=Object.fromEntries(['title','author','language','languages','categoryId','coverStyle','coverUrl','shared','series','seriesIndex'].filter((key)=>body[key]!==undefined).map((key)=>[key,body[key]]));
+    const details=Object.fromEntries(['title','author','language','languages','categoryId','coverStyle','coverUrl','shared','shareWith','series','seriesIndex'].filter((key)=>body[key]!==undefined).map((key)=>[key,body[key]]));
     Object.assign(details,importNarrationOptions(body));
     if(details.categoryId&&!library.snapshot(visitor).categories.some((category)=>category.id===details.categoryId))throw new RequestError(422,'Choose one of your Langy folders.');
     return details;

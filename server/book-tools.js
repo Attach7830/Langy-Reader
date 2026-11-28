@@ -2,9 +2,9 @@ import { RequestError, normalizeLanguage } from './books.js';
 import { searchBook } from '../shared/book-search.js';
 
 export function bookTools({ learning, ai }) {
-  function search(book, query) {
+  function search(book, query, { original = true } = {}) {
     if (typeof query !== 'string' || !query.trim() || query.length > 120) throw new RequestError(422, 'Enter a word or phrase of up to 120 characters.');
-    const results = searchBook(learning.textSections(book), query, 101);
+    const results = searchBook(learning.textSections(book, { original }), query, 101);
     return { results: results.slice(0, 100), more: results.length > 100 };
   }
   async function guide(book, body, signal) {

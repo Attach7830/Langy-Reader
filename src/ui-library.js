@@ -5,6 +5,7 @@ import { parseLanguage } from './languages.js';
 import { refreshStorage, showStorage } from './storage.js';
 import { audioTools, audioChanged } from './ui-audio-tools.js';
 import { bookLanguagePicker } from './book-languages.js';
+import { bookSharing } from './book-sharing.js';
 import { vocabularyLibrary, unfamiliarLabel, recommendationRows, bookCountLabel } from './ui-vocabulary.js';
 import { bookVocabulary } from './ui-book-vocabulary.js';
 import { bookMetadataFields } from './book-metadata-fields.js';
@@ -13,6 +14,10 @@ import { bookCover, bookCoverPicker } from './book-covers.js';
 import { archiveBulk } from './archive-bulk.js';
 import { archiveTitleActions } from './archive-title-controls.js';
 import { pdfOCR } from './pdf-ocr.js';
+import { reviewPdfText } from './pdf-review.js';
+import { adjustPdfTiming } from './pdf-timing.js';
+import { adjustEpubTiming } from './epub-timing.js';
+import { epubNarrationEditor } from './epub-narration.js';
 import { bookLanguageSuggestions } from './reading-languages.js';
 import { showReadingTime } from './ui-reading-time.js';
 import { audiobookshelfBook } from './audiobookshelf-ui.js';
@@ -26,9 +31,9 @@ import { seriesKey, seriesLabel } from '../shared/book-series.js';
 
 const vocabularyLabel = (vocabulary) => vocabulary?.byLanguage?.map((item) => `${item.count.toLocaleString()} ${item.language === 'zh' ? 'Mandarin Han characters' : `${languageName(item.language)} ${item.unit}`}`).join(' · ');
 const wordCountLabel = (analysis) => bookCountLabel(analysis?.counts)
-  || (analysis?.counting?.state === 'error' ? 'Word count unavailable' : 'Counting words…');
+  || (['missing', 'error'].includes(analysis?.counting?.state) ? 'Word count unavailable' : 'Counting words…');
 
-export function libraryScreen({ progress, onRemove, detectMetadata, readingLanguages = () => null, onSnapshot = () => {}, preferences = () => ({ quietLibrary: true }), changePreferences = () => {} }) {
+export function libraryScreen({ progress, onRemove, detectMetadata, safeMode = false, readingLanguages = () => null, onSnapshot = () => {}, preferences = () => ({ quietLibrary: true }), changePreferences = () => {} }) {
   const surface = window;
   const search = $('#search');
   const books = $('#books');
@@ -39,6 +44,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   const bulkImport = archiveBulk(bookForm);
   const ocr = pdfOCR({ changed: refresh, readingLanguages });
   const languagePicker = bookLanguagePicker(bookForm);
+  const sharing = bookSharing(bookForm);
   const vocabularyUI = vocabularyLibrary({ changed: refresh });
   const bookVocabularyUI = bookVocabulary();
   const categoryDialog = $('#category-dialog');
@@ -46,8 +52,29 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   const folderABS = folderAudiobookshelf();
   $('#category-dialog').addEventListener('close', () => folderABS.cancel());
   const learningDialog = $('#learning-dialog');
+  const pdfReview = reviewPdfText({ saved(book) {
+    toast('PDF review saved.');
+    void showLearning(book);
+  } });
+  function timingSaved(book) {
+    audioChanged(book.id); toast('Audio sync saved.');
+    if (learningDialog.open && learningBook?.id === book.id) void learningStatus();
+  }
+  const pdfTiming = adjustPdfTiming({ saved: timingSaved });
+  const epubTiming = adjustEpubTiming({ saved: timingSaved });
+  const epubNarration = epubNarrationEditor({ saved(book) {
+    toast('Audiobook text selection saved.');
+    void showLearning(book);
+  } });
   let learningBook, learningTimer, libraryTimer, learningVisit = 0, libraryVisit = 0, learningParts = {}, learningPending = {};
   let snapshot = { categories: [], books: [], maxUpload: 120 * 1024 ** 2, demo: false };
+  const editableTiming = (book) => !safeMode && !snapshot.demo && ['pdf', 'epub'].includes(book?.format) && book.canEdit !== false;
+  const editablePdf = (book) => book?.format === 'pdf' && editableTiming(book);
+  function showAudioTiming(book, recording, position) {
+    if (!editableTiming(book)) return;
+    if (book.format === 'pdf') void pdfTiming.open(book, recording, { pageKey: position?.key });
+    else epubTiming.open(book, recording, position);
+  }
   let category = 'all', editingBook, editingCategory, selectedFile, slowImport, downloadExpiry;
   const completedImports = new Map();
   let bookPending = false, categoryPending = false, bookVisit = 0;
@@ -84,7 +111,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   $('#book-format-filter').addEventListener('change', (event) => { changePreferences({ libraryFormat: event.target.value }); render(); });
   $('#book-series-filter').addEventListener('change', (event) => { if (event.target.value.startsWith('series:')) $('#book-sort').value = 'series'; render(); });
   $('#refresh-storage').addEventListener('click', () => void refreshStorage());
-  const storageTimer = setInterval(() => {
+  const storageTimer = !safeMode && setInterval(() => {
     if (!document.hidden && !$('#library-screen').hidden) void refreshStorage();
   }, 60_000);
   const archiveWorking = (job) => job && ['queued', 'downloading', 'importing'].includes(job.state);
@@ -131,7 +158,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     if (book.series) info.append(element('span', 'book-meta book-series', seriesLabel(book)));
     const actions = element('div', 'book-reading-actions');
     if (book.sharedWithMe) actions.append(element('span', 'book-read-badge shared-book-badge', 'Shared with you'));
-    else if (book.shared) actions.append(element('span', 'book-read-badge shared-book-badge', 'Shared'));
+    else if (book.shared || book.shareWith?.length) actions.append(element('span', 'book-read-badge shared-book-badge', 'Shared'));
     if (book.starredAt) actions.append(element('span', 'book-read-badge', 'Currently reading'));
     if (book.setAsideAt) actions.append(element('span', 'book-read-badge', 'Set aside'));
     if (saved && book.starredAt) actions.append(element('span', 'button secondary small book-resume-label', 'Resume'));
@@ -192,16 +219,24 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
       readingDetails.append(element('span', 'book-meta', (belowThreshold ? 'Below threshold: ' : 'Not yet seen: ') + unfamiliarLabel(book.familiarity, belowThreshold)));
     }
     card.append(readingDetails);
-    const tools = element('button', 'button quiet small', 'Analysis & audio');
-    tools.type = 'button';
-    tools.setAttribute('aria-label', `Analysis and audio for ${book.title}`);
-    tools.addEventListener('click', () => void showLearning(book));
-    detail.append(tools);
-    if (androidApp()) {
+    if (book.epubRevision) {
+      const openEpub = element('button', 'button quiet small', 'Read simplified EPUB');
+      openEpub.type = 'button';
+      openEpub.addEventListener('click', () => { location.hash = `#read/${encodeURIComponent(book.id)}/epub`; });
+      detail.append(openEpub);
+    }
+    if (!safeMode) {
+      const tools = element('button', 'button quiet small', 'Analysis & audio');
+      tools.type = 'button';
+      tools.setAttribute('aria-label', `Analysis and audio for ${book.title}`);
+      tools.addEventListener('click', () => void showLearning(book));
+      detail.append(tools);
+    }
+    if (!safeMode && androidApp()) {
       const download = element('button', 'button quiet small', 'Save offline'); download.type = 'button';
       download.addEventListener('click', () => void offline.open(book)); detail.append(download);
     }
-    if (book.format === 'pdf' && !snapshot.demo) {
+    if (!safeMode && book.format === 'pdf' && !snapshot.demo) {
       const scan = element('button', 'button quiet small', 'Scan PDF with OCR'); scan.type = 'button';
       scan.setAttribute('aria-label', `Scan ${book.title} with OCR`); scan.addEventListener('click', () => ocr.show(book)); detail.append(scan);
     }
@@ -238,7 +273,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     const mobileActions = element('button', 'icon-button book-mobile-menu', '•••'); mobileActions.type = 'button'; mobileActions.setAttribute('aria-label', `Book options for ${book.title}`);
     mobileActions.addEventListener('click', () => {
       const dialog = $('#book-actions-dialog'), content = $('#book-actions-body'); $('#book-actions-title').textContent = book.title;
-      const open = element('a', 'button primary', saved ? 'Resume reading' : 'Read book'); open.href = link.href; open.addEventListener('click', () => dialog.close());
+      const open = element('a', 'button primary', book.epubRevision ? 'Read PDF' : saved ? 'Resume reading' : 'Read book');
+      open.href = link.href; open.addEventListener('click', () => dialog.close());
       const buttons = [...detail.querySelectorAll('button'), ...(edit ? [edit] : [])].map((source) => {
         const button = element('button', 'button secondary', source === edit ? 'Edit book details' : source.textContent); button.type = 'button'; button.disabled = source.disabled;
         button.addEventListener('click', () => { dialog.close(); source.click(); }); return button;
@@ -285,7 +321,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
       const button = categoryButton(entry.id, entry.name, libraryBooks.filter((book) => book.categoryId === entry.id).length, 'folder');
       if (entry.language) button.title = `${languageName(entry.language)} language folder`;
       row.append(button);
-      if (!snapshot.demo || entry.id !== 'spanish') row.append(editButton(`Edit category ${entry.name}`, () => showCategory(entry)));
+      if (!safeMode && (!snapshot.demo || entry.id !== 'spanish')) row.append(editButton(`Edit category ${entry.name}`, () => showCategory(entry)));
       return row;
     });
     $('#categories').replaceChildren(...categoryRows, ...(uncategorized ? [categoryButton('uncategorized', 'Uncategorized', uncategorized, 'folder')] : []));
@@ -304,7 +340,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     $('#empty-library').hidden = visible.length > 0;
     const filtering = filter || $('#book-format-filter').value || $('#book-series-filter').value || $('#reading-filter').value || !['', 'shelf'].includes($('#book-status-filter').value);
     $('#empty-title').textContent = filtering ? 'No matching books' : 'No books here yet';
-    $('#empty-detail').textContent = filtering ? 'Try a different search or filter.' : 'Import a book or document to get started.';
+    $('#empty-detail').textContent = filtering ? 'Try a different search or filter.' : safeMode ? 'Ask an administrator to share a book with you.' : 'Import a book or document to get started.';
     drawIcons();
     renderDownloads(snapshot.archive?.jobs || []);
   }
@@ -315,7 +351,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     onSnapshot(snapshot);
     showReadingTime(snapshot.readingTime);
     vocabularyUI.update(snapshot.vocabulary);
-    showStorage(snapshot.storage);
+    if (!safeMode) showStorage(snapshot.storage);
     message('#library-error');
     onProgress?.({ label: 'Preparing your library…', complete: next.books.length, total: next.books.length });
     render();
@@ -332,6 +368,14 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
 
   function renderLearning(id) {
     const result = learningParts.result || { analysis: { state: 'loading' }, chapters: [], narration: { audio: { state: 'loading' } } };
+    const epub = $('#open-reviewed-epub');
+    epub.hidden = !result.epubRevision;
+    if (result.epubRevision) epub.href = `#read/${encodeURIComponent(id)}/epub`;
+    const listEntry = snapshot.books.find((book) => book.id === id);
+    if (listEntry && result.epubRevision !== undefined && listEntry.epubRevision !== result.epubRevision) {
+      listEntry.epubRevision = result.epubRevision;
+      render();
+    }
     const uploaded = learningParts.uploaded || { available: false, recordings: [] }, imported = learningParts.imported || { job: null };
       const analysis = result.analysis;
       $('#find-similar-books').disabled = analysis.state !== 'ready';
@@ -424,7 +468,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
       const scheduled = result.narration.scheduled;
       $('#generate-book-audio').disabled ||= working || learningBook?.canEdit === false;
       $('#cancel-book-audio').hidden = learningBook?.canEdit === false || !working && scheduled?.state !== 'waiting';
-      $('#book-audio-status').textContent = audio.state === 'ready' ? audio.approximateSections
+      $('#book-audio-status').textContent = audio.state === 'ready' ? audio.segments?.some((part) => part.pageOnly)
+        ? 'Complete book recording ready. Some pages use page-level sync.' : audio.approximateSections
         ? `Complete book recording ready. Page timing is approximate in ${audio.approximateSections} sections; estimated words are not highlighted.`
         : 'Complete book recording ready. Chapter markers are included.'
         : audio.state === 'queued' ? `Generating book audio · ${audio.complete} / ${audio.total} sections`
@@ -478,6 +523,15 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     learningVisit++; learningParts = {}; learningPending = {};
     audioUI.reset();
     learningBook = book;
+    $('#review-pdf-text').hidden = !editablePdf(book);
+    $('#edit-epub-narration').hidden = snapshot.demo || book.format !== 'epub' || book.canEdit === false;
+    $('#open-reviewed-epub').hidden = true;
+    const timing = $('#adjust-audio-timing');
+    timing.hidden = !editableTiming(book);
+    if (!timing.hidden) {
+      timing.textContent = `Adjust ${book.format.toUpperCase()} audio sync`;
+      timing.setAttribute('aria-controls', `${book.format}-timing-dialog`);
+    }
     $('#edit-book-languages').hidden = book.canEdit === false || snapshot.demo && book.id === 'sample';
     $('#find-similar-books').disabled = true;
     $('#open-book-vocabulary').disabled = true;
@@ -495,6 +549,19 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     void absBook.show();
     await learningStatus();
   }
+
+  $('#review-pdf-text').addEventListener('click', () => {
+    const book = learningBook;
+    if (editablePdf(book)) { learningDialog.close(); pdfReview.open(book); }
+  });
+  $('#open-reviewed-epub').addEventListener('click', () => learningDialog.close());
+  $('#edit-epub-narration').addEventListener('click', () => {
+    const book = learningBook;
+    if (book?.format === 'epub' && book.canEdit !== false && !snapshot.demo) { learningDialog.close(); epubNarration.open(book); }
+  });
+  $('#adjust-audio-timing').addEventListener('click', () => {
+    showAudioTiming(learningBook, learningParts.result?.narration?.audio);
+  });
 
   $('#analyze-book').addEventListener('click', async () => {
     if (!learningBook) return;
@@ -608,9 +675,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     $('#archive-slow-download').hidden = true;
     bookForm.elements.archiveReference.readOnly = false;
     bookForm.reset();
-    $('#book-sharing-controls').hidden = !snapshot.sharingAvailable;
-    bookForm.elements.shared.disabled = !snapshot.sharingAvailable;
-    bookForm.elements.shared.checked = Boolean(book?.shared);
+    sharing.set(book, snapshot.sharingAvailable);
     bulkImport.reset();
     stageFile();
     const isEdit = Boolean(book);
@@ -708,6 +773,7 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     let languages = job.details?.languages || [];
     if (typeof languages === 'string') { try { languages = JSON.parse(languages); } catch { languages = []; } }
     languagePicker.set(languages); showFolderLanguage(); showSlowImport(job);
+    sharing.set(job.details, snapshot.sharingAvailable);
     coverPicker.set(job.details || {});
     bookForm.elements.autoAudiobook.checked = Boolean(job.details?.autoAudiobook);
     bookForm.elements.audiobookDelayMinutes.value = job.details?.audiobookDelayMinutes ?? 10;
@@ -829,13 +895,15 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
     if (bookPending || !bookDialog.open || submittedVisit !== bookVisit || submittedBook !== editingBook || submittedFile !== selectedFile || submittedSource !== $('#book-source').value) return;
     const data = new FormData(bookForm);
     if (!String(data.get('coverUrl') || '').trim()) data.delete('coverUrl');
-    if (snapshot.sharingAvailable) data.set('shared', String(bookForm.elements.shared.checked)); else data.delete('shared');
     if (!editingBook) data.set('autoAudiobook', String(bookForm.elements.autoAudiobook.checked));
     const rawLanguage = String(data.get('language') ?? '').trim();
     const language = parseLanguage(rawLanguage);
     if (rawLanguage && !language) return message('#book-error', 'Choose a language or enter a valid language code.');
     data.set('language', language);
-    try { data.set('languages', JSON.stringify(languagePicker.value())); }
+    try {
+      sharing.apply(data, Boolean(editingBook));
+      data.set('languages', JSON.stringify(languagePicker.value()));
+    }
     catch (error) { return message('#book-error', error.message); }
     const archiveImport = !editingBook && $('#book-source').value === 'anna', webImport = !editingBook && $('#book-source').value === 'web';
     const webURL=$('#book-web-url').value.trim();data.delete('bookURL');
@@ -951,7 +1019,8 @@ export function libraryScreen({ progress, onRemove, detectMetadata, readingLangu
   bookDialog.addEventListener('close',()=>coverSearchUI.reset());
   bookDialog.addEventListener('cancel', (event) => { if (bookPending && $('#book-source').value !== 'anna') event.preventDefault(); });
   bookDialog.addEventListener('close', () => metadataFields.cancel());
+  bookDialog.addEventListener('close', () => { if (!bookDialog.open) sharing.cancel(); });
   categoryDialog.addEventListener('cancel', (event) => { if (categoryPending) event.preventDefault(); });
 
-  return { refresh, render, dispose() { disposed = true; for (const controller of pendingCovers.values()) controller.abort(); pendingCovers.clear(); learningVisit++; unwatchApp(); surface.removeEventListener('langy-library-changed', libraryChanged); surface.removeEventListener('langy-audio-updated', libraryChanged); surface.removeEventListener('langy-open-process', openProcess); surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); ocr.dispose(); clearTimeout(downloadExpiry); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
+  return { refresh, render, editableTiming, showAudioTiming, dispose() { disposed = true; sharing.cancel(); for (const controller of pendingCovers.values()) controller.abort(); pendingCovers.clear(); learningVisit++; unwatchApp(); surface.removeEventListener('langy-library-changed', libraryChanged); surface.removeEventListener('langy-audio-updated', libraryChanged); surface.removeEventListener('langy-open-process', openProcess); surface.removeEventListener('langy-packs-changed', refreshDownloaded); surface.removeEventListener('langy-offline-account', refreshDownloaded); offline.dispose(); ocr.dispose(); clearTimeout(downloadExpiry); clearTimeout(libraryTimer); clearTimeout(learningTimer); clearInterval(storageTimer); }, get state() { return snapshot; } };
 }
