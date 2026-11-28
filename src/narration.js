@@ -32,7 +32,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   const recordingChoice = $('#narration-recording');
   let recordingCount = 0, markerRate, absConnected = false;
   let recording, recordingBook, connection = false, previewAudio = false, unit, local, descriptor, timed = [], timingMap = new Map();
-  let lifecycle = 0, controller, poll, animation, bookRequest, following = false, followAgain = false, forceFollow = false;
+  let lifecycle = 0, controller, poll, animation, bookRequest, recordingMetadata, following = false, followAgain = false, forceFollow = false;
   let wantPlaying = false, enabled = false, initialSeek = true, highlighted, highlightedWindow;
   let waitingForMetadata = true;
   let manualNavigation = false, navigationVersion = 0, manualPage;
@@ -225,7 +225,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     const epoch = lifecycle;
     const changed = recording?.id !== result.audio.id || recording?.state !== result.audio.state
       || recording?.alignmentRevision !== result.audio.alignmentRevision;
-    recording = result.audio; connection = result.connected; previewAudio = Boolean(result.previewAudio); absConnected = Boolean(result.absConnected);
+    recording = result.audio; connection = result.connected; previewAudio = Boolean(result.previewAudio);
     const isReady = ready();
     if (!isReady) play.disabled = seek.disabled = true;
     generate.hidden = safeMode || !enabled || isReady || !['missing', 'error', 'cancelled'].includes(recording.state);
@@ -268,7 +268,11 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
         const query = new URLSearchParams();
         if (selected) query.set('recording', selected);
         if (textEdition()) query.set('view', 'epub');
-        const result = await api(`/api/books/${active.id}/narration${query.size ? '?' + query : ''}`, { signal: controller.signal });
+        recordingMetadata = api(`/api/books/${active.id}/narration${query.size ? '?' + query : ''}`, { signal: controller.signal }).then((result) => {
+          if (epoch === lifecycle) absConnected = Boolean(result.absConnected);
+          return result;
+        });
+        const result = await recordingMetadata;
         if (epoch !== lifecycle) return;
         const choices = result.recordings || [];
         recordingCount = choices.length;
@@ -289,12 +293,16 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     })().finally(() => { if (epoch === lifecycle) bookRequest = undefined; });
     return bookRequest;
   }
+  function loadBookRecording() {
+    if (recordingBook !== book().id) {
+      recordingBook = book().id; controller = new AbortController(); return loadRecording();
+    }
+    return bookRequest;
+  }
   async function refresh({ seekToPage = false } = {}) {
     if (!book()) return;
     const navigation = navigationVersion, epoch = lifecycle;
-    if (recordingBook !== book().id) {
-      recordingBook = book().id; controller = new AbortController(); await loadRecording();
-    } else if (bookRequest) await bookRequest;
+    await loadBookRecording();
     if (epoch !== lifecycle) return;
     try {
       await loadCurrent();
@@ -320,7 +328,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   function stop(position) {
     lifecycle++; controller?.abort(); clearTimeout(poll); cancelAnimationFrame(animation);
     audio.onloadedmetadata = null; audio.pause(); audio.removeAttribute('src'); audio.load(); clearHighlight();
-    recording = unit = descriptor = local = recordingBook = bookRequest = undefined;
+    recording = unit = descriptor = local = recordingBook = bookRequest = recordingMetadata = undefined;
     timed = []; timingMap.clear(); cache.clear();
     resumePosition = position;
     following = followAgain = forceFollow = wantPlaying = false;
@@ -358,7 +366,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     }
     rate.value = value;
     if (!enabled) { audio.pause(); wantPlaying = false; clearHighlight(); }
-    else if (recording) void updateRecording({ connected: connection, previewAudio, absConnected, audio: recording }).catch((error) => { status.textContent = error.message; });
+    else if (recording) void updateRecording({ connected: connection, previewAudio, audio: recording }).catch((error) => { status.textContent = error.message; });
     if (!preferences().audioHighlight) clearHighlight();
     controls();
   }
@@ -425,6 +433,11 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     refresh, apply, stop, toggle, skipBy, pause: pausePlayback,
     get ready() { return ready(); },
     get absConnected() { return absConnected; },
+    waitForAudiobookshelf() {
+      if (!book()) return;
+      void loadBookRecording();
+      return recordingMetadata?.catch(() => {});
+    },
     beginNavigation() { manualNavigation = true; pendingWordTime = undefined; wordPlayback++; return ++navigationVersion; },
     async endNavigation(version, { seekToPage = true } = {}) {
       if (version !== navigationVersion) return;

@@ -711,7 +711,8 @@ async function openBook(book, textEdition = readingPdfEpub && activeBook?.id ===
     if (signal.aborted) return;
     contentsButton.disabled = false;
     audio.apply();
-    void Promise.allSettled([readerDeadline(() => audio.refresh(), { signal, milliseconds: 8000 }), readingSync.start(book, opened)])
+    void audio.refresh();
+    void Promise.allSettled([readerDeadline(audio.waitForAudiobookshelf, { signal, milliseconds: 8000 }), readingSync.start(book, opened)])
       .then(() => { if (!signal.aborted && renderer === opened) return absProgress.start(); })
       .catch((error) => { if (!signal.aborted) reportError(error); })
       .finally(() => {

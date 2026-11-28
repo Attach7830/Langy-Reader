@@ -148,6 +148,14 @@ export function audiobookshelfProgress({ audio, request, reading, notify = () =>
   window.addEventListener('online', () => { void sync(); void syncSaved(); });
   window.addEventListener('pagehide', () => { sample(); persist(); });
   setInterval(() => { sample(); void sync(); void syncSaved(); }, 15000);
-  return { syncSaved, start() { suspended = false; return sample() ?? session?.restoring ?? sync(); },
-    changed: sample, stop() { sample(); persist(); suspended = true; session = null; clearOffer(); tell(''); } };
+  async function start() {
+    suspended = false;
+    sample();
+    let current;
+    do {
+      current = session;
+      await (current?.restoring ?? sync());
+    } while (session && session !== current);
+  }
+  return { syncSaved, start, changed: sample, stop() { sample(); persist(); suspended = true; session = null; clearOffer(); tell(''); } };
 }

@@ -968,6 +968,10 @@ try {
         await delay(250);
         return reply(() => ({ absConnected: true, recordings: [], audio: { state: 'missing' } }))(route);
       });
+      await syncPage.route('**' + bookPath + '/chapters/*', async (route) => {
+        await delay(1200);
+        return route.fulfill({ json: { key: 'epub:0', tokens: [], audio: { timings: [] } } });
+      });
       await syncPage.route('**' + bookPath + '/progress', reply(() => shared));
       let firstABSResponse = true;
       await syncPage.route('**' + bookPath + '/audiobookshelf/progress*', async (route) => {
