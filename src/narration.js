@@ -294,7 +294,8 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
     const navigation = navigationVersion, epoch = lifecycle;
     if (recordingBook !== book().id) {
       recordingBook = book().id; controller = new AbortController(); await loadRecording();
-    }
+    } else if (bookRequest) await bookRequest;
+    if (epoch !== lifecycle) return;
     try {
       await loadCurrent();
       if (navigation !== navigationVersion || epoch !== lifecycle) return;

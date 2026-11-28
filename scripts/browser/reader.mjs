@@ -943,13 +943,17 @@ try {
   });
   await check('Audiobookshelf and device progress share one centered, dimmed resume dialog', async () => {
     const syncContext = await browser.newContext({ viewport: { width: 320, height: 568 }, isMobile: true, hasTouch: true, serviceWorkers: 'block', extraHTTPHeaders: adminHeaders });
-    let releaseABS;
-    const openingABS = new Promise((resolve) => { releaseABS = resolve; });
     try {
       const syncPage = await syncContext.newPage();
       await syncPage.addInitScript((id) => {
         if (window.top !== window) return;
         localStorage.setItem('langy-progress-v1', JSON.stringify({ [id]: { target: 'epubcfi(/6/2[one]!/4/2/1:0)', syncDirty: true } }));
+        window.syncPromptOpenings = [];
+        const showModal = HTMLDialogElement.prototype.showModal;
+        HTMLDialogElement.prototype.showModal = function () {
+          if (this.id === 'sync-position-dialog') window.syncPromptOpenings.push(this.querySelector('#sync-position-message').textContent);
+          return showModal.call(this);
+        };
       }, book.id);
       const bookPath = '/api/books/' + book.id;
       const shared = { document: 'b'.repeat(32), version: 2,
@@ -960,19 +964,22 @@ try {
         if (route.request().method() === 'PUT') writes.push(route.request().url());
         return route.fulfill({ json: value() });
       };
-      await syncPage.route('**' + bookPath + '/narration*', reply(() => ({ absConnected: true, recordings: [], audio: { state: 'missing' } })));
+      await syncPage.route('**' + bookPath + '/narration*', async (route) => {
+        await delay(250);
+        return reply(() => ({ absConnected: true, recordings: [], audio: { state: 'missing' } }))(route);
+      });
       await syncPage.route('**' + bookPath + '/progress', reply(() => shared));
+      let firstABSResponse = true;
       await syncPage.route('**' + bookPath + '/audiobookshelf/progress*', async (route) => {
-        await openingABS;
+        if (firstABSResponse) { firstABSResponse = false; await delay(250); }
         return reply(() => abs)(route);
       });
-      const firstABSCheck = syncPage.waitForRequest((request) => request.url().includes(bookPath + '/audiobookshelf/progress?'));
-      await syncPage.goto(base + '/#read/' + book.id);
-      await firstABSCheck;
+      await syncPage.goto(base + '/#read/' + book.id, { waitUntil: 'commit' });
       const modal = syncPage.getByRole('dialog', { name: 'Choose where to continue' });
-      assert.equal(await modal.isVisible(), false, 'wait for the initial Audiobookshelf response before prompting');
-      releaseABS();
-      await modal.getByText('Audiobookshelf and E-reader saved a position at 55%.').waitFor();
+      const matchingPosition = 'Audiobookshelf and E-reader saved a position at 55%.';
+      await modal.waitFor();
+      assert.deepEqual(await syncPage.evaluate(() => window.syncPromptOpenings), [matchingPosition],
+        'the first and only opening must include the initial Audiobookshelf response');
       assert.equal(await syncPage.locator('dialog:modal').count(), 1);
       assert.equal(await syncPage.locator('#sync-notice, #abs-sync-notice').count(), 0);
       assert.deepEqual(await modal.locator('footer button:visible').allTextContents(), ['Keep this position', 'Resume there']);
@@ -1016,7 +1023,7 @@ try {
       await syncPage.goto(base + '/#library');
       await syncPage.locator('#books .book-card').first().waitFor();
       assert.equal(await syncPage.locator('dialog:modal').count(), 0);
-    } finally { releaseABS(); await syncContext.close(); }
+    } finally { await syncContext.close(); }
   });
   await check('desktop reader supports trackpad text size, section shortcuts, contextual phrase help and one process queue', async () => {
     await desktopPage.goto(base + '/#read/' + book.id);
