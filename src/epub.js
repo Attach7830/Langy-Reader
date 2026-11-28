@@ -107,7 +107,7 @@ function unscript(doc) {
 
 function stylesheet(settings, fixed) {
   const cjk = (notoSC + notoTC).replace(/url\(([^)]+)\)/gu, (_, value) => `url("${new URL(value.replace(/^['"]|['"]$/gu, ''), location.href)}")`);
-  if (fixed) return cjk + 'html { color-scheme: light; }';
+  if (fixed) return cjk + 'html { color-scheme: light; } ::highlight(langy-passage) { background-color: #3bb8d266; }';
   const { ink } = themes[settings.theme];
   const font = fonts[settings.font] || fonts.spectral;
   const stack = font.stack.replace(/,\s*(?:serif|sans-serif|monospace)$/u, '');
@@ -131,6 +131,7 @@ function stylesheet(settings, fixed) {
     body :is(p, li, blockquote, dd, td) :is(span, a, strong, em) { font-family: inherit !important; font-size: inherit !important; }
     a { text-decoration-thickness: from-font; text-underline-offset: .15em; }
     ::highlight(langy-narration) { background-color: #f6ca64; color: #262c24; }
+    ::highlight(langy-passage) { background-color: #3bb8d266; }
     body p { overflow-wrap: break-word; }
     body p.sample-chapter { margin: 1em 0 .62em; font: 400 .75em/1.4 "DM Sans", sans-serif !important; text-transform: uppercase; letter-spacing: .14em; opacity: .72; }
     .sample-chapter + h1 { margin: 0 0 .7em; }

@@ -86,6 +86,58 @@ test('short drags, diagonal movement, mouse drags, links and long presses preser
   for (const node of f.host.querySelectorAll('a,button,input,[contenteditable]')) doubleTap(f, 495, node);
   assert.deepEqual(f.turns, []);
 });
+test('holding a word takes ownership of the drag and a subsequent swipe turns once', (t) => {
+  let selecting = false, finished = 0, tapCount = 0;
+  const timers = new Map(), extensions = [], word = { word: 'hello' };
+  let timer = 0;
+  const f = fixture(t, {
+    wordAt: () => word,
+    passageSelected: () => selecting,
+    dismissPassage: () => { selecting = false; },
+    selectPassage(item) {
+      assert.equal(item, word);
+      selecting = true;
+      return { extend(point) { extensions.push(point.x); }, finish() { finished++; } };
+    },
+    setTimer(callback) { timers.set(++timer, callback); return timer; },
+    clearTimer(id) { timers.delete(id); },
+  });
+  f.target.addEventListener('pointerup', () => tapCount++);
+  pointer('pointerdown', f.target, 440);
+  f.tick(500); [...timers.values()][0]();
+  assert.equal(pointer('contextmenu', f.target, 440, 200, { button: 2 }).defaultPrevented, true);
+  pointer('pointermove', f.target, 240);
+  assert.equal(pointer('pointerup', f.target, 240).defaultPrevented, true);
+  assert.deepEqual(extensions, [240]);
+  assert.equal(finished, 1);
+  assert.equal(tapCount, 0);
+  assert.deepEqual(f.turns, []);
+
+  f.gesture(440, 240);
+  assert.equal(selecting, false);
+  assert.deepEqual(f.turns, [1]);
+  assert.equal(timers.size, 0, 'a swipe must cancel the pending hold');
+  f.gesture(440, 240, { duration: 620 });
+  assert.deepEqual(f.turns, [1], 'a slow hold followed by a drag cannot turn a page');
+});
+
+test('a zoomed PDF can pan, then shrink when a second finger lands after the first starts moving', (t) => {
+  const pans = [], zoom = [];
+  const f = fixture(t, { canPan: () => true, panBy: (x, y) => pans.push([x, y]), pinch: (value) => zoom.push(value) });
+  assert.equal(f.host.style.touchAction, 'none');
+  pointer('pointerdown', f.target, 240);
+  pointer('pointermove', f.target, 220);
+  assert.deepEqual(pans, [[20, 0]]);
+  pointer('pointerdown', f.target, 380, 200, { pointerId: 2, isPrimary: false });
+  pointer('pointermove', f.target, 260);
+  pointer('pointermove', f.target, 340, 200, { pointerId: 2, isPrimary: false });
+  pointer('pointerup', f.target, 340, 200, { pointerId: 2, isPrimary: false });
+  pointer('pointerup', f.target, 260);
+  assert.equal(zoom.at(-1).phase, 'end');
+  assert.equal(zoom.at(-1).factor, .5);
+  assert.deepEqual(pans, [[20, 0]]);
+  assert.deepEqual(f.turns, []);
+});
 test('pinch changes size once after both fingers lift and cannot become a page turn', (t) => {
   const pinches = [], f = fixture(t, { pinch: (event) => pinches.push(event) });
   pointer('pointerdown', f.target, 250);
@@ -132,6 +184,22 @@ test('EPUB iframe coordinates account for scaled offscreen columns, and bindings
   frame.getBoundingClientRect = () => ({ ...rect, left: -900, right: 1100, width: 2000 });
   f.gesture(520, 440, { root: doc.body, startY: 100, endY: 100 }); click(doc.body, 440, 100);
   assert.deepEqual(f.turns, [1, 1]); f.nav.reset(); doubleTap(f, 520, doc.body); assert.equal(f.turns.length, 2);
+});
+test('replacing an EPUB frame releases a contact that never sent pointerup', (t) => {
+  const f = fixture(t);
+  function frame() {
+    const element = f.dom.window.document.createElement('iframe');
+    f.host.append(element);
+    element.getBoundingClientRect = () => rect;
+    f.nav.bind(element.contentDocument);
+    return element;
+  }
+  const first = frame();
+  pointer('pointerdown', first.contentDocument.body, 280, 130, { pointerId: 7 });
+  first.remove();
+  const second = frame();
+  f.gesture(280, 190, { startY: 130, endY: 130, root: second.contentDocument.body });
+  assert.deepEqual(f.turns, [1]);
 });
 test('a word tap opens a definition and a double tap seeks from that word instead of toggling center playback', async (t) => {
   let help, playback = 0, fullscreens = 0;

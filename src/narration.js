@@ -19,7 +19,7 @@ function atTime(items, time, field = 'start') {
 }
 export function narration({ preferences, renderer, book, navigate, changePreferences, safeMode = false,
   textEdition = () => false, highlight = () => true, readingPosition = () => null,
-  editableTiming = () => false, showAudioTiming }) {
+  editableTiming = () => false, showAudioTiming, canFollow = () => true }) {
   const player = $('#narration-player'), audio = $('#narration-audio');
   const play = $('#narration-play'), generate = $('#narration-generate');
   const adjustTiming = $('#narration-adjust-timing');
@@ -156,14 +156,14 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   // Page changes run serially; another scrub replaces the pending target.
   async function follow(force = false) {
     const current = renderer()?.audioUnit?.();
-    if (!enabled || !ready() || initialSeek || manualNavigation || !current) return;
+    if (!enabled || !ready() || initialSeek || manualNavigation || !canFollow() || !current) return;
     if (audio.paused && !force && !segmentFor(current.key)) return;
     followAgain = true; forceFollow ||= force;
     if (following) return;
     following = true;
     const epoch = lifecycle, navigation = navigationVersion;
     try {
-      while (followAgain && epoch === lifecycle && navigation === navigationVersion && !manualNavigation && enabled) {
+      while (followAgain && epoch === lifecycle && navigation === navigationVersion && !manualNavigation && enabled && canFollow()) {
         followAgain = false;
         const forced = forceFollow; forceFollow = false;
         const segment = segmentAt(audio.currentTime);
@@ -174,14 +174,14 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
         }
         if (epoch !== lifecycle || navigation !== navigationVersion || manualNavigation) break;
         await loadCurrent();
-        if (navigation !== navigationVersion || manualNavigation) break;
+        if (navigation !== navigationVersion || manualNavigation || !canFollow()) break;
         if (segmentAt(audio.currentTime)?.key !== segment.key) { followAgain = true; continue; }
         if (unit?.key !== segment.key || !local) continue;
         const stamp = timed[Math.max(0, atTime(timed, audio.currentTime + .01))];
         const word = stamp && timingMap.get(stamp.index), range = word && local.rangeFor(word);
         const behindPage = manualPage?.key === segment.key && word?.from < manualPage.from && audio.currentTime >= manualPage.time - .05;
         if (manualPage && (manualPage.key !== segment.key || word?.from >= manualPage.from)) manualPage = undefined;
-        if (range && !behindPage && (forced || !local.visible(word))) await renderer()?.revealWord(range, { valid: () => epoch === lifecycle && navigation === navigationVersion && !manualNavigation });
+        if (range && !behindPage && (forced || !local.visible(word))) await renderer()?.revealWord(range, { valid: () => epoch === lifecycle && navigation === navigationVersion && !manualNavigation && canFollow() });
         if (epoch !== lifecycle) break;
         drawHighlight();
       }
@@ -421,7 +421,7 @@ export function narration({ preferences, renderer, book, navigate, changePrefere
   audio.addEventListener('ended', () => { wantPlaying = false; controls(); clearHighlight(); });
   audio.addEventListener('error', () => { if (audio.getAttribute('src')) status.textContent = 'This book recording could not be played. Try generating it again.'; });
   return {
-    refresh, apply, stop, toggle, skipBy,
+    refresh, apply, stop, toggle, skipBy, pause: pausePlayback,
     get ready() { return ready(); },
     get absConnected() { return absConnected; },
     beginNavigation() { manualNavigation = true; pendingWordTime = undefined; wordPlayback++; return ++navigationVersion; },

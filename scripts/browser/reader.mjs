@@ -496,6 +496,32 @@ try {
     await page.touchscreen.tap(x, y); await delay(70); await page.touchscreen.tap(x, y); await changed(before);
     const after = await position(); await delay(500); assert.equal(await position(), after);
   });
+  await check('a mobile hold and drag selects a passage and the next swipe turns one page', async () => {
+    await page.locator('#contents-button').tap();
+    await page.getByRole('button', { name: 'Primera parte', exact: true }).tap();
+    const source = page.frameLocator('#viewer iframe').first().locator('#source');
+    await source.waitFor({ state: 'visible' });
+    const [first, last] = await source.evaluate((paragraph) => ['viajera', 'tranquila'].map((word) => {
+      const node = paragraph.firstChild, start = node.data.indexOf(word), range = document.createRange();
+      range.setStart(node, start); range.setEnd(node, start + word.length);
+      const box = range.getBoundingClientRect(), frame = window.frameElement.getBoundingClientRect();
+      return { x: frame.x + box.x + box.width / 2, y: frame.y + box.y + box.height / 2 };
+    }));
+    const before = await position();
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [first] });
+    await delay(525);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [last] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.locator('[data-bookmark-selection]').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('[data-selection-edge="end"]').isVisible(), true);
+    const highlighted = await source.evaluate(() => [...CSS.highlights.get('langy-passage')].map((range) => range.toString()).join(''));
+    assert.equal(highlighted, 'viajera llegó a una casa tranquila');
+    assert.equal(await position(), before);
+    await swipe(-145, 2, true);
+    await changed(before);
+    assert.match(await page.locator('#page-label').textContent(), /^Page 2 of /u);
+    assert.equal(await page.locator('#phrase-help').isVisible(), false);
+  });
   await check('repeated pinch gestures enlarge and reduce touch text without changing desktop size or browser zoom', async () => {
     const before = await page.evaluate(() => ({ size: 20, ...JSON.parse(localStorage.getItem('langy-settings-v1')) }));
     const box = await page.locator('.reading-main').boundingBox(), x = box.x + box.width / 2, y = box.y + box.height / 2;

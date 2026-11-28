@@ -304,6 +304,32 @@ test('text selection offers icon-only bookmark and explain actions and aborts st
   ui.clear(); assert.equal(calls.at(-1).signal.aborted, true); resolve({ text: 'Late answer' }); await delay(0); assert.equal(document.querySelector('#phrase-help').hidden, true); assert.equal(document.querySelector('[data-phrase-answer]').textContent, '');
 });
 
+test('a touch passage stays highlighted during extension and can be bookmarked after the browser selection collapses', async (t) => {
+  const dom = await browser(t), viewer = document.querySelector('#viewer'), root = document.createElement('p');
+  root.textContent = 'A quiet harbor at sunset.'; viewer.append(root);
+  const node = root.firstChild;
+  viewer.getBoundingClientRect = () => ({ left: 0, top: 0, right: 300, bottom: 450 });
+  dom.window.Range.prototype.getBoundingClientRect = () => ({ left: 30, top: 100, bottom: 125, height: 25 });
+  document.caretPositionFromPoint = () => ({ offsetNode: node, offset: 21 });
+  let bookmarked;
+  const ui = phraseHelp({ book: () => ({ id: 'book', language: 'en' }), preferences: () => ({}), roots: () => [root],
+    onBookmark(_range, text) { bookmarked = text; return true; } });
+  const remove = ui.bind(root);
+  t.after(remove);
+  const gesture = ui.selectPassage({ node, index: 2, word: 'quiet' });
+  assert.equal(ui.touchSelected, true);
+  assert.equal(document.querySelector('#phrase-help').hidden, true);
+  gesture.extend({ x: 195, y: 110 }, { node, index: 18, word: 'sunset' });
+  gesture.finish();
+  assert.equal(document.querySelector('#phrase-help').hidden, false);
+  assert.equal(document.querySelector('#selection-handles').hidden, false);
+  document.getSelection().removeAllRanges();
+  document.querySelector('[data-bookmark-selection]').click();
+  assert.equal(bookmarked, 'quiet harbor at sunset');
+  assert.equal(ui.touchSelected, false);
+  assert.equal(document.querySelector('#selection-handles').hidden, true);
+});
+
 test('format and shared-book filters combine, persist in preferences and expose completed OCR labels', async (t) => {
   const dom = await browser(t); let preferences = { quietLibrary: true, showSharedBooks: true }, saved;
   const books = [{ id: 'own', title: 'Own shared book', author: '', language: 'es', format: 'pdf', ocrComplete: true, shared: true, sharedWithMe: false, canEdit: true },

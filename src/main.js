@@ -97,6 +97,14 @@ const pageGestures = pageNavigation({ host: $('.reading-main'),
   wordAt: (event) => words.at(event),
   wordDoubleTap: (word) => void playWordFromGesture(word),
   canPan: () => viewer.classList.contains('pdf-panning'),
+  panBy: (x, y) => viewer.scrollBy(x, y),
+  selectPassage(word) {
+    const passage = phrases.selectPassage(word);
+    if (passage) audio.pause();
+    return passage;
+  },
+  passageSelected: () => phrases.touchSelected,
+  dismissPassage: () => phrases.clear(),
   centerTap: () => { words.clear(); void toggleFullscreen(); },
   centerDoubleTap: () => void togglePlaybackFromGesture(),
   swipeUp: toggleAudioToolbar, swipeDown: swipeDownReaderPanels,
@@ -127,6 +135,7 @@ const phrases = phraseHelp({ book: () => activeBook, preferences: () => settings
 });
 const audio = narration({
   safeMode, textEdition: () => readingPdfEpub, highlight: () => readingFormat() === 'epub',
+  canFollow: () => !phrases.touchSelected,
   editableTiming: (book) => library.editableTiming(book),
   showAudioTiming: (book, recording, position) => library.showAudioTiming(book, recording, position),
   preferences: () => temporaryAudioVisible ? { ...settings, audioToolbarHidden: false } : settings, renderer: () => renderer, book: () => activeBook,
